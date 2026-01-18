@@ -1,86 +1,48 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var audioPlayer = AudioPlayerManager()
-    @State private var tracks: [Track] = []
-    @State private var showFilePicker = false
+    @StateObject private var playlistManager = PlaylistManager()
+    @State private var showFolderPicker = false
     
     var body: some View {
         NavigationView {
-            VStack {
-                // Playlist
-                List {
-                    ForEach(tracks) { track in
-                        Button {
-                            audioPlayer.play(track)
-                        } label: {
-                            HStack {
-                                Image(systemName: "music.note")
-                                Text(track.name)
-                                Spacer()
-                                if audioPlayer.currentTrack?.id == track.id {
-                                    Image(systemName: audioPlayer.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                        }
-                        .foregroundColor(.primary)
-                    }
-                    .onDelete(perform: deleteTracks)
-                }
+            List {
+                // Everything playlist (always at top)
+                PlaylistRow(
+                    playlist: playlistManager.everythingPlaylist,
+                    audioPlayer: audioPlayer
+                )
                 
-                // Controls
-                HStack(spacing: 40) {
-                    Button {
-                        shuffleTracks()
-                    } label: {
-                        Image(systemName: "shuffle")
-                            .font(.title)
-                    }
-                    
-                    Button {
-                        if audioPlayer.isPlaying {
-                            audioPlayer.pause()
-                        } else {
-                            audioPlayer.resume()
-                        }
-                    } label: {
-                        Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 50))
-                    }
-                    
-                    Button {
-                        audioPlayer.stop()
-                    } label: {
-                        Image(systemName: "stop.circle")
-                            .font(.title)
-                    }
+                // Individual folder playlists
+                ForEach(playlistManager.playlists) { playlist in
+                    PlaylistRow(
+                        playlist: playlist,
+                        audioPlayer: audioPlayer
+                    )
                 }
-                .padding()
+                .onDelete(perform: deletePlaylists)
             }
-            .navigationTitle("Music Shuffler")
+            .navigationTitle("Playlists")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
-                        showFilePicker = true
+                        showFolderPicker = true
                     } label: {
-                        Image(systemName: "plus")
+                        Image(systemName: "folder.badge.plus")
                     }
                 }
             }
-            .sheet(isPresented: $showFilePicker) {
-                DocumentPicker(tracks: $tracks)
+            .sheet(isPresented: $showFolderPicker) {
+                FolderPicker(playlistManager: playlistManager)
             }
         }
     }
     
-    func shuffleTracks() {
-        tracks.shuffle()
-    }
-    
-    func deleteTracks(at offsets: IndexSet) {
-        tracks.remove(atOffsets: offsets)
+    func deletePlaylists(at offsets: IndexSet) {
+        for index in offsets {
+            playlistManager.removePlaylist(playlistManager.playlists[index])
+        }
     }
 }
 
