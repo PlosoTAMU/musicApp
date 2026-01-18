@@ -4,17 +4,16 @@ struct ContentView: View {
     @StateObject private var audioPlayer = AudioPlayerManager()
     @StateObject private var playlistManager = PlaylistManager()
     @State private var showFolderPicker = false
+    @State private var showYouTubeDownload = false
     
     var body: some View {
         NavigationView {
             List {
-                // Everything playlist (always at top)
                 PlaylistRow(
                     playlist: playlistManager.everythingPlaylist,
                     audioPlayer: audioPlayer
                 )
                 
-                // Individual folder playlists
                 ForEach(playlistManager.playlists) { playlist in
                     PlaylistRow(
                         playlist: playlist,
@@ -25,6 +24,14 @@ struct ContentView: View {
             }
             .navigationTitle("Playlists")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showYouTubeDownload = true
+                    } label: {
+                        Image(systemName: "link.badge.plus")
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         showFolderPicker = true
@@ -35,6 +42,9 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showFolderPicker) {
                 FolderPicker(playlistManager: playlistManager)
+            }
+            .sheet(isPresented: $showYouTubeDownload) {
+                YouTubeDownloadView(playlistManager: playlistManager)
             }
         }
     }

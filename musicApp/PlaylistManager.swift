@@ -8,19 +8,20 @@ class PlaylistManager: ObservableObject {
         Playlist(name: "Everything", tracks: allTracks)
     }
     
+    var youtubePlaylist: Playlist? {
+        playlists.first(where: { $0.name == "YouTube Downloads" })
+    }
+    
     func addFolder(url: URL) {
         let folderName = url.lastPathComponent
         var newTracks: [Track] = []
         
-        // Start accessing the folder
         guard url.startAccessingSecurityScopedResource() else { return }
         defer { url.stopAccessingSecurityScopedResource() }
         
-        // Get all files in the folder
         if let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey]) {
             for case let fileURL as URL in enumerator {
-                // Check if it's an MP3
-                if fileURL.pathExtension.lowercased() == "mp3" {
+                if fileURL.pathExtension.lowercased() == "mp3" || fileURL.pathExtension.lowercased() == "m4a" {
                     let name = fileURL.deletingPathExtension().lastPathComponent
                     let track = Track(name: name, url: fileURL, folderName: folderName)
                     newTracks.append(track)
@@ -29,19 +30,28 @@ class PlaylistManager: ObservableObject {
             }
         }
         
-        // Create playlist from this folder
         if !newTracks.isEmpty {
             let playlist = Playlist(name: folderName, tracks: newTracks)
             playlists.append(playlist)
         }
     }
     
+    func addYouTubeTrack(_ track: Track) {
+        allTracks.append(track)
+        
+        // Find or create YouTube Downloads playlist
+        if let index = playlists.firstIndex(where: { $0.name == "YouTube Downloads" }) {
+            playlists[index].tracks.append(track)
+        } else {
+            let playlist = Playlist(name: "YouTube Downloads", tracks: [track])
+            playlists.append(playlist)
+        }
+    }
+    
     func removePlaylist(_ playlist: Playlist) {
-        // Remove tracks from allTracks
         allTracks.removeAll { track in
             playlist.tracks.contains(where: { $0.id == track.id })
         }
-        // Remove playlist
         playlists.removeAll { $0.id == playlist.id }
     }
 }
