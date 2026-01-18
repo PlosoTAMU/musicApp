@@ -5,6 +5,7 @@ class YouTubeDownloader: ObservableObject {
     @Published var isDownloading = false
     @Published var downloadProgress: Double = 0.0
     @Published var errorMessage: String?
+    @Published var allowWiFi = false // User preference to allow Wi-Fi downloads
     
     // Vercel API endpoint
     private let apiBaseURL = "https://youtube-audio-api-six.vercel.app"
@@ -24,10 +25,10 @@ class YouTubeDownloader: ObservableObject {
         pathMonitor.pathUpdateHandler = { [weak self] path in
             guard let self = self else { return }
             
-            // Fail fast if Wi-Fi is active
-            if path.usesInterfaceType(.wifi) && !path.usesInterfaceType(.cellular) {
+            // Only warn about Wi-Fi if user hasn't allowed it
+            if !self.allowWiFi && path.usesInterfaceType(.wifi) && !path.usesInterfaceType(.cellular) {
                 DispatchQueue.main.async {
-                    self.errorMessage = "Cellular connection required. Wi-Fi detected."
+                    self.errorMessage = "Cellular connection required. Wi-Fi detected. Enable 'Allow Wi-Fi' to proceed."
                     self.isDownloading = false
                 }
             }
@@ -38,12 +39,15 @@ class YouTubeDownloader: ObservableObject {
     private func createCellularOnlyURLSession() -> URLSession {
         let config = URLSessionConfiguration.default
         
-        // Use multipath service type for better cellular routing
-        config.multipathServiceType = .handover
-        
-        // Allow expensive paths (cellular data)
-        config.allowsExpensiveNetworkAccess = true
-        config.allowsConstrainedNetworkAccess = false
+        // Only enforce cellular if Wi-Fi is not allowed
+        if !allowWiFi {
+            // Use multipath service type for better cellular routing
+            config.multipathServiceType = .handover
+            
+            // Allow expensive paths (cellular data)
+            config.allowsExpensiveNetworkAccess = true
+            config.allowsConstrainedNetworkAccess = false
+        }
         
         return URLSession(configuration: config)
     }
@@ -69,12 +73,17 @@ class YouTubeDownloader: ObservableObject {
     }
     
     private func checkCellularAvailability() -> Bool {
+        // If Wi-Fi is allowed, skip cellular check
+        if allowWiFi {
+            return true
+        }
+        
         let path = pathMonitor.currentPath
         
         // Check if cellular is available
         guard path.usesInterfaceType(.cellular) else {
             DispatchQueue.main.async {
-                self.errorMessage = "Cellular connection required. Please disable Wi-Fi or enable cellular data."
+                self.errorMessage = "Cellular connection required. Please disable Wi-Fi, enable cellular data, or check 'Allow Wi-Fi'."
             }
             return false
         }
@@ -82,7 +91,7 @@ class YouTubeDownloader: ObservableObject {
         // Fail fast if Wi-Fi is active
         if path.usesInterfaceType(.wifi) {
             DispatchQueue.main.async {
-                self.errorMessage = "Cellular only mode: Wi-Fi must be disabled."
+                self.errorMessage = "Cellular only mode: Wi-Fi must be disabled or check 'Allow Wi-Fi' to proceed."
             }
             return false
         }

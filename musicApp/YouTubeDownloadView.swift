@@ -18,6 +18,21 @@ struct YouTubeDownloadView: View {
                     .disableAutocorrection(true)
                     .padding(.horizontal)
                 
+                // Wi-Fi override checkbox
+                Toggle(isOn: $downloader.allowWiFi) {
+                    HStack {
+                        Image(systemName: downloader.allowWiFi ? "wifi" : "antenna.radiowaves.left.and.right")
+                            .foregroundColor(downloader.allowWiFi ? .blue : .orange)
+                        Text("Allow Wi-Fi (otherwise cellular only)")
+                            .font(.subheadline)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(8)
+                .padding(.horizontal)
+                
                 if downloader.isDownloading {
                     ProgressView("Downloading...")
                         .padding()
@@ -27,6 +42,7 @@ struct YouTubeDownloadView: View {
                     Text(error)
                         .foregroundColor(.red)
                         .font(.caption)
+                        .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }
                 
