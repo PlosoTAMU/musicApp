@@ -113,14 +113,28 @@ class ShellManager: ObservableObject {
         print("📍 [Shell] PYTHONHOME: \(pythonHome)")
         print("📍 [Shell] PYTHONPATH: \(pythonPath)")
         
+        // Create stub modules BEFORE any Python imports in a writable location
+        let stubsPath = createAppleSupportStubFiles()
+        
+        // Update PYTHONPATH to include stubs FIRST
+        let fullPythonPath = "\(stubsPath):\(pythonStdlibPath):\(sitePackagesPath)"
+        setenv("PYTHONPATH", fullPythonPath, 1)
+        print("📍 [Shell] Updated PYTHONPATH with stubs: \(fullPythonPath)")
+        
         // Initialize Python via PythonKit
         let sys = Python.import("sys")
-        sys.path.insert(0, pythonStdlibPath)
+        
+        // Add stubs path FIRST so it takes priority
+        sys.path.insert(0, stubsPath)
+        sys.path.insert(1, pythonStdlibPath)
         sys.path.append(sitePackagesPath)
         
         print("✅ [Shell] Python initialized")
         print("📍 [Shell] Python version: \(sys.version)")
         print("📍 [Shell] sys.path: \(sys.path)")
+        
+        // Also register stubs in sys.modules just in case
+        createAppleSupportStubs()
         
         pythonInitialized = true
         
@@ -128,6 +142,97 @@ class ShellManager: ObservableObject {
         verifyYTDLP()
     }
     
+    private func createAppleSupportStubs() {
+        print("🔧 [Shell] Creating Apple support stub modules...")
+        
+        // Create stub _apple_support module
+        let stubCode = """
+        import sys
+        import types
+        
+        # Create a stub module for _apple_support
+        _apple_support = types.ModuleType('_apple_support')
+        _apple_support.__doc__ = 'Stub module for iOS compatibility'
+        
+        # Add dummy functions that might be called
+        def _noop(*args, **kwargs):
+            pass
+        
+        _apple_support.init_apple_support = _noop
+        _apple_support.os_log_create = _noop
+        _apple_support.os_log_with_type = _noop
+        
+        # Register in sys.modules
+        sys.modules['_apple_support'] = _apple_support
+        
+        # Also stub os_log if needed
+        os_log = types.ModuleType('os_log')
+        os_log.os_log_create = _noop
+        os_log.os_log_with_type = _noop
+        sys.modules['os_log'] = os_log
+        
+        # Stub _scproxy for iOS
+        _scproxy = types.ModuleType('_scproxy')
+        _scproxy._get_proxy_settings = lambda: {}
+        _scproxy._get_proxies = lambda: {}
+        sys.modules['_scproxy'] = _scproxy
+        
+        print('✅ Stub modules created')
+        """
+        
+        // Execute the stub creation code
+        let builtins = Python.import("builtins")
+        builtins.exec(PythonObject(stubCode))
+        
+        print("✅ [Shell] Apple support stubs created")
+    }
+    
+    private func createAppleSupportStubFiles() -> String {
+        print("🔧 [Shell] Creating Apple support stub files...")
+        
+        // Use Documents directory which is writable
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let stubsPath = documentsPath.appendingPathComponent("python_stubs")
+        
+        // Create stubs directory
+        try? FileManager.default.createDirectory(at: stubsPath, withIntermediateDirectories: true)
+        
+        // Create _apple_support.py stub
+        let appleSupport = """
+        # Stub module for _apple_support (iOS compatibility)
+        def init_apple_support(*args, **kwargs):
+            pass
+        def os_log_create(*args, **kwargs):
+            return None
+        def os_log_with_type(*args, **kwargs):
+            pass
+        """
+        try? appleSupport.write(to: stubsPath.appendingPathComponent("_apple_support.py"), atomically: true, encoding: .utf8)
+        
+        // Create _scproxy.py stub
+        let scproxy = """
+        # Stub module for _scproxy (iOS compatibility)
+        def _get_proxy_settings():
+            return {}
+        def _get_proxies():
+            return {}
+        """
+        try? scproxy.write(to: stubsPath.appendingPathComponent("_scproxy.py"), atomically: true, encoding: .utf8)
+        
+        // Create os_log.py stub
+        let osLog = """
+        # Stub module for os_log (iOS compatibility)
+        def os_log_create(*args, **kwargs):
+            return None
+        def os_log_with_type(*args, **kwargs):
+            pass
+        """
+        try? osLog.write(to: stubsPath.appendingPathComponent("os_log.py"), atomically: true, encoding: .utf8)
+        
+        print("✅ [Shell] Stub files created at: \(stubsPath.path)")
+        return stubsPath.path
+    }
+
     private func verifyYTDLP() {
         print("📦 [Shell] Verifying yt-dlp installation...")
         
