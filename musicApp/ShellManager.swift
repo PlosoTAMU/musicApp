@@ -37,53 +37,39 @@ class ShellManager: ObservableObject {
         print("📍 [Shell] Bundle path: \(bundlePath)")
         print("📍 [Shell] Site packages path: \(sitePackagesPath)")
         
-        // Python.xcframework is automatically linked, no need to set PYTHONHOME
-        // Just set PYTHONPATH to include site-packages
+        // Set PYTHONPATH to include site-packages
         setenv("PYTHONPATH", sitePackagesPath, 1)
         
         print("📍 [Shell] PYTHONPATH: \(sitePackagesPath)")
         
-        do {
-            // Initialize Python (uses the linked Python.xcframework)
-            Py_Initialize()
-            
-            // Import sys and add site-packages to path
-            let sys = Python.import("sys")
-            sys.path.append(sitePackagesPath)
-            
-            print("✅ [Shell] Python initialized")
-            print("📍 [Shell] Python version: \(sys.version)")
-            print("📍 [Shell] Python path: \(sys.path)")
-            
-            pythonInitialized = true
-            
-            // Verify yt-dlp is available
-            verifyYTDLP()
-            
-        } catch {
-            print("❌ [Shell] Failed to initialize Python: \(error)")
-        }
+        // Import sys and add site-packages to path
+        let sys = Python.import("sys")
+        sys.path.append(sitePackagesPath)
+        
+        print("✅ [Shell] Python initialized")
+        print("📍 [Shell] Python version: \(sys.version)")
+        print("📍 [Shell] Python path: \(sys.path)")
+        
+        pythonInitialized = true
+        
+        // Verify yt-dlp is available
+        verifyYTDLP()
     }
     
     private func verifyYTDLP() {
         print("📦 [Shell] Verifying yt-dlp installation...")
         
-        do {
-            let yt_dlp = Python.import("yt_dlp")
-            print("✅ [Shell] yt-dlp found and imported successfully")
-            print("📍 [Shell] yt-dlp version: \(yt_dlp.version.__version__)")
-            
-            DispatchQueue.main.async {
-                self.isReady = true
-                print("✅ [Shell] Shell environment ready")
-            }
-        } catch {
-            print("❌ [Shell] yt-dlp not found: \(error)")
-            print("⚠️ [Shell] Make sure yt-dlp is in python-group/site-packages/")
-            
-            DispatchQueue.main.async {
-                self.isReady = false
-            }
+        let yt_dlp = Python.import("yt_dlp")
+        print("✅ [Shell] yt-dlp found and imported successfully")
+        
+        // Try to get version
+        if let version = yt_dlp.checking.version {
+            print("📍 [Shell] yt-dlp version: \(version)")
+        }
+        
+        DispatchQueue.main.async {
+            self.isReady = true
+            print("✅ [Shell] Shell environment ready")
         }
     }
     
@@ -103,8 +89,8 @@ class ShellManager: ObservableObject {
                 
                 print("✅ [Shell] yt-dlp imported")
                 
-                // Configure options
-                let ydl_opts = [
+                // Configure options as PythonObject
+                let ydl_opts: PythonObject = [
                     "format": "bestaudio/best",
                     "quiet": true,
                     "no_warnings": true
@@ -164,16 +150,18 @@ class ShellManager: ObservableObject {
                 let yt_dlp = Python.import("yt_dlp")
                 
                 // Configure options for direct download
-                let ydl_opts: [String: PythonObject] = [
+                let postprocessors: PythonObject = [
+                    [
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192"
+                    ]
+                ]
+                
+                let ydl_opts: PythonObject = [
                     "format": "bestaudio/best",
-                    "outtmpl": PythonObject(outputPath),
-                    "postprocessors": [
-                        [
-                            "key": "FFmpegExtractAudio",
-                            "preferredcodec": "mp3",
-                            "preferredquality": "192"
-                        ]
-                    ],
+                    "outtmpl": outputPath,
+                    "postprocessors": postprocessors,
                     "quiet": false,
                     "no_warnings": false
                 ]
