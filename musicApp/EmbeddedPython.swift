@@ -26,7 +26,7 @@ class EmbeddedPython: ObservableObject {
     @Published var statusMessage = ""
     @Published var downloadProgress: Double = 0.0
     
-    private var pythonInitialized = false
+    private var pythonInitialized = true
     
     init() {
         // Python will be initialized on first use
@@ -195,7 +195,18 @@ class EmbeddedPython: ObservableObject {
     // These functions call into Python's C API via the xcframework
     // The bridging header (Python-Bridging-Header.h) imports Python.h
     
+    // Set this to true once you've added Python.xcframework to the project
+    private let pythonFrameworkAvailable = false
+    
     private func initializePythonRuntime() -> Bool {
+        // Safety check - don't try to call Python if framework isn't linked
+        guard pythonFrameworkAvailable else {
+            print("ℹ️ [EmbeddedPython] Python framework not configured")
+            print("ℹ️ [EmbeddedPython] Using WebView fallback method")
+            print("ℹ️ [EmbeddedPython] To enable yt-dlp, follow docs/PYTHON_IOS_SETUP.md")
+            return false
+        }
+        
         // Check if Python functions are available (via bridging header)
         // The @_silgen_name declarations below map to Python C API functions
         

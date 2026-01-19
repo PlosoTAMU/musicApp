@@ -4,49 +4,39 @@ struct YouTubeDownloadView: View {
     @ObservedObject var playlistManager: PlaylistManager
     @StateObject private var downloader = YouTubeDownloader()
     @ObservedObject var extractor = YouTubeExtractor.shared
-    @ObservedObject var ytdlpService = PythonYTDLPService.shared
+    @ObservedObject var embeddedPython = EmbeddedPython.shared
     @State private var youtubeURL = ""
     @State private var detectedURL: String? = nil
     @State private var showManualEntry = false
     @State private var showLogin = false
-    @State private var showServerConfig = false
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             VStack(spacing: 24) {
                 
-                // Server status / Login status
+                // Status bar - shows Python status and YouTube login
                 HStack {
-                    // Server status
-                    Button {
-                        showServerConfig = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: ytdlpService.isRunning ? "server.rack" : "server.rack")
-                                .foregroundColor(ytdlpService.isRunning ? .green : .gray)
-                            Text(ytdlpService.isRunning ? "Server" : "Setup Server")
-                                .font(.caption)
-                                .foregroundColor(ytdlpService.isRunning ? .green : .blue)
-                        }
+                    // Python/yt-dlp status
+                    HStack(spacing: 4) {
+                        Image(systemName: embeddedPython.isInitialized ? "checkmark.circle.fill" : "circle")
+                            .foregroundColor(embeddedPython.isInitialized ? .green : .gray)
+                        Text(embeddedPython.isInitialized ? "yt-dlp ready" : "WebView mode")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                     
                     Spacer()
                     
-                    // Login status
+                    // YouTube login status (optional, helps with some videos)
                     if extractor.isLoggedIn {
                         HStack(spacing: 4) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.green)
-                            Text("YouTube")
+                            Text("Signed in")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        Button("Sign Out") {
-                            extractor.logout()
-                        }
-                        .font(.caption)
-                        .foregroundColor(.red)
                     } else {
                         Button {
                             showLogin = true
@@ -81,10 +71,10 @@ struct YouTubeDownloadView: View {
                         
                         if downloader.isDownloading {
                             VStack(spacing: 8) {
-                                ProgressView(value: extractor.downloadProgress)
+                                ProgressView(value: downloader.downloadProgress)
                                     .progressViewStyle(LinearProgressViewStyle())
                                     .padding(.horizontal, 40)
-                                Text(extractor.statusMessage.isEmpty ? "Downloading..." : extractor.statusMessage)
+                                Text(downloader.statusMessage.isEmpty ? "Downloading..." : downloader.statusMessage)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -136,9 +126,9 @@ struct YouTubeDownloadView: View {
                         
                         if downloader.isDownloading {
                             VStack(spacing: 8) {
-                                ProgressView(value: extractor.downloadProgress)
+                                ProgressView(value: downloader.downloadProgress)
                                     .progressViewStyle(LinearProgressViewStyle())
-                                Text(extractor.statusMessage.isEmpty ? "Downloading..." : extractor.statusMessage)
+                                Text(downloader.statusMessage.isEmpty ? "Downloading..." : downloader.statusMessage)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
