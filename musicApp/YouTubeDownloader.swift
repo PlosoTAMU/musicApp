@@ -29,11 +29,20 @@ class YouTubeDownloader: ObservableObject {
     }
     
     private func downloadFile(from url: URL, title: String, completion: @escaping (Track?) -> Void) {
+        print("📥 [YouTubeDownloader] Starting download from: \(url.absoluteString.prefix(100))...")
+        
+        // Create request with proper headers for YouTube
+        var request = URLRequest(url: url)
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        
         let session = URLSession.shared
-        let downloadTask = session.downloadTask(with: url) { [weak self] localURL, response, error in
+        let downloadTask = session.downloadTask(with: request) { [weak self] localURL, response, error in
             guard let self = self else { return }
             
             if let error = error {
+                print("❌ [YouTubeDownloader] Download error: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.errorMessage = "Download failed: \(error.localizedDescription)"
                     self.isDownloading = false
@@ -42,7 +51,20 @@ class YouTubeDownloader: ObservableObject {
                 return
             }
             
+            if let httpResponse = response as? HTTPURLResponse {
+                print("📡 [YouTubeDownloader] Response status: \(httpResponse.statusCode)")
+                if httpResponse.statusCode != 200 {
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Download failed: HTTP \(httpResponse.statusCode)"
+                        self.isDownloading = false
+                    }
+                    completion(nil)
+                    return
+                }
+            }
+            
             guard let localURL = localURL else {
+                print("❌ [YouTubeDownloader] No local URL returned")
                 DispatchQueue.main.async {
                     self.errorMessage = "No file downloaded"
                     self.isDownloading = false
@@ -50,6 +72,8 @@ class YouTubeDownloader: ObservableObject {
                 completion(nil)
                 return
             }
+            
+            print("✅ [YouTubeDownloader] File downloaded to temp: \(localURL.path)")
             
             let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             let youtubeFolder = documentsPath.appendingPathComponent("YouTube Downloads", isDirectory: true)
@@ -63,6 +87,7 @@ class YouTubeDownloader: ObservableObject {
             
             do {
                 try FileManager.default.moveItem(at: localURL, to: destinationURL)
+                print("✅ [YouTubeDownloader] Saved to: \(destinationURL.lastPathComponent)")
                 let track = Track(name: title, url: destinationURL, folderName: "YouTube Downloads")
                 
                 DispatchQueue.main.async {
@@ -70,6 +95,7 @@ class YouTubeDownloader: ObservableObject {
                     completion(track)
                 }
             } catch {
+                print("❌ [YouTubeDownloader] Save error: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.errorMessage = "Failed to save: \(error.localizedDescription)"
                     self.isDownloading = false
@@ -79,5 +105,6 @@ class YouTubeDownloader: ObservableObject {
         }
         
         downloadTask.resume()
+        print("🚀 [YouTubeDownloader] Download task started")
     }
 }

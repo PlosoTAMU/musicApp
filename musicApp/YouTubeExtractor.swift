@@ -41,7 +41,7 @@ class YouTubeExtractor {
         return nil
     }
     
-    /// Extract audio info using YouTube's internal API (async version)
+    /// Extract audio info - tries multiple methods with fallbacks
     func extractInfo(from urlString: String) async throws -> VideoInfo {
         guard let videoID = extractVideoID(from: urlString) else {
             throw ExtractionError.noVideoID
@@ -49,6 +49,20 @@ class YouTubeExtractor {
         
         print("🎬 [YouTubeExtractor] Extracting info for video ID: \(videoID)")
         
+        // Try direct YouTube API first
+        do {
+            return try await extractViaYouTubeAPI(videoID: videoID)
+        } catch {
+            print("⚠️ [YouTubeExtractor] Direct API failed: \(error.localizedDescription)")
+            print("🔄 [YouTubeExtractor] Trying Invidious fallback...")
+        }
+        
+        // Fallback to Invidious instances
+        return try await extractViaInvidious(videoID: videoID)
+    }
+    
+    /// Direct YouTube API extraction
+    private func extractViaYouTubeAPI(videoID: String) async throws -> VideoInfo {
         let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8")!
         
         var request = URLRequest(url: url)
@@ -148,6 +162,98 @@ class YouTubeExtractor {
         }
         
         print("✅ [YouTubeExtractor] Found audio URL for: \(title)")
+        
+        return VideoInfo(
+            title: title,
+            author: author,
+            duration: duration,
+            audioURL: finalAudioURL
+        )
+    }
+    
+    /// Fallback extraction via Invidious public instances
+    private func extractViaInvidious(videoID: String) async throws -> VideoInfo {
+        // List of public Invidious instances (these may change over time)
+        let instances = [
+            "https://inv.nadeko.net",
+            "https://invidious.nerdvpn.de",
+            "https://invidious.jing.rocks",
+            "https://yewtu.be",
+            "https://invidious.protokolla.fi"
+        ]
+        
+        var lastError: Error = ExtractionError.noAudioStream
+        
+        for instance in instances {
+            do {
+                print("🔄 [YouTubeExtractor] Trying Invidious: \(instance)")
+                let info = try await extractFromInvidiousInstance(instance: instance, videoID: videoID)
+                return info
+            } catch {
+                print("⚠️ [YouTubeExtractor] Instance \(instance) failed: \(error.localizedDescription)")
+                lastError = error
+                continue
+            }
+        }
+        
+        throw lastError
+    }
+    
+    private func extractFromInvidiousInstance(instance: String, videoID: String) async throws -> VideoInfo {
+        let urlString = "\(instance)/api/v1/videos/\(videoID)"
+        guard let url = URL(string: urlString) else {
+            throw ExtractionError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw ExtractionError.networkError(NSError(domain: "HTTP", code: (response as? HTTPURLResponse)?.statusCode ?? 0))
+        }
+        
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ExtractionError.parsingError
+        }
+        
+        let title = json["title"] as? String ?? "Unknown"
+        let author = json["author"] as? String ?? "Unknown"
+        let duration = json["lengthSeconds"] as? Int ?? 0
+        
+        // Get audio streams from adaptiveFormats
+        var audioURL: URL? = nil
+        
+        if let adaptiveFormats = json["adaptiveFormats"] as? [[String: Any]] {
+            // Filter for audio-only formats and sort by bitrate
+            let audioFormats = adaptiveFormats.filter { format in
+                let type = format["type"] as? String ?? ""
+                return type.contains("audio")
+            }.sorted { a, b in
+                let bitrateA = (a["bitrate"] as? String).flatMap { Int($0) } ?? a["bitrate"] as? Int ?? 0
+                let bitrateB = (b["bitrate"] as? String).flatMap { Int($0) } ?? b["bitrate"] as? Int ?? 0
+                return bitrateA > bitrateB
+            }
+            
+            if let bestAudio = audioFormats.first, let urlStr = bestAudio["url"] as? String {
+                audioURL = URL(string: urlStr)
+            }
+        }
+        
+        // Fallback to formatStreams
+        if audioURL == nil, let formatStreams = json["formatStreams"] as? [[String: Any]] {
+            if let format = formatStreams.first, let urlStr = format["url"] as? String {
+                audioURL = URL(string: urlStr)
+            }
+        }
+        
+        guard let finalAudioURL = audioURL else {
+            throw ExtractionError.noAudioStream
+        }
+        
+        print("✅ [YouTubeExtractor] Found audio via Invidious for: \(title)")
         
         return VideoInfo(
             title: title,
