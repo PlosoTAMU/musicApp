@@ -23,6 +23,7 @@ class ShellManager: ObservableObject {
     
     private func setupPython() {
         print("🐍 [Shell] Setting up Python environment...")
+        print("=" * 60)
         
         // Get paths
         guard let bundlePath = Bundle.main.resourcePath else {
@@ -30,80 +31,88 @@ class ShellManager: ObservableObject {
             return
         }
         
+        print("📍 [Shell] Bundle path: \(bundlePath)")
+        print("")
+        
+        // List what's actually in the bundle
+        print("📦 [Shell] Contents of bundle:")
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: bundlePath) {
+            for item in contents.sorted() {
+                let isDir = (try? FileManager.default.attributesOfItem(atPath: "\(bundlePath)/\(item)"))?[.type] as? FileAttributeType == .typeDirectory
+                print("   \(isDir == true ? "📁" : "📄") \(item)")
+            }
+        }
+        print("")
+        
+        // Check Frameworks directory
+        let frameworksPath = "\(bundlePath)/Frameworks"
+        print("📦 [Shell] Checking Frameworks directory: \(frameworksPath)")
+        if FileManager.default.fileExists(atPath: frameworksPath) {
+            if let frameworks = try? FileManager.default.contentsOfDirectory(atPath: frameworksPath) {
+                for framework in frameworks.sorted() {
+                    print("   📦 \(framework)")
+                    
+                    // If it's Python.framework, show its contents
+                    if framework.contains("Python") {
+                        let pythonPath = "\(frameworksPath)/\(framework)"
+                        print("      Contents of \(framework):")
+                        if let pythonContents = try? FileManager.default.contentsOfDirectory(atPath: pythonPath) {
+                            for item in pythonContents.sorted() {
+                                print("         - \(item)")
+                                
+                                // Show deeper structure for important directories
+                                let fullPath = "\(pythonPath)/\(item)"
+                                var isDir: ObjCBool = false
+                                if FileManager.default.fileExists(atPath: fullPath, isDirectory: &isDir), isDir.boolValue {
+                                    if let subContents = try? FileManager.default.contentsOfDirectory(atPath: fullPath) {
+                                        for subItem in subContents.prefix(10) {
+                                            print("            • \(subItem)")
+                                        }
+                                        if subContents.count > 10 {
+                                            print("            • ... and \(subContents.count - 10) more items")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            print("   ❌ Frameworks directory doesn't exist!")
+        }
+        print("")
+        
         // Path to python-group with site-packages (where yt-dlp is)
         let pythonGroupPath = "\(bundlePath)/python-group"
-        let sitePackagesPath = "\(pythonGroupPath)/site-packages"
-        
-        // Look for Python standard library in various possible locations
-        let pythonFrameworkPath = "\(bundlePath)/Frameworks/Python.framework"
-        var pythonLibPath = ""
-        
-        // Try different possible locations for Python stdlib
-        // Including xcframework architecture-specific paths
-        let possiblePaths = [
-            // XCFramework architecture-specific paths
-            "\(pythonFrameworkPath)/ios-arm64/lib/python3.11",
-            "\(pythonFrameworkPath)/ios-arm64/lib/python3.12",
-            "\(pythonFrameworkPath)/ios-arm64_x86_64-simulator/lib/python3.11",
-            "\(pythonFrameworkPath)/ios-arm64_x86_64-simulator/lib/python3.12",
-            // Standard framework paths
-            "\(pythonFrameworkPath)/Resources/lib/python3.11",
-            "\(pythonFrameworkPath)/Resources/lib/python3.12",
-            "\(pythonFrameworkPath)/lib/python3.11",
-            "\(pythonFrameworkPath)/lib/python3.12",
-            "\(pythonFrameworkPath)/Versions/Current/lib/python3.11",
-            "\(pythonFrameworkPath)/Versions/3.11/lib/python3.11",
-            "\(bundlePath)/python-stdlib/lib/python3.11",  // Manual bundle location
-        ]
-        
-        for path in possiblePaths {
-            let encodingsPath = "\(path)/encodings"
-            if FileManager.default.fileExists(atPath: encodingsPath) {
-                pythonLibPath = path
-                print("✅ [Shell] Found Python stdlib at: \(path)")
-                print("✅ [Shell] Verified encodings module at: \(encodingsPath)")
-                break
+        print("📦 [Shell] Checking python-group: \(pythonGroupPath)")
+        if FileManager.default.fileExists(atPath: pythonGroupPath) {
+            print("   ✅ python-group exists")
+            let sitePackagesPath = "\(pythonGroupPath)/site-packages"
+            if FileManager.default.fileExists(atPath: sitePackagesPath) {
+                print("   ✅ site-packages exists")
+                if let packages = try? FileManager.default.contentsOfDirectory(atPath: sitePackagesPath) {
+                    print("   Packages found:")
+                    for pkg in packages.sorted() {
+                        print("      - \(pkg)")
+                    }
+                }
+            } else {
+                print("   ❌ site-packages doesn't exist!")
             }
+        } else {
+            print("   ❌ python-group doesn't exist!")
         }
+        print("")
         
-        print("📍 [Shell] Bundle path: \(bundlePath)")
-        print("📍 [Shell] Python framework path: \(pythonFrameworkPath)")
-        print("📍 [Shell] Site packages path: \(sitePackagesPath)")
+        print("=" * 60)
+        print("⚠️  [Shell] PLEASE SEND ME THE OUTPUT ABOVE")
+        print("    I need to see the actual directory structure")
+        print("    to tell you exactly where to put the Python stdlib")
+        print("=" * 60)
         
-        if pythonLibPath.isEmpty {
-            print("❌ [Shell] Could not find Python standard library!")
-            print("⚠️  [Shell] Searched in:")
-            for path in possiblePaths {
-                print("    - \(path)")
-            }
-            return
-        }
-        
-        print("📍 [Shell] Python stdlib path: \(pythonLibPath)")
-        
-        // Set PYTHONHOME to the parent of lib directory
-        let pythonHome = (pythonLibPath as NSString).deletingLastPathComponent
-        setenv("PYTHONHOME", pythonHome, 1)
-        print("📍 [Shell] PYTHONHOME: \(pythonHome)")
-        
-        // Set PYTHONPATH to include both standard library and site-packages
-        let pythonPath = "\(pythonLibPath):\(sitePackagesPath)"
-        setenv("PYTHONPATH", pythonPath, 1)
-        print("📍 [Shell] PYTHONPATH: \(pythonPath)")
-        
-        // Import sys and add paths
-        let sys = Python.import("sys")
-        sys.path.insert(0, pythonLibPath)
-        sys.path.append(sitePackagesPath)
-        
-        print("✅ [Shell] Python initialized")
-        print("📍 [Shell] Python version: \(sys.version)")
-        print("📍 [Shell] Python executable: \(sys.executable)")
-        
-        pythonInitialized = true
-        
-        // Verify yt-dlp is available
-        verifyYTDLP()
+        // For now, don't initialize Python
+        return
     }
     
     private func verifyYTDLP() {
