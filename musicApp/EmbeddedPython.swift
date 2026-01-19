@@ -349,7 +349,10 @@ class EmbeddedPython: ObservableObject {
         let initialized = _Py_IsInitialized()
         
         if initialized != 0 {
-            print("✅ [EmbeddedPython] Python runtime initialized")
+            // Release the GIL immediately after initialization so that
+            // subsequent calls using PyGILState_Ensure work correctly.
+            _ = _PyEval_SaveThread()
+            print("✅ [EmbeddedPython] Python runtime initialized (GIL released)")
             return true
         } else {
             print("⚠️ [EmbeddedPython] Python.xcframework not linked or initialization failed")
@@ -371,17 +374,18 @@ class EmbeddedPython: ObservableObject {
             return nil
         }
         
-        // No GIL handling needed - we run all Python code on the same serial queue (pythonQueue)
-        // This avoids deadlocks from trying to acquire the GIL from different threads
-        
-        // Convert string to C string and run
-        guard let cString = code.cString(using: .utf8) else {
-            print("❌ [EmbeddedPython] Failed to convert code to C string")
-            return nil
+        // Ensure we hold the GIL before executing Python code
+        let gstate = _PyGILState_Ensure()
+        defer {
+            _PyGILState_Release(gstate)
         }
         
-        print("🐍 [executePython] Running PyRun_SimpleString (code length: \(cString.count) bytes)...")
-        let result = _PyRun_SimpleString(cString)
+        // Use withCString to ensure pointer validity during the call
+        let result = code.withCString { ptr -> Int32 in
+            print("🐍 [executePython] Running PyRun_SimpleString...")
+            return _PyRun_SimpleString(ptr)
+        }
+        
         print("🐍 [executePython] PyRun_SimpleString returned: \(result)")
         
         if result == 0 {
@@ -442,3 +446,8 @@ private func _PyGILState_Ensure() -> Int32
 // PyGILState_Release - Release the Global Interpreter Lock
 @_silgen_name("PyGILState_Release")
 private func _PyGILState_Release(_ state: Int32)
+
+// PyEval_SaveThread - Release the GIL and return thread state
+@_silgen_name("PyEval_SaveThread")
+private func _PyEval_SaveThread() -> UnsafeMutableRawPointer?
+
