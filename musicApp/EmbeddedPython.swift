@@ -257,14 +257,29 @@ class EmbeddedPython: ObservableObject {
             return false
         }
         
-        // Check if Python functions are available (via bridging header)
-        // The @_silgen_name declarations below map to Python C API functions
+        // BeeWare's Python-Apple-support requires special initialization
+        // We need to skip the import of site and _apple_support initially
+        // by setting certain flags
         
+        // Skip importing site module (which tries to import _apple_support)
+        _Py_NoSiteFlag = 1
+        
+        // Initialize Python
         _Py_Initialize()
         let initialized = _Py_IsInitialized()
         
         if initialized != 0 {
             print("✅ [EmbeddedPython] Python runtime initialized")
+            
+            // Now manually set up sys.path by running Python code
+            let setupScript = """
+            import sys
+            # Paths should already be set via PYTHONPATH environment variable
+            print(f"Python {sys.version}")
+            print(f"sys.path = {sys.path}")
+            """
+            _ = executePython(setupScript)
+            
             return true
         } else {
             print("⚠️ [EmbeddedPython] Python.xcframework not linked or initialization failed")
@@ -322,6 +337,10 @@ class EmbeddedPython: ObservableObject {
 // MARK: - Python C API Function Declarations
 // These map Swift functions to Python's C API symbols
 // They become available when Python.xcframework is linked and bridging header is set
+
+// Py_NoSiteFlag - Skip importing site module (set to 1 before Py_Initialize)
+@_silgen_name("Py_NoSiteFlag")
+private var _Py_NoSiteFlag: Int32
 
 // Py_Initialize - Initialize the Python interpreter
 @_silgen_name("Py_Initialize")
