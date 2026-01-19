@@ -307,8 +307,8 @@ class EmbeddedPython: ObservableObject {
         
         try:
             exec('''
-\(code.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'''", with: "\\'\\'\\'"))
-''')
+        \(code.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'''", with: "\\'\\'\\'"))
+        ''')
         except Exception as e:
             print(f"Error: {e}")
         finally:
