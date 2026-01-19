@@ -48,12 +48,63 @@ class EmbeddedPython: ObservableObject {
         }
         
         // Set up Python paths
-        let pythonHome = resourcePath.appending("/python-stdlib")
+        // PYTHONHOME should be the root containing the lib folder structure
+        let pythonHome = resourcePath + "/python-stdlib"
+        
+        // Auto-detect Python version by looking for python3.X folder
+        var pythonVersion = "python3.11"  // Default
+        var libPath = pythonHome + "/lib/" + pythonVersion
+        
+        // Try to find the actual Python version folder
+        let libFolder = pythonHome + "/lib"
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: libFolder) {
+            for item in contents where item.hasPrefix("python3.") {
+                pythonVersion = item
+                libPath = libFolder + "/" + pythonVersion
+                print("📂 [EmbeddedPython] Found Python version: \(pythonVersion)")
+                break
+            }
+        } else {
+            // Maybe the stdlib is directly in python-stdlib (flat structure)
+            if FileManager.default.fileExists(atPath: pythonHome + "/encodings") {
+                libPath = pythonHome
+                print("📂 [EmbeddedPython] Using flat stdlib structure")
+            }
+        }
+        
         let pythonPath = [
-            pythonHome,
-            pythonHome + "/lib-dynload",
-            resourcePath + "/yt_dlp",
+            libPath,                           // Core stdlib including encodings
+            libPath + "/lib-dynload",          // C extension modules
+            libPath + "/site-packages",        // Any installed packages
+            pythonHome,                        // Also include python-stdlib root
+            resourcePath + "/yt_dlp",          // yt-dlp module
         ].joined(separator: ":")
+        
+        // Debug: Print paths to help troubleshoot
+        print("📂 [EmbeddedPython] Resource path: \(resourcePath)")
+        print("📂 [EmbeddedPython] PYTHONHOME: \(pythonHome)")
+        print("📂 [EmbeddedPython] Lib path: \(libPath)")
+        print("📂 [EmbeddedPython] PYTHONPATH: \(pythonPath)")
+        
+        // Check if encodings module exists
+        let encodingsPath = libPath + "/encodings"
+        if FileManager.default.fileExists(atPath: encodingsPath) {
+            print("✅ [EmbeddedPython] Found encodings at: \(encodingsPath)")
+        } else {
+            print("❌ [EmbeddedPython] encodings NOT found at: \(encodingsPath)")
+            print("❌ [EmbeddedPython] Please verify python-stdlib folder structure")
+            
+            // List what's actually in the folders to help debug
+            if let homeContents = try? FileManager.default.contentsOfDirectory(atPath: pythonHome) {
+                print("📂 [EmbeddedPython] python-stdlib contains: \(homeContents)")
+            }
+            if let libContents = try? FileManager.default.contentsOfDirectory(atPath: libPath) {
+                print("📂 [EmbeddedPython] lib path contains: \(libContents.prefix(20))...")
+            }
+            
+            updateStatus("Python stdlib not found - check setup")
+            return
+        }
         
         setenv("PYTHONHOME", pythonHome, 1)
         setenv("PYTHONPATH", pythonPath, 1)
