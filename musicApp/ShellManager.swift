@@ -91,9 +91,9 @@ class ShellManager: ObservableObject {
                 
                 // Configure options as PythonObject
                 let ydl_opts: PythonObject = [
-                    "format": "bestaudio/best",
-                    "quiet": true,
-                    "no_warnings": true
+                    "format": PythonObject("bestaudio/best"),
+                    "quiet": PythonObject(true),
+                    "no_warnings": PythonObject(true)
                 ]
                 
                 // Create instance and extract info
@@ -150,20 +150,18 @@ class ShellManager: ObservableObject {
                 let yt_dlp = Python.import("yt_dlp")
                 
                 // Configure options for direct download
-                let postprocessors: PythonObject = [
-                    [
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192"
-                    ]
-                ]
+                let postprocessors: PythonObject = [[
+                    "key": PythonObject("FFmpegExtractAudio"),
+                    "preferredcodec": PythonObject("mp3"),
+                    "preferredquality": PythonObject("192")
+                ]]
                 
                 let ydl_opts: PythonObject = [
-                    "format": "bestaudio/best",
-                    "outtmpl": outputPath,
+                    "format": PythonObject("bestaudio/best"),
+                    "outtmpl": PythonObject(outputPath),
                     "postprocessors": postprocessors,
-                    "quiet": false,
-                    "no_warnings": false
+                    "quiet": PythonObject(false),
+                    "no_warnings": PythonObject(false)
                 ]
                 
                 // Create instance and download
