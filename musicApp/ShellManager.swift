@@ -159,6 +159,7 @@ class ShellManager: ObservableObject {
             pass
         
         _apple_support.init_apple_support = _noop
+        _apple_support.init_streams = _noop
         _apple_support.os_log_create = _noop
         _apple_support.os_log_with_type = _noop
         
@@ -200,12 +201,38 @@ class ShellManager: ObservableObject {
         // Create _apple_support.py stub
         let appleSupport = """
         # Stub module for _apple_support (iOS compatibility)
+        import sys
+        
         def init_apple_support(*args, **kwargs):
             pass
+        
+        def init_streams(*args, **kwargs):
+            pass
+        
         def os_log_create(*args, **kwargs):
             return None
+        
         def os_log_with_type(*args, **kwargs):
             pass
+        
+        # Provide dummy stdin/stdout/stderr if needed
+        class DummyStream:
+            def write(self, *args, **kwargs):
+                pass
+            def read(self, *args, **kwargs):
+                return ''
+            def readline(self, *args, **kwargs):
+                return ''
+            def flush(self, *args, **kwargs):
+                pass
+            def close(self, *args, **kwargs):
+                pass
+            def fileno(self):
+                return -1
+            def isatty(self):
+                return False
+        
+        dummy_stream = DummyStream()
         """
         try? appleSupport.write(to: stubsPath.appendingPathComponent("_apple_support.py"), atomically: true, encoding: .utf8)
         
