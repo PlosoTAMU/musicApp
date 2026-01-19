@@ -174,7 +174,7 @@ class EmbeddedPython: ObservableObject {
         import os
         import json
 
-        log_file = '\(logFilePath.replacingOccurrences(of: "'", with: "\\'"))'
+        log_file = r'''\(logFilePath)'''
 
         def log(msg):
             with open(log_file, 'a') as f:
@@ -204,14 +204,14 @@ class EmbeddedPython: ObservableObject {
         except Exception as e:
             log(f'Failed to import yt_dlp: {e}')
             result = {'success': False, 'error': f'Failed to import yt_dlp: {e}'}
-            result_file = '\(resultFilePath.replacingOccurrences(of: "'", with: "\\'"))'
+            result_file = r'''\(resultFilePath)'''
             with open(result_file, 'w') as f:
                 json.dump(result, f)
             raise
 
-        output_dir = '\(outputDir.replacingOccurrences(of: "'", with: "\\'"))'
-        url = '\(url.replacingOccurrences(of: "'", with: "\\'"))'
-        result_file = '\(resultFilePath.replacingOccurrences(of: "'", with: "\\'"))'
+        output_dir = r'''\(outputDir)'''
+        url = r'''\(url.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: ""))'''
+        result_file = r'''\(resultFilePath)'''
 
         log(f'Output dir: {output_dir}')
         log(f'URL: {url}')
