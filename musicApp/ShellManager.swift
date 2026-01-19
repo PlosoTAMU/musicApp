@@ -219,26 +219,12 @@ class ShellManager: ObservableObject {
     }
 
     private func verifyYTDLP() {
-        print("📦 [Shell] Verifying yt-dlp installation...")
-        
-        do {
-            // Suppress warnings about Apple-specific modules
-            let warnings = Python.import("warnings")
-            warnings.filterwarnings("ignore")
-            
-            let yt_dlp = Python.import("yt_dlp")
-            print("✅ [Shell] yt-dlp found and imported successfully")
-            
-            DispatchQueue.main.async {
-                self.isReady = true
-                print("✅ [Shell] Shell environment ready")
-            }
-        } catch {
-            print("⚠️  [Shell] Warning during yt-dlp verification: \(error)")
-            // Still mark as ready - we'll handle errors during actual use
-            DispatchQueue.main.async {
-                self.isReady = true
-            }
+        // Skip verification to avoid stack overflow
+        // yt-dlp will be imported when needed
+        print("📦 [Shell] Skipping yt-dlp verification (will import on demand)")
+        DispatchQueue.main.async {
+            self.isReady = true
+            print("✅ [Shell] Shell environment ready")
         }
     }
     
@@ -253,43 +239,63 @@ class ShellManager: ObservableObject {
         
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                // Suppress Apple-specific warnings
-                let warnings = Python.import("warnings")
-                warnings.filterwarnings("ignore")
-                
-                // Disable yt-dlp logger to avoid Apple log stream issues
-                let logging = Python.import("logging")
-                logging.disable(logging.CRITICAL)
-                
-                // Import yt-dlp
+                // Import yt-dlp directly - stubs should handle missing modules
                 let yt_dlp = Python.import("yt_dlp")
                 
                 print("✅ [Shell] yt-dlp imported")
                 
-                // Configure options as PythonObject - disable all logging
+                // Configure options - minimal, quiet mode
                 let ydl_opts: PythonObject = [
                     "format": PythonObject("bestaudio/best"),
                     "quiet": PythonObject(true),
                     "no_warnings": PythonObject(true),
-                    "logger": PythonObject(Python.None)
+                    "no_color": PythonObject(true),
+                    "noprogress": PythonObject(true)
                 ]
                 
                 // Create instance and extract info
                 let ydl = yt_dlp.YoutubeDL(ydl_opts)
-                let info = ydl.extract_info(url, download: false)
+                let info = ydl.extract_info(PythonObject(url), download: PythonObject(false))
                 
-                // Parse results
-                let title = String(info["title"]) ?? "Unknown"
-                let author = String(info["uploader"]) ?? "Unknown"
-                let duration = Int(info["duration"]) ?? 0
-                let urlString = String(info["url"]) ?? ""
+                // Parse results - use Python str() to safely convert
+                let titleObj = info["title"]
+                let uploaderObj = info["uploader"] 
+                let durationObj = info["duration"]
+                let urlObj = info["url"]
                 
-                print("✅ [Shell] Extraction complete")
-                print("📝 Title: \(title)")
+                // Convert to Swift types safely
+                let title: String
+                if titleObj != Python.None, let t = String(titleObj) {
+                    title = t
+                } else {
+                    title = "Unknown"
+                }
+                
+                let author: String
+                if uploaderObj != Python.None, let a = String(uploaderObj) {
+                    author = a
+                } else {
+                    author = "Unknown"
+                }
+                
+                let duration: Int
+                if durationObj != Python.None, let d = Int(durationObj) {
+                    duration = d
+                } else {
+                    duration = 0
+                }
+                
+                let urlString: String
+                if urlObj != Python.None, let u = String(urlObj) {
+                    urlString = u
+                } else {
+                    throw ShellError.invalidURL
+                }
+                
+                print("✅ [Shell] Extraction complete: \(title)")
                 
                 guard let audioURL = URL(string: urlString) else {
-                    completion(.failure(ShellError.invalidURL))
-                    return
+                    throw ShellError.invalidURL
                 }
                 
                 let videoInfo = VideoInfo(
@@ -324,38 +330,32 @@ class ShellManager: ObservableObject {
         
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                // Suppress Apple-specific warnings
-                let warnings = Python.import("warnings")
-                warnings.filterwarnings("ignore")
-                
-                // Disable yt-dlp logger to avoid Apple log stream issues
-                let logging = Python.import("logging")
-                logging.disable(logging.CRITICAL)
-                
-                // Import yt-dlp
+                // Import yt-dlp directly
                 let yt_dlp = Python.import("yt_dlp")
                 
-                // Configure options for direct download
-                let postprocessors: PythonObject = [[
-                    "key": PythonObject("FFmpegExtractAudio"),
-                    "preferredcodec": PythonObject("mp3"),
-                    "preferredquality": PythonObject("192")
-                ]]
-                
+                // Configure options for direct download - no FFmpeg postprocessing
+                // Just get the best audio format available
                 let ydl_opts: PythonObject = [
                     "format": PythonObject("bestaudio/best"),
                     "outtmpl": PythonObject(outputPath),
-                    "postprocessors": postprocessors,
                     "quiet": PythonObject(true),
                     "no_warnings": PythonObject(true),
-                    "logger": PythonObject(Python.None)
+                    "no_color": PythonObject(true),
+                    "noprogress": PythonObject(true)
                 ]
                 
                 // Create instance and download
                 let ydl = yt_dlp.YoutubeDL(ydl_opts)
-                let info = ydl.extract_info(url, download: true)
+                let info = ydl.extract_info(PythonObject(url), download: PythonObject(true))
                 
-                let title = String(info["title"]) ?? "Unknown"
+                // Get title safely
+                let titleObj = info["title"]
+                let title: String
+                if titleObj != Python.None, let t = String(titleObj) {
+                    title = t
+                } else {
+                    title = "Unknown"
+                }
                 
                 print("✅ [Shell] Download complete: \(title)")
                 
