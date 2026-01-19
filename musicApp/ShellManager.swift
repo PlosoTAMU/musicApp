@@ -130,8 +130,6 @@ class ShellManager: ObservableObject {
         sys.path.append(sitePackagesPath)
         
         print("✅ [Shell] Python initialized")
-        print("📍 [Shell] Python version: \(sys.version)")
-        print("📍 [Shell] sys.path: \(sys.path)")
         
         // Also register stubs in sys.modules just in case
         createAppleSupportStubs()
@@ -177,10 +175,10 @@ class ShellManager: ObservableObject {
         // Create stubs directory
         try? FileManager.default.createDirectory(at: stubsPath, withIntermediateDirectories: true)
         
-        // Create _apple_support.py stub
+        // Create _apple_support.py stub - minimal, no imports
         let appleSupport = """
         # Stub module for _apple_support (iOS compatibility)
-        import sys
+        # Keep this minimal to avoid import loops
         
         def init_apple_support(*args, **kwargs):
             pass
@@ -193,25 +191,6 @@ class ShellManager: ObservableObject {
         
         def os_log_with_type(*args, **kwargs):
             pass
-        
-        # Provide dummy stdin/stdout/stderr if needed
-        class DummyStream:
-            def write(self, *args, **kwargs):
-                pass
-            def read(self, *args, **kwargs):
-                return ''
-            def readline(self, *args, **kwargs):
-                return ''
-            def flush(self, *args, **kwargs):
-                pass
-            def close(self, *args, **kwargs):
-                pass
-            def fileno(self):
-                return -1
-            def isatty(self):
-                return False
-        
-        dummy_stream = DummyStream()
         """
         try? appleSupport.write(to: stubsPath.appendingPathComponent("_apple_support.py"), atomically: true, encoding: .utf8)
         
