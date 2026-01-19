@@ -8,27 +8,11 @@ class YouTubeExtractor {
             return
         }
         
-        // Use YouTube's internal API (used by the iOS app itself)
-        let apiURL = URL(string: "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8")!
+        // First, try to get the video page HTML
+        let videoPageURL = URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
         
-        var request = URLRequest(url: apiURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 17_5_1 like Mac OS X;)", forHTTPHeaderField: "User-Agent")
-        
-        let requestBody: [String: Any] = [
-            "context": [
-                "client": [
-                    "clientName": "IOS",
-                    "clientVersion": "19.09.3",
-                    "hl": "en",
-                    "gl": "US"
-                ]
-            ],
-            "videoId": videoID
-        ]
-        
-        request.httpBody = try? JSONSerialization.data(withJSONObject: requestBody)
+        var request = URLRequest(url: videoPageURL)
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
@@ -36,60 +20,114 @@ class YouTubeExtractor {
                 return
             }
             
-            guard let data = data else {
+            guard let data = data,
+                  let html = String(data: data, encoding: .utf8) else {
                 completion(.failure(YouTubeError.noData))
                 return
             }
             
-            do {
-                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                
-                guard let videoDetails = json?["videoDetails"] as? [String: Any],
-                      let streamingData = json?["streamingData"] as? [String: Any] else {
+            // Extract title
+            let title = extractTitle(from: html) ?? "YouTube Video"
+            let author = extractAuthor(from: html) ?? "Unknown"
+            
+            // Try to extract player response JSON
+            if let playerResponse = extractPlayerResponse(from: html) {
+                do {
+                    let json = try JSONSerialization.jsonObject(with: playerResponse.data(using: .utf8)!) as? [String: Any]
+                    
+                    guard let streamingData = json?["streamingData"] as? [String: Any] else {
+                        completion(.failure(YouTubeError.noAudioStream))
+                        return
+                    }
+                    
+                    let adaptiveFormats = streamingData["adaptiveFormats"] as? [[String: Any]] ?? []
+                    
+                    // Find audio-only formats
+                    let audioFormats = adaptiveFormats.filter { format in
+                        let mimeType = format["mimeType"] as? String ?? ""
+                        return mimeType.contains("audio")
+                    }
+                    
+                    // Sort by bitrate
+                    let sortedAudio = audioFormats.sorted { format1, format2 in
+                        let bitrate1 = format1["bitrate"] as? Int ?? 0
+                        let bitrate2 = format2["bitrate"] as? Int ?? 0
+                        return bitrate1 > bitrate2
+                    }
+                    
+                    guard let bestAudio = sortedAudio.first,
+                          let urlString = bestAudio["url"] as? String,
+                          let audioURL = URL(string: urlString) else {
+                        completion(.failure(YouTubeError.noAudioStream))
+                        return
+                    }
+                    
+                    let videoInfo = VideoInfo(
+                        title: title,
+                        author: author,
+                        duration: 0,
+                        audioURL: audioURL
+                    )
+                    
+                    completion(.success(videoInfo))
+                    
+                } catch {
                     completion(.failure(YouTubeError.parsingFailed))
-                    return
                 }
-                
-                let title = videoDetails["title"] as? String ?? "Unknown"
-                let author = videoDetails["author"] as? String ?? "Unknown"
-                let lengthSeconds = (videoDetails["lengthSeconds"] as? String).flatMap { Int($0) } ?? 0
-                
-                // Get adaptive formats (separate audio/video streams)
-                let adaptiveFormats = streamingData["adaptiveFormats"] as? [[String: Any]] ?? []
-                
-                // Filter audio-only formats
-                let audioFormats = adaptiveFormats.filter { format in
-                    let mimeType = format["mimeType"] as? String ?? ""
-                    return mimeType.contains("audio")
-                }
-                
-                // Sort by bitrate (quality)
-                let sortedAudio = audioFormats.sorted { format1, format2 in
-                    let bitrate1 = format1["bitrate"] as? Int ?? 0
-                    let bitrate2 = format2["bitrate"] as? Int ?? 0
-                    return bitrate1 > bitrate2
-                }
-                
-                guard let bestAudio = sortedAudio.first,
-                      let urlString = bestAudio["url"] as? String,
-                      let audioURL = URL(string: urlString) else {
-                    completion(.failure(YouTubeError.noAudioStream))
-                    return
-                }
-                
-                let videoInfo = VideoInfo(
-                    title: title,
-                    author: author,
-                    duration: lengthSeconds,
-                    audioURL: audioURL
-                )
-                
-                completion(.success(videoInfo))
-                
-            } catch {
-                completion(.failure(error))
+            } else {
+                completion(.failure(YouTubeError.parsingFailed))
             }
         }.resume()
+    }
+    
+    private static func extractPlayerResponse(from html: String) -> String? {
+        // Look for ytInitialPlayerResponse in the HTML
+        let patterns = [
+            #"var ytInitialPlayerResponse = (\{.+?\});(?:var|</script>)"#,
+            #"ytInitialPlayerResponse\s*=\s*(\{.+?\});"#
+        ]
+        
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .dotMatchesLineSeparators),
+               let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+               let range = Range(match.range(at: 1), in: html) {
+                return String(html[range])
+            }
+        }
+        
+        return nil
+    }
+    
+    private static func extractTitle(from html: String) -> String? {
+        let patterns = [
+            #"<title>(.+?) - YouTube</title>"#,
+            #"\"title\":\"(.+?)\""#
+        ]
+        
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern),
+               let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+               let range = Range(match.range(at: 1), in: html) {
+                let title = String(html[range])
+                // Decode HTML entities
+                return title.replacingOccurrences(of: "\\u0026", with: "&")
+                    .replacingOccurrences(of: "\\/", with: "/")
+            }
+        }
+        
+        return nil
+    }
+    
+    private static func extractAuthor(from html: String) -> String? {
+        let pattern = #"\"author\":\"(.+?)\""#
+        
+        if let regex = try? NSRegularExpression(pattern: pattern),
+           let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+           let range = Range(match.range(at: 1), in: html) {
+            return String(html[range])
+        }
+        
+        return nil
     }
     
     private static func extractVideoID(from urlString: String) -> String? {
