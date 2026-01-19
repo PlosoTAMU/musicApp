@@ -862,41 +862,97 @@ extension YouTubeExtractor: WKNavigationDelegate {
                     window.webkit.messageHandlers.downloadHandler.postMessage({type: 'title', title: title});
                     window.webkit.messageHandlers.downloadHandler.postMessage({type: 'status', status: 'Parsing video data...'});
                     
-                    // Try to find ytInitialPlayerResponse
                     var playerResponse = null;
                     
-                    // Method 1: Direct variable access
-                    if (typeof ytInitialPlayerResponse !== 'undefined') {
+                    // Method 1: Try ytInitialPlayerResponse global variable
+                    if (typeof ytInitialPlayerResponse !== 'undefined' && ytInitialPlayerResponse) {
                         playerResponse = ytInitialPlayerResponse;
+                        console.log('Found via ytInitialPlayerResponse global');
                     }
                     
-                    // Method 2: Parse from page scripts
+                    // Method 2: Search in script tags for ytInitialPlayerResponse
                     if (!playerResponse) {
-                        var scripts = document.getElementsByTagName('script');
+                        var scripts = document.querySelectorAll('script');
                         for (var i = 0; i < scripts.length; i++) {
-                            var text = scripts[i].textContent;
-                            if (text && text.includes('ytInitialPlayerResponse')) {
-                                var match = text.match(/ytInitialPlayerResponse\\s*=\\s*(\\{.+?\\});/s);
-                                if (match) {
+                            var text = scripts[i].textContent || scripts[i].innerText || '';
+                            
+                            // Look for ytInitialPlayerResponse = {...}
+                            var idx = text.indexOf('ytInitialPlayerResponse');
+                            if (idx !== -1) {
+                                // Find the start of the JSON object
+                                var jsonStart = text.indexOf('{', idx);
+                                if (jsonStart !== -1) {
+                                    // Count braces to find the end
+                                    var braceCount = 0;
+                                    var jsonEnd = jsonStart;
+                                    for (var j = jsonStart; j < text.length; j++) {
+                                        if (text[j] === '{') braceCount++;
+                                        else if (text[j] === '}') braceCount--;
+                                        if (braceCount === 0) {
+                                            jsonEnd = j + 1;
+                                            break;
+                                        }
+                                    }
                                     try {
-                                        playerResponse = JSON.parse(match[1]);
+                                        var jsonStr = text.substring(jsonStart, jsonEnd);
+                                        playerResponse = JSON.parse(jsonStr);
+                                        console.log('Found via script tag parsing');
                                         break;
-                                    } catch(e) {}
+                                    } catch(e) {
+                                        console.log('Parse error:', e);
+                                    }
                                 }
                             }
                         }
                     }
                     
-                    // Method 3: Look for player config
-                    if (!playerResponse && typeof ytplayer !== 'undefined' && ytplayer.config) {
-                        playerResponse = ytplayer.config.args.player_response;
-                        if (typeof playerResponse === 'string') {
-                            playerResponse = JSON.parse(playerResponse);
+                    // Method 3: Try to find in ytplayer.config
+                    if (!playerResponse && typeof ytplayer !== 'undefined' && ytplayer && ytplayer.config) {
+                        var pr = ytplayer.config.args && ytplayer.config.args.player_response;
+                        if (pr) {
+                            if (typeof pr === 'string') {
+                                playerResponse = JSON.parse(pr);
+                            } else {
+                                playerResponse = pr;
+                            }
+                            console.log('Found via ytplayer.config');
                         }
                     }
                     
-                    if (!playerResponse || !playerResponse.streamingData) {
-                        window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: 'Could not find streaming data'});
+                    // Method 4: Try to extract from page HTML using regex
+                    if (!playerResponse) {
+                        var html = document.documentElement.innerHTML;
+                        var match = html.match(/ytInitialPlayerResponse\\s*=\\s*(\\{[^<]*?\\});/);
+                        if (match && match[1]) {
+                            try {
+                                playerResponse = JSON.parse(match[1]);
+                                console.log('Found via HTML regex');
+                            } catch(e) {}
+                        }
+                    }
+                    
+                    // Method 5: Look for player response in yt.config_
+                    if (!playerResponse && typeof yt !== 'undefined' && yt.config_ && yt.config_.PLAYER_VARS) {
+                        var pv = yt.config_.PLAYER_VARS;
+                        if (pv.embedded_player_response) {
+                            playerResponse = JSON.parse(pv.embedded_player_response);
+                            console.log('Found via yt.config_.PLAYER_VARS');
+                        }
+                    }
+                    
+                    if (!playerResponse) {
+                        window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: 'Could not find player response in page'});
+                        return;
+                    }
+                    
+                    if (!playerResponse.streamingData) {
+                        // Check if there's a playability status error
+                        var status = playerResponse.playabilityStatus;
+                        if (status && status.reason) {
+                            window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: 'Video unavailable: ' + status.reason});
+                        } else {
+                            window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: 'No streaming data in player response'});
+                        }
                         return;
                     }
                     
@@ -906,10 +962,14 @@ extension YouTubeExtractor: WKNavigationDelegate {
                     
                     // Check adaptiveFormats for audio
                     var formats = streamingData.adaptiveFormats || [];
+                    console.log('Found ' + formats.length + ' adaptive formats');
+                    
                     for (var i = 0; i < formats.length; i++) {
                         var format = formats[i];
-                        if (format.mimeType && format.mimeType.includes('audio')) {
+                        var mimeType = format.mimeType || '';
+                        if (mimeType.includes('audio')) {
                             var bitrate = format.bitrate || 0;
+                            console.log('Audio format: ' + mimeType + ', bitrate: ' + bitrate + ', hasUrl: ' + !!format.url);
                             if (bitrate > bestBitrate && format.url) {
                                 bestBitrate = bitrate;
                                 audioURL = format.url;
@@ -917,22 +977,25 @@ extension YouTubeExtractor: WKNavigationDelegate {
                         }
                     }
                     
-                    // Fallback to formats
+                    // Fallback to regular formats (may have audio+video)
                     if (!audioURL && streamingData.formats) {
+                        console.log('Trying regular formats...');
                         for (var i = 0; i < streamingData.formats.length; i++) {
                             var format = streamingData.formats[i];
                             if (format.url) {
                                 audioURL = format.url;
+                                console.log('Using regular format: ' + format.mimeType);
                                 break;
                             }
                         }
                     }
                     
                     if (audioURL) {
+                        console.log('Sending audio URL to Swift...');
                         window.webkit.messageHandlers.downloadHandler.postMessage({type: 'status', status: 'Starting download...'});
                         window.webkit.messageHandlers.downloadHandler.postMessage({type: 'audioURL', url: audioURL});
                     } else {
-                        window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: 'No audio URL found in streaming data'});
+                        window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: 'No audio URL found. Formats may require signature deciphering.'});
                     }
                     
                 } catch(e) {
