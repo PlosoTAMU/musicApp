@@ -221,12 +221,12 @@ class EmbeddedPython: ObservableObject {
 
 
         ydl_opts = {
-            'format': 'best',
+            'format': 'bestaudio[ext=m4a]/bestaudio',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'quiet': True,
             'verbose': False,
             'noplaylist': True,
-            'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
+            'outtmpl': os.path.join(output_dir, 'audio.%(ext)s'),
             # No extractor_args: let yt-dlp try all available clients and formats
         }
 
@@ -243,18 +243,32 @@ class EmbeddedPython: ObservableObject {
                 log(f'Info extracted, title: {info.get("title", "Unknown")}')
                 title = info.get('title', 'Unknown')
                 video_id = info.get('id', '')
-                
                 log(f'Looking for downloaded file with ID {video_id} in {output_dir}...')
-                
+                downloaded_path = ydl.prepare_filename(info)
+                audio_ext = info.get('ext', 'unknown')
 
-            # Get the downloaded file path from info
-            downloaded_path = ydl.prepare_filename(info)
-            audio_ext = info.get('ext', 'unknown')
+            # If not m4a, convert to m4a using ffmpegkit
+            import os
+            m4a_path = os.path.join(output_dir, 'audio.m4a')
+            if not downloaded_path.endswith('.m4a'):
+                log(f'Converting {downloaded_path} to m4a...')
+                import ffmpeg
+                (
+                    ffmpeg
+                    .input(downloaded_path)
+                    .output(m4a_path, acodec='aac', audio_bitrate='192k', vn=None)
+                    .overwrite_output()
+                    .run()
+                )
+                audio_url = m4a_path
+                audio_ext = 'm4a'
+            else:
+                audio_url = downloaded_path
 
             result = {
                 'success': True,
                 'title': title,
-                'audio_url': downloaded_path,
+                'audio_url': audio_url,
                 'audio_ext': audio_ext,
             }
 
