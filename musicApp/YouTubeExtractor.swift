@@ -49,16 +49,105 @@ class YouTubeExtractor {
         
         print("🎬 [YouTubeExtractor] Extracting info for video ID: \(videoID)")
         
-        // Try direct YouTube API first
+        // Try Cobalt API first (most reliable)
+        do {
+            return try await extractViaCobalt(url: urlString, videoID: videoID)
+        } catch {
+            print("⚠️ [YouTubeExtractor] Cobalt failed: \(error.localizedDescription)")
+        }
+        
+        // Try direct YouTube API
         do {
             return try await extractViaYouTubeAPI(videoID: videoID)
         } catch {
             print("⚠️ [YouTubeExtractor] Direct API failed: \(error.localizedDescription)")
-            print("🔄 [YouTubeExtractor] Trying Invidious fallback...")
         }
         
-        // Fallback to Invidious instances
+        // Fallback to Piped instances
         return try await extractViaInvidious(videoID: videoID)
+    }
+    
+    /// Extract via Cobalt API (most reliable method)
+    private func extractViaCobalt(url: String, videoID: String) async throws -> VideoInfo {
+        // Cobalt API instances
+        let cobaltInstances = [
+            "https://api.cobalt.tools",
+            "https://cobalt-api.kwiatekmiki.com",
+            "https://cobalt.api.timelessnesses.me"
+        ]
+        
+        var lastError: Error = ExtractionError.noAudioStream
+        
+        for instance in cobaltInstances {
+            do {
+                print("🔄 [YouTubeExtractor] Trying Cobalt: \(instance)")
+                
+                let apiURL = URL(string: "\(instance)/api/json")!
+                var request = URLRequest(url: apiURL)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 30
+                
+                let body: [String: Any] = [
+                    "url": url,
+                    "aFormat": "mp3",
+                    "isAudioOnly": true,
+                    "audioBitrate": "320"
+                ]
+                
+                request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+                
+                let (data, response) = try await URLSession.shared.data(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    continue
+                }
+                
+                print("📡 [YouTubeExtractor] Cobalt response: \(httpResponse.statusCode)")
+                
+                guard httpResponse.statusCode == 200 else {
+                    continue
+                }
+                
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    continue
+                }
+                
+                // Check status
+                let status = json["status"] as? String ?? ""
+                
+                if status == "error" {
+                    let errorText = json["text"] as? String ?? "Unknown error"
+                    print("❌ [YouTubeExtractor] Cobalt error: \(errorText)")
+                    continue
+                }
+                
+                // Get audio URL
+                if let audioURLString = json["url"] as? String,
+                   let audioURL = URL(string: audioURLString) {
+                    
+                    // Try to get title from the response or use video ID
+                    let title = (json["filename"] as? String)?.replacingOccurrences(of: ".mp3", with: "") ?? "YouTube_\(videoID)"
+                    
+                    print("✅ [YouTubeExtractor] Cobalt success: \(title)")
+                    
+                    return VideoInfo(
+                        title: title,
+                        author: "YouTube",
+                        duration: 0,
+                        audioURL: audioURL
+                    )
+                }
+                
+            } catch {
+                print("⚠️ [YouTubeExtractor] Cobalt instance \(instance) error: \(error.localizedDescription)")
+                lastError = error
+                continue
+            }
+        }
+        
+        throw lastError
     }
     
     /// Direct YouTube API extraction
@@ -173,18 +262,27 @@ class YouTubeExtractor {
     
     /// Fallback extraction via Invidious/Piped public instances
     private func extractViaInvidious(videoID: String) async throws -> VideoInfo {
-        // Updated list of working public instances (as of 2026)
-        let instances = [
+        // Updated list of Piped API instances - these change frequently
+        let pipedInstances = [
             "https://pipedapi.kavin.rocks",
-            "https://pipedapi.adminforge.de",
-            "https://api.piped.yt",
-            "https://pipedapi.in.projectsegfau.lt",
-            "https://pipedapi.darkness.services"
+            "https://pipedapi.r4fo.com",
+            "https://api.piped.privacydev.net",
+            "https://pipedapi.darkness.services",
+            "https://pipedapi.drgns.space"
+        ]
+        
+        // Invidious instances as backup
+        let invidiousInstances = [
+            "https://vid.puffyan.us",
+            "https://invidious.snopyta.org",
+            "https://y.com.sb",
+            "https://invidious.kavin.rocks"
         ]
         
         var lastError: Error = ExtractionError.noAudioStream
         
-        for instance in instances {
+        // Try Piped first
+        for instance in pipedInstances {
             do {
                 print("🔄 [YouTubeExtractor] Trying Piped: \(instance)")
                 let info = try await extractFromPipedInstance(instance: instance, videoID: videoID)
@@ -196,7 +294,71 @@ class YouTubeExtractor {
             }
         }
         
+        // Try Invidious as backup
+        for instance in invidiousInstances {
+            do {
+                print("🔄 [YouTubeExtractor] Trying Invidious: \(instance)")
+                let info = try await extractFromInvidiousInstance(instance: instance, videoID: videoID)
+                return info
+            } catch {
+                print("⚠️ [YouTubeExtractor] Instance \(instance) failed: \(error.localizedDescription)")
+                lastError = error
+                continue
+            }
+        }
+        
         throw lastError
+    }
+    
+    private func extractFromInvidiousInstance(instance: String, videoID: String) async throws -> VideoInfo {
+        let urlString = "\(instance)/api/v1/videos/\(videoID)"
+        guard let url = URL(string: urlString) else {
+            throw ExtractionError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw ExtractionError.networkError(NSError(domain: "HTTP", code: (response as? HTTPURLResponse)?.statusCode ?? 0))
+        }
+        
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ExtractionError.parsingError
+        }
+        
+        let title = json["title"] as? String ?? "Unknown"
+        let author = json["author"] as? String ?? "Unknown"
+        let duration = json["lengthSeconds"] as? Int ?? 0
+        
+        var audioURL: URL? = nil
+        
+        if let adaptiveFormats = json["adaptiveFormats"] as? [[String: Any]] {
+            let audioFormats = adaptiveFormats.filter { format in
+                let type = format["type"] as? String ?? ""
+                return type.contains("audio")
+            }
+            
+            if let bestAudio = audioFormats.first, let urlStr = bestAudio["url"] as? String {
+                audioURL = URL(string: urlStr)
+            }
+        }
+        
+        guard let finalAudioURL = audioURL else {
+            throw ExtractionError.noAudioStream
+        }
+        
+        print("✅ [YouTubeExtractor] Found via Invidious: \(title)")
+        
+        return VideoInfo(
+            title: title,
+            author: author,
+            duration: duration,
+            audioURL: finalAudioURL
+        )
     }
     
     private func extractFromPipedInstance(instance: String, videoID: String) async throws -> VideoInfo {
