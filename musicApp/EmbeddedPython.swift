@@ -218,15 +218,13 @@ class EmbeddedPython: ObservableObject {
         os.makedirs(output_dir, exist_ok=True)
         log('Output directory created/verified')
 
+
         ydl_opts = {
-            'format': 'bestaudio',
+            'format': 'bestaudio/best',
             'quiet': True,
             'verbose': False,
             'noplaylist': True,
-
-            # DO NOT DOWNLOAD
-            'skip_download': True,
-
+            'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
             # iOS-safe client
             'extractor_args': {
                 'youtube': {
@@ -338,8 +336,10 @@ class EmbeddedPython: ObservableObject {
             throw PythonError.executionError(errorMsg)
         }
 
-        let audioURL = URL(string: audioURLString)!
-        return (audioURL, title)
+    let audioURL = URL(string: audioURLString)!
+    // Log the local file path where the audio was saved
+    print("✅ [runYtdlp] Audio downloaded to: \(audioURL.path)")
+    return (audioURL, title)
 
     }
     
