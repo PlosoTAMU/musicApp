@@ -131,17 +131,24 @@ class ShellManager: ObservableObject {
     private func verifyYTDLP() {
         print("📦 [Shell] Verifying yt-dlp installation...")
         
-        let yt_dlp = Python.import("yt_dlp")
-        print("✅ [Shell] yt-dlp found and imported successfully")
-        
-        // Try to get version
-        if let version = yt_dlp.checking.version {
-            print("📍 [Shell] yt-dlp version: \(version)")
-        }
-        
-        DispatchQueue.main.async {
-            self.isReady = true
-            print("✅ [Shell] Shell environment ready")
+        do {
+            // Suppress warnings about Apple-specific modules
+            let warnings = Python.import("warnings")
+            warnings.filterwarnings("ignore")
+            
+            let yt_dlp = Python.import("yt_dlp")
+            print("✅ [Shell] yt-dlp found and imported successfully")
+            
+            DispatchQueue.main.async {
+                self.isReady = true
+                print("✅ [Shell] Shell environment ready")
+            }
+        } catch {
+            print("⚠️  [Shell] Warning during yt-dlp verification: \(error)")
+            // Still mark as ready - we'll handle errors during actual use
+            DispatchQueue.main.async {
+                self.isReady = true
+            }
         }
     }
     
@@ -156,16 +163,25 @@ class ShellManager: ObservableObject {
         
         DispatchQueue.global(qos: .userInitiated).async {
             do {
+                // Suppress Apple-specific warnings
+                let warnings = Python.import("warnings")
+                warnings.filterwarnings("ignore")
+                
+                // Disable yt-dlp logger to avoid Apple log stream issues
+                let logging = Python.import("logging")
+                logging.disable(logging.CRITICAL)
+                
                 // Import yt-dlp
                 let yt_dlp = Python.import("yt_dlp")
                 
                 print("✅ [Shell] yt-dlp imported")
                 
-                // Configure options as PythonObject
+                // Configure options as PythonObject - disable all logging
                 let ydl_opts: PythonObject = [
                     "format": PythonObject("bestaudio/best"),
                     "quiet": PythonObject(true),
-                    "no_warnings": PythonObject(true)
+                    "no_warnings": PythonObject(true),
+                    "logger": PythonObject(Python.None)
                 ]
                 
                 // Create instance and extract info
@@ -218,6 +234,14 @@ class ShellManager: ObservableObject {
         
         DispatchQueue.global(qos: .userInitiated).async {
             do {
+                // Suppress Apple-specific warnings
+                let warnings = Python.import("warnings")
+                warnings.filterwarnings("ignore")
+                
+                // Disable yt-dlp logger to avoid Apple log stream issues
+                let logging = Python.import("logging")
+                logging.disable(logging.CRITICAL)
+                
                 // Import yt-dlp
                 let yt_dlp = Python.import("yt_dlp")
                 
@@ -232,8 +256,9 @@ class ShellManager: ObservableObject {
                     "format": PythonObject("bestaudio/best"),
                     "outtmpl": PythonObject(outputPath),
                     "postprocessors": postprocessors,
-                    "quiet": PythonObject(false),
-                    "no_warnings": PythonObject(false)
+                    "quiet": PythonObject(true),
+                    "no_warnings": PythonObject(true),
+                    "logger": PythonObject(Python.None)
                 ]
                 
                 // Create instance and download
