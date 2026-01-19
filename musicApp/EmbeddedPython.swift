@@ -227,13 +227,7 @@ class EmbeddedPython: ObservableObject {
             'verbose': False,
             'noplaylist': True,
             'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-            # iOS-safe client
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web'],
-                    'skip': ['dash', 'hls'],
-                }
-            },
+            # No extractor_args: let yt-dlp try all available clients and formats
         }
 
 
