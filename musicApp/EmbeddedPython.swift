@@ -28,6 +28,10 @@ class EmbeddedPython: ObservableObject {
     
     private var pythonInitialized = false
     
+    // CRITICAL: All Python operations MUST run on this single dedicated queue
+    // Python is not thread-safe and the GIL must be acquired from the same thread
+    private let pythonQueue = DispatchQueue(label: "com.musicapp.python", qos: .userInitiated)
+    
     init() {
         // Python will be initialized on first use
     }
@@ -36,7 +40,7 @@ class EmbeddedPython: ObservableObject {
     func initialize() {
         guard !pythonInitialized else { return }
         
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        pythonQueue.async { [weak self] in
             self?.setupPython()
         }
     }
@@ -140,7 +144,8 @@ class EmbeddedPython: ObservableObject {
         try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
         
         return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // CRITICAL: Run on the same queue where Python was initialized
+            pythonQueue.async { [weak self] in
                 do {
                     let result = try self?.runYtdlp(url: url, outputDir: outputDir.path)
                     if let result = result {
@@ -366,17 +371,8 @@ class EmbeddedPython: ObservableObject {
             return nil
         }
         
-        print("🐍 [executePython] Acquiring GIL...")
-        // Acquire the GIL (Global Interpreter Lock) for thread safety
-        let gilState = _PyGILState_Ensure()
-        print("🐍 [executePython] GIL acquired, state: \(gilState)")
-        
-        defer {
-            print("🐍 [executePython] Releasing GIL...")
-            // Always release the GIL when done
-            _PyGILState_Release(gilState)
-            print("🐍 [executePython] GIL released")
-        }
+        // No GIL handling needed - we run all Python code on the same serial queue (pythonQueue)
+        // This avoids deadlocks from trying to acquire the GIL from different threads
         
         // Convert string to C string and run
         guard let cString = code.cString(using: .utf8) else {
