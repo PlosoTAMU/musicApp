@@ -262,9 +262,6 @@ class EmbeddedPython: ObservableObject {
         }
         
         // BeeWare's Python-Apple-support requires special initialization
-        // We need to skip the import of site and _apple_support initially
-        // by setting certain flags
-        
         // Skip importing site module (which tries to import _apple_support)
         _Py_NoSiteFlag = 1
         
@@ -274,16 +271,6 @@ class EmbeddedPython: ObservableObject {
         
         if initialized != 0 {
             print("✅ [EmbeddedPython] Python runtime initialized")
-            
-            // Now manually set up sys.path by running Python code
-            let setupScript = """
-            import sys
-            # Paths should already be set via PYTHONPATH environment variable
-            print(f"Python {sys.version}")
-            print(f"sys.path = {sys.path}")
-            """
-            _ = executePython(setupScript)
-            
             return true
         } else {
             print("⚠️ [EmbeddedPython] Python.xcframework not linked or initialization failed")
@@ -293,12 +280,27 @@ class EmbeddedPython: ObservableObject {
     }
     
     private func executePython(_ code: String) -> String? {
-        // Simpler approach - just run the code directly without output capture
-        // The yt-dlp script writes its result with a marker we can find
-        
-        let result = code.withCString { codePtr in
-            _PyRun_SimpleString(codePtr)
+        // CRITICAL: Must check Python is initialized and run on correct thread
+        guard _Py_IsInitialized() != 0 else {
+            print("❌ [EmbeddedPython] Python not initialized when trying to execute")
+            return nil
         }
+        
+        // Acquire the GIL (Global Interpreter Lock) for thread safety
+        let gilState = _PyGILState_Ensure()
+        
+        defer {
+            // Always release the GIL when done
+            _PyGILState_Release(gilState)
+        }
+        
+        // Convert string to C string and run
+        guard let cString = code.cString(using: .utf8) else {
+            print("❌ [EmbeddedPython] Failed to convert code to C string")
+            return nil
+        }
+        
+        let result = _PyRun_SimpleString(cString)
         
         if result == 0 {
             print("✅ [EmbeddedPython] Python script executed successfully")
@@ -350,3 +352,11 @@ private func _PyRun_SimpleString(_ code: UnsafePointer<CChar>) -> Int32
 // Py_Finalize - Shutdown the Python interpreter
 @_silgen_name("Py_Finalize")
 private func _Py_Finalize()
+
+// PyGILState_Ensure - Acquire the Global Interpreter Lock (for thread safety)
+@_silgen_name("PyGILState_Ensure")
+private func _PyGILState_Ensure() -> Int32
+
+// PyGILState_Release - Release the Global Interpreter Lock
+@_silgen_name("PyGILState_Release")
+private func _PyGILState_Release(_ state: Int32)
