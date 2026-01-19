@@ -8,19 +8,27 @@ struct ContentView: View {
     
     var body: some View {
         NavigationView {
-            List {
-                PlaylistRow(
-                    playlist: playlistManager.everythingPlaylist,
-                    audioPlayer: audioPlayer
-                )
-                
-                ForEach(playlistManager.playlists) { playlist in
+            VStack(spacing: 0) {
+                List {
                     PlaylistRow(
-                        playlist: playlist,
+                        playlist: playlistManager.everythingPlaylist,
                         audioPlayer: audioPlayer
                     )
+                    
+                    ForEach(playlistManager.playlists) { playlist in
+                        PlaylistRow(
+                            playlist: playlist,
+                            audioPlayer: audioPlayer
+                        )
+                    }
+                    .onDelete(perform: deletePlaylists)
                 }
-                .onDelete(perform: deletePlaylists)
+                .listStyle(.plain)
+                
+                // Now Playing Bar
+                if audioPlayer.currentTrack != nil {
+                    NowPlayingBar(audioPlayer: audioPlayer)
+                }
             }
             .navigationTitle("Playlists")
             .toolbar {
@@ -53,6 +61,64 @@ struct ContentView: View {
         for index in offsets {
             playlistManager.removePlaylist(playlistManager.playlists[index])
         }
+    }
+}
+
+// MARK: - Now Playing Bar
+struct NowPlayingBar: View {
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Track info
+            VStack(alignment: .leading, spacing: 2) {
+                Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                
+                Text(audioPlayer.currentTrack?.folderName ?? "")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            
+            Spacer()
+            
+            // Previous button
+            Button {
+                audioPlayer.previous()
+            } label: {
+                Image(systemName: "backward.fill")
+                    .font(.title3)
+            }
+            .buttonStyle(.plain)
+            
+            // Play/Pause button
+            Button {
+                if audioPlayer.isPlaying {
+                    audioPlayer.pause()
+                } else {
+                    audioPlayer.resume()
+                }
+            } label: {
+                Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
+            
+            // Next button
+            Button {
+                audioPlayer.next()
+            } label: {
+                Image(systemName: "forward.fill")
+                    .font(.title3)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
     }
 }
 

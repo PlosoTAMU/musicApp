@@ -171,23 +171,23 @@ class YouTubeExtractor {
         )
     }
     
-    /// Fallback extraction via Invidious public instances
+    /// Fallback extraction via Invidious/Piped public instances
     private func extractViaInvidious(videoID: String) async throws -> VideoInfo {
-        // List of public Invidious instances (these may change over time)
+        // Updated list of working public instances (as of 2026)
         let instances = [
-            "https://inv.nadeko.net",
-            "https://invidious.nerdvpn.de",
-            "https://invidious.jing.rocks",
-            "https://yewtu.be",
-            "https://invidious.protokolla.fi"
+            "https://pipedapi.kavin.rocks",
+            "https://pipedapi.adminforge.de",
+            "https://api.piped.yt",
+            "https://pipedapi.in.projectsegfau.lt",
+            "https://pipedapi.darkness.services"
         ]
         
         var lastError: Error = ExtractionError.noAudioStream
         
         for instance in instances {
             do {
-                print("🔄 [YouTubeExtractor] Trying Invidious: \(instance)")
-                let info = try await extractFromInvidiousInstance(instance: instance, videoID: videoID)
+                print("🔄 [YouTubeExtractor] Trying Piped: \(instance)")
+                let info = try await extractFromPipedInstance(instance: instance, videoID: videoID)
                 return info
             } catch {
                 print("⚠️ [YouTubeExtractor] Instance \(instance) failed: \(error.localizedDescription)")
@@ -199,53 +199,62 @@ class YouTubeExtractor {
         throw lastError
     }
     
-    private func extractFromInvidiousInstance(instance: String, videoID: String) async throws -> VideoInfo {
-        let urlString = "\(instance)/api/v1/videos/\(videoID)"
+    private func extractFromPipedInstance(instance: String, videoID: String) async throws -> VideoInfo {
+        // Piped API uses /streams/ endpoint
+        let urlString = "\(instance)/streams/\(videoID)"
         guard let url = URL(string: urlString) else {
             throw ExtractionError.invalidURL
         }
         
         var request = URLRequest(url: url)
-        request.timeoutInterval = 15
+        request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw ExtractionError.networkError(NSError(domain: "HTTP", code: (response as? HTTPURLResponse)?.statusCode ?? 0))
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            print("❌ [YouTubeExtractor] HTTP \(code) from \(instance)")
+            throw ExtractionError.networkError(NSError(domain: "HTTP", code: code))
         }
         
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ExtractionError.parsingError
         }
         
-        let title = json["title"] as? String ?? "Unknown"
-        let author = json["author"] as? String ?? "Unknown"
-        let duration = json["lengthSeconds"] as? Int ?? 0
+        // Check for error
+        if let error = json["error"] as? String {
+            print("❌ [YouTubeExtractor] Piped error: \(error)")
+            throw ExtractionError.parsingError
+        }
         
-        // Get audio streams from adaptiveFormats
+        let title = json["title"] as? String ?? "Unknown"
+        let author = json["uploader"] as? String ?? "Unknown"
+        let duration = json["duration"] as? Int ?? 0
+        
+        // Get audio streams from audioStreams array
         var audioURL: URL? = nil
         
-        if let adaptiveFormats = json["adaptiveFormats"] as? [[String: Any]] {
-            // Filter for audio-only formats and sort by bitrate
-            let audioFormats = adaptiveFormats.filter { format in
-                let type = format["type"] as? String ?? ""
-                return type.contains("audio")
-            }.sorted { a, b in
-                let bitrateA = (a["bitrate"] as? String).flatMap { Int($0) } ?? a["bitrate"] as? Int ?? 0
-                let bitrateB = (b["bitrate"] as? String).flatMap { Int($0) } ?? b["bitrate"] as? Int ?? 0
+        if let audioStreams = json["audioStreams"] as? [[String: Any]] {
+            // Sort by bitrate (highest first)
+            let sortedStreams = audioStreams.sorted { a, b in
+                let bitrateA = a["bitrate"] as? Int ?? 0
+                let bitrateB = b["bitrate"] as? Int ?? 0
                 return bitrateA > bitrateB
             }
             
-            if let bestAudio = audioFormats.first, let urlStr = bestAudio["url"] as? String {
-                audioURL = URL(string: urlStr)
-            }
-        }
-        
-        // Fallback to formatStreams
-        if audioURL == nil, let formatStreams = json["formatStreams"] as? [[String: Any]] {
-            if let format = formatStreams.first, let urlStr = format["url"] as? String {
-                audioURL = URL(string: urlStr)
+            // Find best audio stream
+            for stream in sortedStreams {
+                if let urlStr = stream["url"] as? String, !urlStr.isEmpty {
+                    audioURL = URL(string: urlStr)
+                    if audioURL != nil {
+                        let bitrate = stream["bitrate"] as? Int ?? 0
+                        let mimeType = stream["mimeType"] as? String ?? "unknown"
+                        print("📀 [YouTubeExtractor] Selected: \(mimeType) @ \(bitrate) bps")
+                        break
+                    }
+                }
             }
         }
         
@@ -253,7 +262,7 @@ class YouTubeExtractor {
             throw ExtractionError.noAudioStream
         }
         
-        print("✅ [YouTubeExtractor] Found audio via Invidious for: \(title)")
+        print("✅ [YouTubeExtractor] Found audio via Piped for: \(title)")
         
         return VideoInfo(
             title: title,
