@@ -8,11 +8,17 @@ class YouTubeExtractor: NSObject, ObservableObject {
     
     @Published var isLoggedIn = false
     @Published var needsLogin = false
+    @Published var downloadProgress: Double = 0.0
+    @Published var statusMessage: String = ""
     
-    // Persistent WebView for maintaining login session
+    // Persistent WebView for maintaining login session AND downloading
     private var webView: WKWebView?
+    private var downloadWebView: WKWebView?
     private var extractionCompletion: ((Result<VideoInfo, Error>) -> Void)?
+    private var downloadCompletion: ((Result<(URL, String), Error>) -> Void)?
     private var currentVideoID: String?
+    private var currentVideoTitle: String?
+    private var messageHandler: WebViewMessageHandler?
     
     // YouTube innertube API keys - these are PUBLIC keys embedded in YouTube's own clients
     // They are not secrets and are identical for all users. Extracted from YouTube JS/apps.
@@ -50,6 +56,7 @@ class YouTubeExtractor: NSObject, ObservableObject {
         // WebView must be created on main thread
         DispatchQueue.main.async { [weak self] in
             self?.setupWebView()
+            self?.setupDownloadWebView()
             self?.checkLoginStatus()
         }
     }
@@ -69,6 +76,32 @@ class YouTubeExtractor: NSObject, ObservableObject {
         
         webView = WKWebView(frame: .zero, configuration: config)
         webView?.navigationDelegate = self
+    }
+    
+    /// Setup a dedicated WebView for downloading with JavaScript message handler
+    private func setupDownloadWebView() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.setupDownloadWebView()
+            }
+            return
+        }
+        
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = WKWebsiteDataStore.default()
+        
+        // Allow media playback without user action (needed for audio extraction)
+        config.mediaTypesRequiringUserActionForPlayback = []
+        config.allowsInlineMediaPlayback = true
+        
+        // Create message handler for receiving download data from JS
+        messageHandler = WebViewMessageHandler { [weak self] message in
+            self?.handleDownloadMessage(message)
+        }
+        config.userContentController.add(messageHandler!, name: "downloadHandler")
+        
+        downloadWebView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: config)
+        downloadWebView?.navigationDelegate = self
     }
     
     /// Check if we have YouTube cookies saved and sync them to HTTPCookieStorage
@@ -568,157 +601,11 @@ class YouTubeExtractor: NSObject, ObservableObject {
     
     /// Download audio data directly and return the local file URL
     func downloadAudioDirectly(from urlString: String) async throws -> (URL, String) {
-        // First extract the info
-        let info = try await extractInfo(from: urlString)
+        // First, try the WebView-based approach (uses real browser session)
+        // This bypasses 403 issues because the WebView has the authenticated session
+        print("📥 [YouTubeExtractor] Using WebView-based download (bypasses 403)...")
         
-        print("📥 [YouTubeExtractor] Downloading audio directly...")
-        
-        // Download using the same session configuration that worked for extraction
-        let config = URLSessionConfiguration.default
-        config.httpCookieStorage = HTTPCookieStorage.shared
-        config.httpCookieAcceptPolicy = .always
-        config.httpShouldSetCookies = true
-        
-        var request = URLRequest(url: info.audioURL)
-        request.setValue(info.clientType.userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.timeoutInterval = 300
-        
-        // Apply cookies
-        if let cookies = getCookieString() {
-            request.setValue(cookies, forHTTPHeaderField: "Cookie")
-        }
-        
-        let session = URLSession(configuration: config)
-        
-        // Try direct download first
-        let (tempURL, response) = try await session.download(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ExtractionError.networkError(NSError(domain: "HTTP", code: 0))
-        }
-        
-        print("📡 [YouTubeExtractor] Download response: \(httpResponse.statusCode)")
-        
-        if httpResponse.statusCode == 403 {
-            // If 403, try fetching via web page scraping
-            print("⚠️ [YouTubeExtractor] 403 on direct URL, trying web scrape method...")
-            return try await downloadViaWebScrape(videoID: extractVideoID(from: urlString)!, title: info.title)
-        }
-        
-        guard httpResponse.statusCode == 200 || httpResponse.statusCode == 206 else {
-            throw ExtractionError.networkError(NSError(domain: "HTTP", code: httpResponse.statusCode))
-        }
-        
-        // Move to documents
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let youtubeFolder = documentsPath.appendingPathComponent("YouTube Downloads", isDirectory: true)
-        try? FileManager.default.createDirectory(at: youtubeFolder, withIntermediateDirectories: true)
-        
-        let cleanTitle = info.title.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
-        let destinationURL = youtubeFolder.appendingPathComponent("\(cleanTitle).m4a")
-        
-        try? FileManager.default.removeItem(at: destinationURL)
-        try FileManager.default.moveItem(at: tempURL, to: destinationURL)
-        
-        print("✅ [YouTubeExtractor] Saved to: \(destinationURL.lastPathComponent)")
-        
-        return (destinationURL, info.title)
-    }
-    
-    /// Fallback: scrape the YouTube watch page for audio URL
-    private func downloadViaWebScrape(videoID: String, title: String) async throws -> (URL, String) {
-        print("🌐 [YouTubeExtractor] Trying web scrape method...")
-        
-        // Fetch the watch page HTML
-        let watchURL = URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
-        var request = URLRequest(url: watchURL)
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
-        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
-        
-        if let cookies = getCookieString() {
-            request.setValue(cookies, forHTTPHeaderField: "Cookie")
-        }
-        
-        let config = URLSessionConfiguration.default
-        config.httpCookieStorage = HTTPCookieStorage.shared
-        let session = URLSession(configuration: config)
-        
-        let (data, _) = try await session.data(for: request)
-        
-        guard let html = String(data: data, encoding: .utf8) else {
-            throw ExtractionError.parsingError
-        }
-        
-        // Look for ytInitialPlayerResponse in the HTML
-        guard let startRange = html.range(of: "var ytInitialPlayerResponse = "),
-              let endRange = html.range(of: ";</script>", range: startRange.upperBound..<html.endIndex) else {
-            print("❌ [YouTubeExtractor] Could not find player response in HTML")
-            throw ExtractionError.parsingError
-        }
-        
-        let jsonString = String(html[startRange.upperBound..<endRange.lowerBound])
-        
-        guard let jsonData = jsonString.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-              let streamingData = json["streamingData"] as? [String: Any] else {
-            throw ExtractionError.parsingError
-        }
-        
-        // Find audio URL
-        var audioURLString: String? = nil
-        
-        if let adaptiveFormats = streamingData["adaptiveFormats"] as? [[String: Any]] {
-            let audioFormats = adaptiveFormats
-                .filter { ($0["mimeType"] as? String)?.contains("audio") == true }
-                .sorted { ($0["bitrate"] as? Int ?? 0) > ($1["bitrate"] as? Int ?? 0) }
-            
-            for format in audioFormats {
-                if let urlStr = format["url"] as? String {
-                    audioURLString = urlStr
-                    break
-                }
-            }
-        }
-        
-        guard let audioURL = audioURLString, let url = URL(string: audioURL) else {
-            throw ExtractionError.noAudioStream
-        }
-        
-        print("🎵 [YouTubeExtractor] Found audio URL from web scrape")
-        
-        // Download the audio
-        var audioRequest = URLRequest(url: url)
-        audioRequest.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
-        audioRequest.setValue("https://www.youtube.com", forHTTPHeaderField: "Referer")
-        if let cookies = getCookieString() {
-            audioRequest.setValue(cookies, forHTTPHeaderField: "Cookie")
-        }
-        
-        let (tempURL, response) = try await session.download(for: audioRequest)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 || httpResponse.statusCode == 206 else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            print("❌ [YouTubeExtractor] Web scrape download failed: \(code)")
-            throw ExtractionError.networkError(NSError(domain: "HTTP", code: code))
-        }
-        
-        // Move to documents
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let youtubeFolder = documentsPath.appendingPathComponent("YouTube Downloads", isDirectory: true)
-        try? FileManager.default.createDirectory(at: youtubeFolder, withIntermediateDirectories: true)
-        
-        let cleanTitle = title.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
-        let destinationURL = youtubeFolder.appendingPathComponent("\(cleanTitle).m4a")
-        
-        try? FileManager.default.removeItem(at: destinationURL)
-        try FileManager.default.moveItem(at: tempURL, to: destinationURL)
-        
-        print("✅ [YouTubeExtractor] Saved via web scrape: \(destinationURL.lastPathComponent)")
-        
-        return (destinationURL, title)
+        return try await downloadAudioViaWebView(from: urlString)
     }
     
     /// Completion handler version
@@ -732,14 +619,344 @@ class YouTubeExtractor: NSObject, ObservableObject {
             }
         }
     }
+    
+    // MARK: - WebView-based Download (bypasses 403 by using browser session)
+    
+    /// Download audio by loading the YouTube page in WebView and extracting via JavaScript
+    func downloadAudioViaWebView(from urlString: String) async throws -> (URL, String) {
+        guard let videoID = extractVideoID(from: urlString) else {
+            throw ExtractionError.noVideoID
+        }
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(throwing: ExtractionError.networkError(NSError(domain: "Self deallocated", code: 0)))
+                    return
+                }
+                
+                self.currentVideoID = videoID
+                self.downloadCompletion = { result in
+                    continuation.resume(with: result)
+                }
+                
+                self.statusMessage = "Loading video page..."
+                
+                // Load the YouTube watch page in our download WebView
+                let watchURL = URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
+                self.downloadWebView?.load(URLRequest(url: watchURL))
+            }
+        }
+    }
+    
+    /// Handle messages from JavaScript
+    private func handleDownloadMessage(_ message: Any) {
+        guard let dict = message as? [String: Any] else { return }
+        
+        if let type = dict["type"] as? String {
+            switch type {
+            case "progress":
+                if let progress = dict["progress"] as? Double {
+                    DispatchQueue.main.async {
+                        self.downloadProgress = progress
+                    }
+                }
+                
+            case "status":
+                if let status = dict["status"] as? String {
+                    DispatchQueue.main.async {
+                        self.statusMessage = status
+                    }
+                }
+                
+            case "title":
+                if let title = dict["title"] as? String {
+                    self.currentVideoTitle = title
+                }
+                
+            case "audioData":
+                // Audio data received as base64
+                if let base64Data = dict["data"] as? String,
+                   let audioData = Data(base64Encoded: base64Data) {
+                    saveDownloadedAudio(audioData)
+                }
+                
+            case "audioURL":
+                // Got an audio URL to download
+                if let urlString = dict["url"] as? String {
+                    downloadFromExtractedURL(urlString)
+                }
+                
+            case "error":
+                if let error = dict["message"] as? String {
+                    let completion = self.downloadCompletion
+                    self.downloadCompletion = nil
+                    DispatchQueue.main.async {
+                        self.statusMessage = "Error: \(error)"
+                        completion?(.failure(ExtractionError.parsingError))
+                    }
+                }
+                
+            default:
+                break
+            }
+        }
+    }
+    
+    /// Download from the URL extracted by JavaScript (using WebView's session)
+    private func downloadFromExtractedURL(_ urlString: String) {
+        guard let url = URL(string: urlString) else {
+            downloadCompletion?(.failure(ExtractionError.invalidURL))
+            return
+        }
+        
+        DispatchQueue.main.async {
+            self.statusMessage = "Downloading audio..."
+        }
+        
+        // Use JavaScript fetch within the WebView to download (maintains session)
+        let js = """
+        (async function() {
+            try {
+                window.webkit.messageHandlers.downloadHandler.postMessage({type: 'status', status: 'Fetching audio data...'});
+                
+                const response = await fetch('\(urlString)', {
+                    credentials: 'include',
+                    headers: {
+                        'Range': 'bytes=0-'
+                    }
+                });
+                
+                if (!response.ok) {
+                    window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: 'HTTP ' + response.status});
+                    return;
+                }
+                
+                const reader = response.body.getReader();
+                const contentLength = response.headers.get('Content-Length');
+                const total = contentLength ? parseInt(contentLength) : 0;
+                let received = 0;
+                const chunks = [];
+                
+                while(true) {
+                    const {done, value} = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    received += value.length;
+                    if (total > 0) {
+                        window.webkit.messageHandlers.downloadHandler.postMessage({
+                            type: 'progress', 
+                            progress: received / total
+                        });
+                    }
+                }
+                
+                window.webkit.messageHandlers.downloadHandler.postMessage({type: 'status', status: 'Processing audio...'});
+                
+                const blob = new Blob(chunks);
+                const arrayBuffer = await blob.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                
+                // Convert to base64 in chunks to avoid memory issues
+                let binary = '';
+                const chunkSize = 65536;
+                for (let i = 0; i < uint8Array.length; i += chunkSize) {
+                    const chunk = uint8Array.subarray(i, Math.min(i + chunkSize, uint8Array.length));
+                    binary += String.fromCharCode.apply(null, chunk);
+                }
+                const base64 = btoa(binary);
+                
+                window.webkit.messageHandlers.downloadHandler.postMessage({
+                    type: 'audioData',
+                    data: base64
+                });
+                
+            } catch(e) {
+                window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: e.toString()});
+            }
+        })();
+        """
+        
+        downloadWebView?.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                print("❌ [YouTubeExtractor] JS fetch error: \(error)")
+            }
+        }
+    }
+    
+    /// Save the downloaded audio data to a file
+    private func saveDownloadedAudio(_ data: Data) {
+        let title = currentVideoTitle ?? "youtube_audio_\(Date().timeIntervalSince1970)"
+        let cleanTitle = title.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
+        
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let youtubeFolder = documentsPath.appendingPathComponent("YouTube Downloads", isDirectory: true)
+        try? FileManager.default.createDirectory(at: youtubeFolder, withIntermediateDirectories: true)
+        
+        let destinationURL = youtubeFolder.appendingPathComponent("\(cleanTitle).m4a")
+        
+        do {
+            try? FileManager.default.removeItem(at: destinationURL)
+            try data.write(to: destinationURL)
+            
+            print("✅ [YouTubeExtractor] Saved: \(destinationURL.lastPathComponent) (\(data.count) bytes)")
+            
+            let completion = self.downloadCompletion
+            self.downloadCompletion = nil
+            DispatchQueue.main.async {
+                self.statusMessage = "Download complete!"
+                self.downloadProgress = 1.0
+                completion?(.success((destinationURL, title)))
+            }
+        } catch {
+            print("❌ [YouTubeExtractor] Save error: \(error)")
+            let completion = self.downloadCompletion
+            self.downloadCompletion = nil
+            DispatchQueue.main.async {
+                completion?(.failure(error))
+            }
+        }
+    }
+}
+
+// MARK: - WebView Message Handler
+class WebViewMessageHandler: NSObject, WKScriptMessageHandler {
+    let handler: (Any) -> Void
+    
+    init(handler: @escaping (Any) -> Void) {
+        self.handler = handler
+    }
+    
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        handler(message.body)
+    }
 }
 
 // MARK: - WKNavigationDelegate
 extension YouTubeExtractor: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // Check if we landed on YouTube after login
-        if let url = webView.url?.absoluteString, url.contains("youtube.com") && !url.contains("accounts.google") {
-            checkLoginStatus()
+        // Check if this is the login webview
+        if webView === self.webView {
+            if let url = webView.url?.absoluteString, url.contains("youtube.com") && !url.contains("accounts.google") {
+                checkLoginStatus()
+            }
+            return
+        }
+        
+        // This is the download webview - inject extraction script
+        if webView === self.downloadWebView {
+            guard let url = webView.url?.absoluteString, url.contains("youtube.com/watch") else { return }
+            
+            print("📄 [YouTubeExtractor] Watch page loaded, extracting audio URL...")
+            
+            DispatchQueue.main.async {
+                self.statusMessage = "Extracting audio..."
+            }
+            
+            // JavaScript to extract audio URL from ytInitialPlayerResponse
+            let extractionJS = """
+            (function() {
+                try {
+                    // Get video title
+                    var title = document.title.replace(' - YouTube', '').trim();
+                    window.webkit.messageHandlers.downloadHandler.postMessage({type: 'title', title: title});
+                    window.webkit.messageHandlers.downloadHandler.postMessage({type: 'status', status: 'Parsing video data...'});
+                    
+                    // Try to find ytInitialPlayerResponse
+                    var playerResponse = null;
+                    
+                    // Method 1: Direct variable access
+                    if (typeof ytInitialPlayerResponse !== 'undefined') {
+                        playerResponse = ytInitialPlayerResponse;
+                    }
+                    
+                    // Method 2: Parse from page scripts
+                    if (!playerResponse) {
+                        var scripts = document.getElementsByTagName('script');
+                        for (var i = 0; i < scripts.length; i++) {
+                            var text = scripts[i].textContent;
+                            if (text && text.includes('ytInitialPlayerResponse')) {
+                                var match = text.match(/ytInitialPlayerResponse\\s*=\\s*(\\{.+?\\});/s);
+                                if (match) {
+                                    try {
+                                        playerResponse = JSON.parse(match[1]);
+                                        break;
+                                    } catch(e) {}
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Method 3: Look for player config
+                    if (!playerResponse && typeof ytplayer !== 'undefined' && ytplayer.config) {
+                        playerResponse = ytplayer.config.args.player_response;
+                        if (typeof playerResponse === 'string') {
+                            playerResponse = JSON.parse(playerResponse);
+                        }
+                    }
+                    
+                    if (!playerResponse || !playerResponse.streamingData) {
+                        window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: 'Could not find streaming data'});
+                        return;
+                    }
+                    
+                    var streamingData = playerResponse.streamingData;
+                    var audioURL = null;
+                    var bestBitrate = 0;
+                    
+                    // Check adaptiveFormats for audio
+                    var formats = streamingData.adaptiveFormats || [];
+                    for (var i = 0; i < formats.length; i++) {
+                        var format = formats[i];
+                        if (format.mimeType && format.mimeType.includes('audio')) {
+                            var bitrate = format.bitrate || 0;
+                            if (bitrate > bestBitrate && format.url) {
+                                bestBitrate = bitrate;
+                                audioURL = format.url;
+                            }
+                        }
+                    }
+                    
+                    // Fallback to formats
+                    if (!audioURL && streamingData.formats) {
+                        for (var i = 0; i < streamingData.formats.length; i++) {
+                            var format = streamingData.formats[i];
+                            if (format.url) {
+                                audioURL = format.url;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (audioURL) {
+                        window.webkit.messageHandlers.downloadHandler.postMessage({type: 'status', status: 'Starting download...'});
+                        window.webkit.messageHandlers.downloadHandler.postMessage({type: 'audioURL', url: audioURL});
+                    } else {
+                        window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: 'No audio URL found in streaming data'});
+                    }
+                    
+                } catch(e) {
+                    window.webkit.messageHandlers.downloadHandler.postMessage({type: 'error', message: 'Extraction error: ' + e.toString()});
+                }
+            })();
+            """
+            
+            webView.evaluateJavaScript(extractionJS) { _, error in
+                if let error = error {
+                    print("❌ [YouTubeExtractor] Extraction JS error: \(error)")
+                }
+            }
+        }
+    }
+    
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        if webView === self.downloadWebView {
+            let completion = self.downloadCompletion
+            self.downloadCompletion = nil
+            DispatchQueue.main.async {
+                self.statusMessage = "Navigation failed"
+                completion?(.failure(error))
+            }
         }
     }
 }

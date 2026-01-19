@@ -62,8 +62,15 @@ struct YouTubeDownloadView: View {
                             .padding(.horizontal)
                         
                         if downloader.isDownloading {
-                            ProgressView("Downloading...")
-                                .padding()
+                            VStack(spacing: 8) {
+                                ProgressView(value: extractor.downloadProgress)
+                                    .progressViewStyle(LinearProgressViewStyle())
+                                    .padding(.horizontal, 40)
+                                Text(extractor.statusMessage.isEmpty ? "Downloading..." : extractor.statusMessage)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding()
                         } else {
                             // One-tap download button
                             Button {
@@ -110,8 +117,14 @@ struct YouTubeDownloadView: View {
                         .padding(.horizontal)
                         
                         if downloader.isDownloading {
-                            ProgressView("Downloading...")
-                                .padding()
+                            VStack(spacing: 8) {
+                                ProgressView(value: extractor.downloadProgress)
+                                    .progressViewStyle(LinearProgressViewStyle())
+                                Text(extractor.statusMessage.isEmpty ? "Downloading..." : extractor.statusMessage)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding()
                         }
                         
                         downloadButton
