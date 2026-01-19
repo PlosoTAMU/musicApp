@@ -161,15 +161,21 @@ class EmbeddedPython: ObservableObject {
         }
         
         // Parse the result
-        guard let resultStart = output.range(of: "YTDLP_RESULT:"),
-              let jsonData = String(output[resultStart.upperBound...]).data(using: .utf8),
+        guard let resultStart = output.range(of: "YTDLP_RESULT:") else {
+            throw PythonError.downloadFailed
+        }
+        
+        let jsonString = String(output[resultStart.upperBound..<output.endIndex])
+        
+        guard let jsonData = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
               let success = json["success"] as? Bool, success,
               let filepath = json["filepath"] as? String,
               let title = json["title"] as? String else {
             
             // Try to extract error message
-            if let errorMsg = output.range(of: "error").map({ String(output[$0...]) }) {
+            if let errorRange = output.range(of: "error") {
+                let errorMsg = String(output[errorRange.lowerBound..<output.endIndex])
                 throw PythonError.executionError(errorMsg)
             }
             throw PythonError.downloadFailed
