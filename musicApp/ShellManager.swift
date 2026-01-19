@@ -1,6 +1,14 @@
 import Foundation
 import PythonKit
 
+// Video info structure for YouTube extraction
+struct VideoInfo {
+    let title: String
+    let author: String
+    let duration: Int
+    let audioURL: URL
+}
+
 class ShellManager: ObservableObject {
     static let shared = ShellManager()
     
