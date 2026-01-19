@@ -4,45 +4,63 @@ struct YouTubeDownloadView: View {
     @ObservedObject var playlistManager: PlaylistManager
     @StateObject private var downloader = YouTubeDownloader()
     @ObservedObject var extractor = YouTubeExtractor.shared
+    @ObservedObject var ytdlpService = PythonYTDLPService.shared
     @State private var youtubeURL = ""
     @State private var detectedURL: String? = nil
     @State private var showManualEntry = false
     @State private var showLogin = false
+    @State private var showServerConfig = false
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             VStack(spacing: 24) {
                 
-                // Login status indicator
-                if extractor.isLoggedIn {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                        Text("Signed in to YouTube")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Spacer()
+                // Server status / Login status
+                HStack {
+                    // Server status
+                    Button {
+                        showServerConfig = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: ytdlpService.isRunning ? "server.rack" : "server.rack")
+                                .foregroundColor(ytdlpService.isRunning ? .green : .gray)
+                            Text(ytdlpService.isRunning ? "Server" : "Setup Server")
+                                .font(.caption)
+                                .foregroundColor(ytdlpService.isRunning ? .green : .blue)
+                        }
+                    }
+                    
+                    Spacer()
+                    
+                    // Login status
+                    if extractor.isLoggedIn {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Text("YouTube")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                         Button("Sign Out") {
                             extractor.logout()
                         }
                         .font(.caption)
                         .foregroundColor(.red)
-                    }
-                    .padding(.horizontal)
-                } else {
-                    Button {
-                        showLogin = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "person.circle")
-                            Text("Sign in to YouTube (recommended)")
+                    } else {
+                        Button {
+                            showLogin = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "person.circle")
+                                Text("Sign in")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
                         }
-                        .font(.subheadline)
-                        .foregroundColor(.blue)
                     }
-                    .padding(.top, 8)
                 }
+                .padding(.horizontal)
                 
                 // Auto-detected URL section
                 if let detected = detectedURL, !showManualEntry {
