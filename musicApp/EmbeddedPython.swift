@@ -158,44 +158,88 @@ class EmbeddedPython: ObservableObject {
     private func runYtdlp(url: String, outputDir: String) throws -> (URL, String) {
         // Result file path - Python will write the result here
         let resultFilePath = NSTemporaryDirectory() + "ytdlp_result.json"
+        let logFilePath = NSTemporaryDirectory() + "ytdlp_debug.log"
+        
+        print("🎬 [runYtdlp] Starting download for URL: \(url)")
+        print("🎬 [runYtdlp] Output directory: \(outputDir)")
+        print("🎬 [runYtdlp] Result file: \(resultFilePath)")
         
         let script = """
         import sys
         import os
         import json
 
+        log_file = '\(logFilePath.replacingOccurrences(of: "'", with: "\\'"))'
+
+        def log(msg):
+            with open(log_file, 'a') as f:
+                f.write(str(msg) + '\\n')
+            print(msg)
+
+        log('=== yt-dlp Debug Log ===')
+        log(f'Python version: {sys.version}')
+        log(f'sys.path: {sys.path}')
+
         # Ensure yt_dlp is in path
-        yt_dlp_path = os.path.join(os.environ.get('PYTHONPATH', '').split(':')[0], '..', 'yt_dlp')
+        log('Setting up yt_dlp path...')
+        pythonpath = os.environ.get('PYTHONPATH', '')
+        log(f'PYTHONPATH: {pythonpath}')
+        
+        yt_dlp_path = os.path.join(pythonpath.split(':')[0], '..', 'yt_dlp')
+        log(f'yt_dlp_path: {yt_dlp_path}')
+        
         if yt_dlp_path not in sys.path:
             sys.path.insert(0, yt_dlp_path)
+            log(f'Added to sys.path')
 
-        import yt_dlp
+        log('Attempting to import yt_dlp...')
+        try:
+            import yt_dlp
+            log(f'yt_dlp imported successfully, version: {getattr(yt_dlp, "version", "unknown")}')
+        except Exception as e:
+            log(f'Failed to import yt_dlp: {e}')
+            result = {'success': False, 'error': f'Failed to import yt_dlp: {e}'}
+            result_file = '\(resultFilePath.replacingOccurrences(of: "'", with: "\\'"))'
+            with open(result_file, 'w') as f:
+                json.dump(result, f)
+            raise
 
         output_dir = '\(outputDir.replacingOccurrences(of: "'", with: "\\'"))'
         url = '\(url.replacingOccurrences(of: "'", with: "\\'"))'
         result_file = '\(resultFilePath.replacingOccurrences(of: "'", with: "\\'"))'
 
+        log(f'Output dir: {output_dir}')
+        log(f'URL: {url}')
+
         os.makedirs(output_dir, exist_ok=True)
+        log('Output directory created/verified')
 
         ydl_opts = {
             'format': 'bestaudio[ext=m4a]/bestaudio/best',
             'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-            'quiet': True,
-            'no_warnings': True,
+            'quiet': False,
+            'no_warnings': False,
             'extract_flat': False,
+            'verbose': True,
         }
+        log(f'ydl_opts: {ydl_opts}')
 
         result = {}
 
         try:
+            log('Creating YoutubeDL instance...')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                log('YoutubeDL instance created, extracting info...')
                 info = ydl.extract_info(url, download=True)
+                log(f'Info extracted, title: {info.get("title", "Unknown")}')
                 title = info.get('title', 'Unknown')
                 video_id = info.get('id', '')
                 
+                log(f'Looking for downloaded file in {output_dir}...')
                 # Find downloaded file
                 for f in os.listdir(output_dir):
                     full_path = os.path.join(output_dir, f)
+                    log(f'Found file: {f}')
                     if os.path.isfile(full_path):
                         # Check if this is our file
                         if video_id in f or title[:15] in f:
@@ -204,27 +248,55 @@ class EmbeddedPython: ObservableObject {
                                 'title': title,
                                 'filepath': full_path
                             }
+                            log(f'Matched file: {full_path}')
                             break
 
             if not result:
+                log('No matching file found after download')
                 result = {'success': False, 'error': 'File not found after download'}
         except Exception as e:
+            log(f'Exception during download: {type(e).__name__}: {e}')
+            import traceback
+            log(traceback.format_exc())
             result = {'success': False, 'error': str(e)}
 
+        log(f'Final result: {result}')
         # Write result to file for Swift to read
         with open(result_file, 'w') as f:
             json.dump(result, f)
+        log('Result written to file')
         """
         
+        print("🎬 [runYtdlp] Executing Python script...")
+        let startTime = Date()
+        
         guard executePython(script) != nil else {
+            print("❌ [runYtdlp] executePython returned nil")
+            // Try to read debug log
+            if let debugLog = try? String(contentsOfFile: logFilePath, encoding: .utf8) {
+                print("📋 [runYtdlp] Debug log:\n\(debugLog)")
+            }
             throw PythonError.executionError("Failed to execute Python")
         }
         
+        let elapsed = Date().timeIntervalSince(startTime)
+        print("🎬 [runYtdlp] Python script completed in \(elapsed) seconds")
+        
+        // Print debug log
+        if let debugLog = try? String(contentsOfFile: logFilePath, encoding: .utf8) {
+            print("📋 [runYtdlp] Debug log:\n\(debugLog)")
+        }
+        try? FileManager.default.removeItem(atPath: logFilePath)
+        
         // Read the result from file
+        print("🎬 [runYtdlp] Reading result file...")
         guard let jsonData = try? Data(contentsOf: URL(fileURLWithPath: resultFilePath)),
               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            print("❌ [runYtdlp] Failed to read result file at: \(resultFilePath)")
             throw PythonError.executionError("Failed to read yt-dlp result")
         }
+        
+        print("🎬 [runYtdlp] Result JSON: \(json)")
         
         // Clean up result file
         try? FileManager.default.removeItem(atPath: resultFilePath)
@@ -233,9 +305,11 @@ class EmbeddedPython: ObservableObject {
               let filepath = json["filepath"] as? String,
               let title = json["title"] as? String else {
             let errorMsg = json["error"] as? String ?? "Unknown error"
+            print("❌ [runYtdlp] Download failed: \(errorMsg)")
             throw PythonError.executionError(errorMsg)
         }
         
+        print("✅ [runYtdlp] Download successful: \(title) -> \(filepath)")
         updateStatus("Download complete!")
         return (URL(fileURLWithPath: filepath), title)
     }
