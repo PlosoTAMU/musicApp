@@ -215,6 +215,9 @@ class EmbeddedPython: ObservableObject {
             'no_warnings': False,
             'extract_flat': False,
             'verbose': True,
+            'noplaylist': True,
+            'nocheckcertificate': True,
+            'ignoreerrors': True,
         }
         log(f'ydl_opts: {ydl_opts}')
 
