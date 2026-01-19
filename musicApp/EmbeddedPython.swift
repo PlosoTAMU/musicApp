@@ -219,7 +219,7 @@ class EmbeddedPython: ObservableObject {
         log('Output directory created/verified')
 
         ydl_opts = {
-            'format': 'bestaudio[ext=m4a]',
+            'format': 'bestaudio',
             'quiet': True,
             'verbose': False,
             'noplaylist': True,
