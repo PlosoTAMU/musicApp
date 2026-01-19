@@ -12,11 +12,22 @@ struct YouTubeDownloadView: View {
                 Text("Download from YouTube")
                     .font(.headline)
                 
-                TextField("Paste YouTube URL", text: $youtubeURL)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
-                    .padding(.horizontal)
+                HStack {
+                    TextField("Paste YouTube URL", text: $youtubeURL)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        .keyboardType(.URL)
+                        .textContentType(.URL)
+                    
+                    // Paste button
+                    Button(action: pasteFromClipboard) {
+                        Image(systemName: "doc.on.clipboard")
+                            .foregroundColor(.blue)
+                            .padding(8)
+                    }
+                }
+                .padding(.horizontal)
                 
                 if downloader.isDownloading {
                     ProgressView("Downloading...")
@@ -74,6 +85,12 @@ struct YouTubeDownloadView: View {
                 youtubeURL = ""
                 dismiss()
             }
+        }
+    }
+    
+    private func pasteFromClipboard() {
+        if let clipboardString = UIPasteboard.general.string {
+            youtubeURL = clipboardString
         }
     }
 }
