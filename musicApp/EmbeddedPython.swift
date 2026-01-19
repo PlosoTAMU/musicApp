@@ -268,7 +268,7 @@ class EmbeddedPython: ObservableObject {
                 'title': title,
                 'audio_url': audio_url,
             }
-   
+        
         except Exception as e:
             log(f'Exception during download: {type(e).__name__}: {e}')
             import traceback
