@@ -160,5 +160,3 @@ class YouTubeDownloader: NSObject, ObservableObject, URLSessionDownloadDelegate 
         }
     }
 }
-    }
-}
