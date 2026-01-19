@@ -143,49 +143,44 @@ class ShellManager: ObservableObject {
     }
     
     private func createAppleSupportStubs() {
-        print("🔧 [Shell] Creating Apple support stub modules...")
+        print("🔧 [Shell] Creating Apple support stub modules in sys.modules...")
         
-        // Create stub _apple_support module
-        let stubCode = """
-        import sys
-        import types
+        // Use Python directly to create stub modules
+        let sys = Python.import("sys")
+        let types = Python.import("types")
         
-        # Create a stub module for _apple_support
-        _apple_support = types.ModuleType('_apple_support')
-        _apple_support.__doc__ = 'Stub module for iOS compatibility'
+        // Create _apple_support stub
+        let appleSupport = types.ModuleType("_apple_support")
+        appleSupport.__doc__ = PythonObject("Stub module for iOS compatibility")
         
-        # Add dummy functions that might be called
-        def _noop(*args, **kwargs):
-            pass
-        
-        _apple_support.init_apple_support = _noop
-        _apple_support.init_streams = _noop
-        _apple_support.os_log_create = _noop
-        _apple_support.os_log_with_type = _noop
-        
-        # Register in sys.modules
-        sys.modules['_apple_support'] = _apple_support
-        
-        # Also stub os_log if needed
-        os_log = types.ModuleType('os_log')
-        os_log.os_log_create = _noop
-        os_log.os_log_with_type = _noop
-        sys.modules['os_log'] = os_log
-        
-        # Stub _scproxy for iOS
-        _scproxy = types.ModuleType('_scproxy')
-        _scproxy._get_proxy_settings = lambda: {}
-        _scproxy._get_proxies = lambda: {}
-        sys.modules['_scproxy'] = _scproxy
-        
-        print('✅ Stub modules created')
-        """
-        
-        // Execute the stub creation code
+        // Create a no-op function in Python
         let builtins = Python.import("builtins")
-        builtins.exec(PythonObject(stubCode))
+        let noopFunc = builtins.eval("lambda *args, **kwargs: None")
         
-        print("✅ [Shell] Apple support stubs created")
+        appleSupport.init_apple_support = noopFunc
+        appleSupport.init_streams = noopFunc
+        appleSupport.os_log_create = noopFunc
+        appleSupport.os_log_with_type = noopFunc
+        
+        sys.modules["_apple_support"] = appleSupport
+        print("✅ [Shell] _apple_support stub registered")
+        
+        // Create os_log stub
+        let osLog = types.ModuleType("os_log")
+        osLog.os_log_create = noopFunc
+        osLog.os_log_with_type = noopFunc
+        sys.modules["os_log"] = osLog
+        print("✅ [Shell] os_log stub registered")
+        
+        // Create _scproxy stub
+        let scproxy = types.ModuleType("_scproxy")
+        let emptyDictFunc = builtins.eval("lambda: {}")
+        scproxy._get_proxy_settings = emptyDictFunc
+        scproxy._get_proxies = emptyDictFunc
+        sys.modules["_scproxy"] = scproxy
+        print("✅ [Shell] _scproxy stub registered")
+        
+        print("✅ [Shell] All stub modules created")
     }
     
     private func createAppleSupportStubFiles() -> String {
