@@ -243,40 +243,22 @@ class EmbeddedPython: ObservableObject {
             log('Creating YoutubeDL instance...')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 log('YoutubeDL instance created, extracting info...')
-                info = ydl.extract_info(url, download=False)
+                info = ydl.extract_info(url, download=True)
                 log(f'Info extracted, title: {info.get("title", "Unknown")}')
                 title = info.get('title', 'Unknown')
                 video_id = info.get('id', '')
                 
                 log(f'Looking for downloaded file with ID {video_id} in {output_dir}...')
                 
-            formats = info.get('formats', [])
-            audio_url = None
-            audio_ext = None
 
-            # Prefer m4a (AAC) if available
-            for f in formats:
-                if f.get('ext') == 'm4a' and f.get('url'):
-                    audio_url = f['url']
-                    audio_ext = 'm4a'
-                    break
-
-            # Otherwise fall back to any audio-only format
-            if not audio_url:
-                for f in formats:
-                    if f.get('acodec') != 'none' and f.get('url'):
-                        audio_url = f['url']
-                        audio_ext = f.get('ext', 'unknown')
-                        break
-
-            if not audio_url:
-                raise Exception('No usable audio format found')
-
+            # Get the downloaded file path from info
+            downloaded_path = ydl.prepare_filename(info)
+            audio_ext = info.get('ext', 'unknown')
 
             result = {
                 'success': True,
                 'title': title,
-                'audio_url': audio_url,
+                'audio_url': downloaded_path,
                 'audio_ext': audio_ext,
             }
 
