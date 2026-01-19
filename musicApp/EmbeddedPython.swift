@@ -5,7 +5,21 @@ import Foundation
 /// SETUP INSTRUCTIONS:
 /// 
 /// 1. Download Python iOS Framework:
-///    - Go to https://github.com/beeware/Python-Apple-support/releases
+///    - G        log_file = r'''\(logFilePath)'''
+
+        def log(msg):
+            try:
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(str(msg) + '\\n')
+            except:
+                pass
+            try:
+                print(msg)
+            except:
+                try:
+                    print(str(msg).encode('utf-8', errors='replace').decode('utf-8'))
+                except:
+                    passttps://github.com/beeware/Python-Apple-support/releases
 ///    - Download Python-3.11-iOS-support.b1.tar.gz (or latest)
 ///    - Extract and add Python.xcframework to Xcode project
 ///    - Add python-stdlib folder to project as folder reference
@@ -114,6 +128,7 @@ class EmbeddedPython: ObservableObject {
         setenv("PYTHONPATH", pythonPath, 1)
         setenv("PYTHONDONTWRITEBYTECODE", "1", 1)
         setenv("PYTHONUNBUFFERED", "1", 1)
+        setenv("PYTHONIOENCODING", "utf-8", 1)
         
         // The actual Python initialization happens via the C API
         // When Python.xcframework is properly linked, we can call Py_Initialize()
@@ -194,7 +209,7 @@ class EmbeddedPython: ObservableObject {
             log(f'Failed to import yt_dlp: {e}')
             result = {'success': False, 'error': f'Failed to import yt_dlp: {e}'}
             result_file = r'''\(resultFilePath)'''
-            with open(result_file, 'w') as f:
+            with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(result, f)
             raise
 
@@ -259,7 +274,7 @@ class EmbeddedPython: ObservableObject {
 
         log(f'Final result: {result}')
         # Write result to file for Swift to read
-        with open(result_file, 'w') as f:
+        with open(result_file, 'w', encoding='utf-8') as f:
             json.dump(result, f)
         log('Result written to file')
         """
