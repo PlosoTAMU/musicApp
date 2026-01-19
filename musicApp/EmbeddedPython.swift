@@ -289,31 +289,58 @@ class EmbeddedPython: ObservableObject {
     }
     
     private func executePython(_ code: String) -> String? {
-        // Create a pipe to capture stdout
-        let stdoutPipe = Pipe()
-        let originalStdout = dup(STDOUT_FILENO)
-        dup2(stdoutPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
+        // Use Python's own StringIO to capture output instead of pipe redirection
+        // This avoids EXC_BAD_ACCESS from file descriptor manipulation
         
-        // Run the Python code
-        let result = code.withCString { codePtr in
+        // Get a valid temp path for iOS
+        let tempPath = NSTemporaryDirectory() + "python_output.txt"
+        
+        let wrappedCode = """
+        import sys
+        from io import StringIO
+        
+        _captured_output = StringIO()
+        _old_stdout = sys.stdout
+        _old_stderr = sys.stderr
+        sys.stdout = _captured_output
+        sys.stderr = _captured_output
+        
+        try:
+            exec('''
+\(code.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'''", with: "\\'\\'\\'"))
+''')
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            sys.stdout = _old_stdout
+            sys.stderr = _old_stderr
+        
+        _result = _captured_output.getvalue()
+        _captured_output.close()
+        
+        # Write result to a temp file since we can't easily get it back to Swift
+        with open('\(tempPath)', 'w') as f:
+            f.write(_result)
+        """
+        
+        let result = wrappedCode.withCString { codePtr in
             _PyRun_SimpleString(codePtr)
         }
         
-        // Restore stdout and read captured output
-        fflush(stdout)
-        dup2(originalStdout, STDOUT_FILENO)
-        close(originalStdout)
-        stdoutPipe.fileHandleForWriting.closeFile()
-        
-        let outputData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: outputData, encoding: .utf8)
-        
-        if result == 0 {
-            return output
-        } else {
-            print("❌ [EmbeddedPython] Script execution failed")
-            return nil
+        // Read the output from temp file
+        if let output = try? String(contentsOfFile: tempPath, encoding: .utf8) {
+            try? FileManager.default.removeItem(atPath: tempPath)
+            if result == 0 {
+                return output
+            } else {
+                print("❌ [EmbeddedPython] Script execution failed")
+                print("Output: \(output)")
+                return output  // Return output anyway for debugging
+            }
         }
+        
+        print("❌ [EmbeddedPython] Failed to read Python output")
+        return nil
     }
     
     enum PythonError: Error, LocalizedError {
