@@ -34,61 +34,71 @@ class ShellManager: ObservableObject {
         let pythonGroupPath = "\(bundlePath)/python-group"
         let sitePackagesPath = "\(pythonGroupPath)/site-packages"
         
-        // Look for Python standard library in Python.xcframework
-        // It might be in: Python.framework/Versions/3.X/lib/python3.X
+        // Look for Python standard library in various possible locations
         let pythonFrameworkPath = "\(bundlePath)/Frameworks/Python.framework"
         var pythonLibPath = ""
         
-        // Try to find the lib directory
-        if FileManager.default.fileExists(atPath: "\(pythonFrameworkPath)/lib") {
-            pythonLibPath = "\(pythonFrameworkPath)/lib"
-        } else if FileManager.default.fileExists(atPath: "\(pythonFrameworkPath)/Versions/Current/lib") {
-            pythonLibPath = "\(pythonFrameworkPath)/Versions/Current/lib"
+        // Try different possible locations for Python stdlib
+        // Including xcframework architecture-specific paths
+        let possiblePaths = [
+            // XCFramework architecture-specific paths
+            "\(pythonFrameworkPath)/ios-arm64/lib/python3.11",
+            "\(pythonFrameworkPath)/ios-arm64/lib/python3.12",
+            "\(pythonFrameworkPath)/ios-arm64_x86_64-simulator/lib/python3.11",
+            "\(pythonFrameworkPath)/ios-arm64_x86_64-simulator/lib/python3.12",
+            // Standard framework paths
+            "\(pythonFrameworkPath)/Resources/lib/python3.11",
+            "\(pythonFrameworkPath)/Resources/lib/python3.12",
+            "\(pythonFrameworkPath)/lib/python3.11",
+            "\(pythonFrameworkPath)/lib/python3.12",
+            "\(pythonFrameworkPath)/Versions/Current/lib/python3.11",
+            "\(pythonFrameworkPath)/Versions/3.11/lib/python3.11",
+            "\(bundlePath)/python-stdlib/lib/python3.11",  // Manual bundle location
+        ]
+        
+        for path in possiblePaths {
+            let encodingsPath = "\(path)/encodings"
+            if FileManager.default.fileExists(atPath: encodingsPath) {
+                pythonLibPath = path
+                print("✅ [Shell] Found Python stdlib at: \(path)")
+                print("✅ [Shell] Verified encodings module at: \(encodingsPath)")
+                break
+            }
         }
         
         print("📍 [Shell] Bundle path: \(bundlePath)")
         print("📍 [Shell] Python framework path: \(pythonFrameworkPath)")
-        print("📍 [Shell] Python lib path: \(pythonLibPath)")
         print("📍 [Shell] Site packages path: \(sitePackagesPath)")
         
-        // Set PYTHONHOME to Python framework location
-        if !pythonLibPath.isEmpty {
-            let pythonHome = (pythonLibPath as NSString).deletingLastPathComponent
-            setenv("PYTHONHOME", pythonHome, 1)
-            print("📍 [Shell] PYTHONHOME: \(pythonHome)")
+        if pythonLibPath.isEmpty {
+            print("❌ [Shell] Could not find Python standard library!")
+            print("⚠️  [Shell] Searched in:")
+            for path in possiblePaths {
+                print("    - \(path)")
+            }
+            return
         }
+        
+        print("📍 [Shell] Python stdlib path: \(pythonLibPath)")
+        
+        // Set PYTHONHOME to the parent of lib directory
+        let pythonHome = (pythonLibPath as NSString).deletingLastPathComponent
+        setenv("PYTHONHOME", pythonHome, 1)
+        print("📍 [Shell] PYTHONHOME: \(pythonHome)")
         
         // Set PYTHONPATH to include both standard library and site-packages
-        var pythonPathComponents: [String] = []
-        
-        if !pythonLibPath.isEmpty {
-            // Add standard library paths
-            if let contents = try? FileManager.default.contentsOfDirectory(atPath: pythonLibPath) {
-                for item in contents {
-                    if item.hasPrefix("python3") {
-                        pythonPathComponents.append("\(pythonLibPath)/\(item)")
-                        print("📍 [Shell] Found Python lib: \(pythonLibPath)/\(item)")
-                    }
-                }
-            }
-        }
-        
-        // Add site-packages
-        pythonPathComponents.append(sitePackagesPath)
-        
-        let pythonPath = pythonPathComponents.joined(separator: ":")
+        let pythonPath = "\(pythonLibPath):\(sitePackagesPath)"
         setenv("PYTHONPATH", pythonPath, 1)
         print("📍 [Shell] PYTHONPATH: \(pythonPath)")
         
         // Import sys and add paths
         let sys = Python.import("sys")
-        for path in pythonPathComponents {
-            sys.path.append(path)
-        }
+        sys.path.insert(0, pythonLibPath)
+        sys.path.append(sitePackagesPath)
         
         print("✅ [Shell] Python initialized")
         print("📍 [Shell] Python version: \(sys.version)")
-        print("📍 [Shell] Python path: \(sys.path)")
+        print("📍 [Shell] Python executable: \(sys.executable)")
         
         pythonInitialized = true
         
