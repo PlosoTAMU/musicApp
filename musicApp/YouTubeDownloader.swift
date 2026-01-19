@@ -99,6 +99,56 @@ class YouTubeDownloader: NSObject, ObservableObject, URLSessionDownloadDelegate 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         print("✅ [YouTubeDownloader] Download finished to: \(location.path)")
         
+        // Check HTTP response first
+        if let httpResponse = downloadTask.response as? HTTPURLResponse {
+            print("📡 [YouTubeDownloader] HTTP Status: \(httpResponse.statusCode)")
+            print("📡 [YouTubeDownloader] Content-Type: \(httpResponse.mimeType ?? "unknown")")
+            
+            if httpResponse.statusCode == 403 {
+                print("❌ [YouTubeDownloader] Got 403 - access denied")
+                DispatchQueue.main.async {
+                    self.errorMessage = "Access denied (403)"
+                    self.isDownloading = false
+                    self.downloadCompletion?(nil)
+                }
+                return
+            }
+            
+            // Check if we got HTML instead of audio (error page)
+            if let mimeType = httpResponse.mimeType, mimeType.contains("text/html") {
+                print("❌ [YouTubeDownloader] Got HTML instead of audio - likely error page")
+                // Try to read what we got
+                if let content = try? String(contentsOf: location, encoding: .utf8) {
+                    print("📄 [YouTubeDownloader] Content preview: \(content.prefix(500))")
+                }
+                DispatchQueue.main.async {
+                    self.errorMessage = "Got error page instead of audio"
+                    self.isDownloading = false
+                    self.downloadCompletion?(nil)
+                }
+                return
+            }
+        }
+        
+        // Check file size
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: location.path),
+           let fileSize = attributes[.size] as? Int64 {
+            print("📦 [YouTubeDownloader] File size: \(fileSize) bytes (\(fileSize / 1024) KB)")
+            
+            if fileSize < 10000 { // Less than 10KB is suspicious
+                print("⚠️ [YouTubeDownloader] File too small, might be error page")
+                if let content = try? String(contentsOf: location, encoding: .utf8) {
+                    print("📄 [YouTubeDownloader] Content: \(content.prefix(1000))")
+                }
+                DispatchQueue.main.async {
+                    self.errorMessage = "Downloaded file too small - likely an error"
+                    self.isDownloading = false
+                    self.downloadCompletion?(nil)
+                }
+                return
+            }
+        }
+        
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let youtubeFolder = documentsPath.appendingPathComponent("YouTube Downloads", isDirectory: true)
         
