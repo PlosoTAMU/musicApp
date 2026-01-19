@@ -192,10 +192,7 @@ class YouTubeExtractor {
                 print("❌ [YouTubeExtractor] Could not find ytInitialPlayerResponse in HTML")
                 print("📄 [YouTubeExtractor] Searching for alternate patterns...")
                 
-                // Try alternate extraction methods
-                if let configMatch = extractFromGetVideoInfo(videoID: videoID, completion: completion) {
-                    return
-                }
+                
                 
                 completion(.failure(YouTubeError.parsingFailed))
             }
@@ -227,11 +224,7 @@ class YouTubeExtractor {
         return nil
     }
     
-    private static func extractFromGetVideoInfo(videoID: String, completion: @escaping (Result<VideoInfo, Error>) -> Void) -> Bool {
-        print("🔄 [YouTubeExtractor] Trying get_video_info API...")
-        // This is a fallback that sometimes works
-        return false
-    }
+    
     
     private static func extractPlayerResponse(from html: String) -> String? {
         let patterns = [
