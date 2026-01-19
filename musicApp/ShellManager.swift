@@ -29,19 +29,67 @@ class ShellManager: ObservableObject {
             return
         }
         
-        // Paths
-        let pythonStdlibPath = "\(bundlePath)/Python-stdlib/lib/python3.9"
+        print("📍 [Shell] Bundle: \(bundlePath)")
+        
+        // Check what's in Python-stdlib
+        let pythonStdlibBase = "\(bundlePath)/Python-stdlib"
+        print("📦 [Shell] Checking: \(pythonStdlibBase)")
+        
+        if FileManager.default.fileExists(atPath: pythonStdlibBase) {
+            print("✅ [Shell] Python-stdlib folder exists")
+            
+            let libPath = "\(pythonStdlibBase)/lib"
+            if FileManager.default.fileExists(atPath: libPath) {
+                print("✅ [Shell] lib folder exists")
+                
+                if let libContents = try? FileManager.default.contentsOfDirectory(atPath: libPath) {
+                    print("📦 [Shell] Contents of lib/: \(libContents)")
+                }
+            } else {
+                print("❌ [Shell] lib folder NOT found at: \(libPath)")
+            }
+        } else {
+            print("❌ [Shell] Python-stdlib folder NOT found!")
+            print("⚠️  [Shell] Is it added to Xcode as a folder reference (blue folder)?")
+            return
+        }
+        
+        // Auto-detect Python version
+        let libPath = "\(pythonStdlibBase)/lib"
+        var pythonStdlibPath = ""
+        
+        if let libContents = try? FileManager.default.contentsOfDirectory(atPath: libPath) {
+            for item in libContents {
+                if item.hasPrefix("python3") {
+                    pythonStdlibPath = "\(libPath)/\(item)"
+                    print("✅ [Shell] Found Python: \(item)")
+                    break
+                }
+            }
+        }
+        
+        // Fallback paths
+        if pythonStdlibPath.isEmpty {
+            for version in ["python3.9", "python3.11", "python3.12", "python3.10"] {
+                let testPath = "\(libPath)/\(version)"
+                if FileManager.default.fileExists(atPath: testPath) {
+                    pythonStdlibPath = testPath
+                    print("✅ [Shell] Found \(version)")
+                    break
+                }
+            }
+        }
+        
         let pythonGroupPath = "\(bundlePath)/python-group"
         let sitePackagesPath = "\(pythonGroupPath)/site-packages"
         
-        print("📍 [Shell] Bundle: \(bundlePath)")
         print("📍 [Shell] Python stdlib: \(pythonStdlibPath)")
-        print("� [Shell] Site packages: \(sitePackagesPath)")
+        print("📍 [Shell] Site packages: \(sitePackagesPath)")
         
         // Verify stdlib exists
-        guard FileManager.default.fileExists(atPath: pythonStdlibPath) else {
-            print("❌ [Shell] Python stdlib not found at: \(pythonStdlibPath)")
-            print("⚠️  [Shell] Make sure Python-stdlib folder is added to Xcode as folder reference")
+        guard !pythonStdlibPath.isEmpty && FileManager.default.fileExists(atPath: pythonStdlibPath) else {
+            print("❌ [Shell] Python stdlib not found!")
+            print("⚠️  [Shell] Expected python3.x folder in: \(libPath)")
             return
         }
         
