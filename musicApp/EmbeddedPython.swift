@@ -219,7 +219,7 @@ class EmbeddedPython: ObservableObject {
         log('Output directory created/verified')
 
         ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio/best',
+            'format': '140/bestaudio[ext=m4a]/bestaudio/best',  # itag 140 = direct m4a stream
             'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
             'quiet': False,
             'no_warnings': False,
@@ -230,6 +230,7 @@ class EmbeddedPython: ObservableObject {
             'ignoreerrors': True,
             'restrictfilenames': True,
             'socket_timeout': 30,
+            'extractor_args': {'youtube': {'skip': ['hls', 'dash']}},  # Force direct HTTP download
         }
         log(f'ydl_opts: {ydl_opts}')
 
