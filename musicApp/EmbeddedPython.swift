@@ -220,7 +220,7 @@ class EmbeddedPython: ObservableObject {
 
         ydl_opts = {
             'format': 'bestaudio[ext=m4a]/bestaudio/best',
-            'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
+            'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
             'quiet': False,
             'no_warnings': False,
             'extract_flat': False,
@@ -228,6 +228,7 @@ class EmbeddedPython: ObservableObject {
             'noplaylist': True,
             'nocheckcertificate': True,
             'ignoreerrors': True,
+            'restrictfilenames': True,  # Ensure filenames are ASCII-safe
         }
         log(f'ydl_opts: {ydl_opts}')
 
@@ -242,14 +243,15 @@ class EmbeddedPython: ObservableObject {
                 title = info.get('title', 'Unknown')
                 video_id = info.get('id', '')
                 
-                log(f'Looking for downloaded file in {output_dir}...')
-                # Find downloaded file
+                log(f'Looking for downloaded file with ID {video_id} in {output_dir}...')
+                
+                # Find downloaded file by ID (more reliable than title match)
                 for f in os.listdir(output_dir):
                     full_path = os.path.join(output_dir, f)
-                    log(f'Found file: {f}')
-                    if os.path.isfile(full_path):
+                    
+                    if os.path.isfile(full_path) and not f.endswith('.part'):
                         # Check if this is our file
-                        if video_id in f or title[:15] in f:
+                        if video_id and f.startswith(video_id):
                             result = {
                                 'success': True,
                                 'title': title,
