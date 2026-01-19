@@ -52,7 +52,7 @@ class EmbeddedPython: ObservableObject {
         let pythonHome = resourcePath + "/python-stdlib"
         
         // Auto-detect Python version by looking for python3.X folder
-        var pythonVersion = "python3.9"  // Default
+        var pythonVersion = "python3.14"  // Default
         var libPath = pythonHome + "/lib/" + pythonVersion
         
         // Try to find the actual Python version folder
