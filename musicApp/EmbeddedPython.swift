@@ -221,29 +221,21 @@ class EmbeddedPython: ObservableObject {
 
 
         ydl_opts = {
-            # Download full video (best video + best audio) and let ffmpeg extract m4a
-            'format': 'bestvideo+bestaudio/best',
-            # Ensure merge output is a common container so ffmpeg can read it easily
-            'merge_output_format': 'mp4',
+            # Download MP4-only (video file) and do NOT attempt to merge audio
+            # This forces yt-dlp to select a mp4 video-only format when available.
+            'format': 'bestvideo[ext=mp4]/best[ext=mp4]/best',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'quiet': True,
             'verbose': False,
             'noplaylist': True,
-            # Save the downloaded file as 'download.<ext>' so we can predict the postprocessor output
+            # Save the downloaded file as 'download.<ext>' so we can predict the filename
             'outtmpl': os.path.join(output_dir, 'download.%(ext)s'),
             'extractor_args': {
                 'youtube': [
                     'player_client=android,ios;skip=web',  # Prefer native mobile clients and skip web-only
                 ]
             },
-            # Use yt-dlp's ffmpeg postprocessor to extract audio to m4a
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'm4a',
-                'preferredquality': '192',
-            }],
-            # If you want additional args for ffmpeg, provide them here (example forces stereo)
-            # 'postprocessor_args': ['-ac', '2'],
+            # No postprocessors here: we will run ffmpeg ourselves to extract audio from the MP4
         }
 
 
