@@ -354,18 +354,28 @@ class EmbeddedPython: ObservableObject {
     }
     
     private func executePython(_ code: String) -> String? {
-        // CRITICAL: Must check Python is initialized and run on correct thread
-        guard _Py_IsInitialized() != 0 else {
+        print("🐍 [executePython] Starting...")
+        print("🐍 [executePython] Thread: \(Thread.current)")
+        
+        // CRITICAL: Must check Python is initialized
+        let isInit = _Py_IsInitialized()
+        print("🐍 [executePython] Python initialized: \(isInit)")
+        
+        guard isInit != 0 else {
             print("❌ [EmbeddedPython] Python not initialized when trying to execute")
             return nil
         }
         
+        print("🐍 [executePython] Acquiring GIL...")
         // Acquire the GIL (Global Interpreter Lock) for thread safety
         let gilState = _PyGILState_Ensure()
+        print("🐍 [executePython] GIL acquired, state: \(gilState)")
         
         defer {
+            print("🐍 [executePython] Releasing GIL...")
             // Always release the GIL when done
             _PyGILState_Release(gilState)
+            print("🐍 [executePython] GIL released")
         }
         
         // Convert string to C string and run
@@ -374,7 +384,9 @@ class EmbeddedPython: ObservableObject {
             return nil
         }
         
+        print("🐍 [executePython] Running PyRun_SimpleString (code length: \(cString.count) bytes)...")
         let result = _PyRun_SimpleString(cString)
+        print("🐍 [executePython] PyRun_SimpleString returned: \(result)")
         
         if result == 0 {
             print("✅ [EmbeddedPython] Python script executed successfully")
