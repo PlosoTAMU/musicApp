@@ -13,6 +13,12 @@ class YouTubeExtractor: NSObject, ObservableObject {
     private var extractionCompletion: ((Result<VideoInfo, Error>) -> Void)?
     private var currentVideoID: String?
     
+    // YouTube innertube API keys - these are PUBLIC keys embedded in YouTube's own clients
+    // They are not secrets and are identical for all users. Extracted from YouTube JS/apps.
+    private let iosAPIKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc"
+    private let androidAPIKey = "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w"
+    private let tvAPIKey = "AIzaSyDCU8hByM-4DrUqRUYnGn-3llEO78bcxq8"
+    
     enum ExtractionError: Error, LocalizedError {
         case invalidURL
         case noVideoID
@@ -37,11 +43,22 @@ class YouTubeExtractor: NSObject, ObservableObject {
     
     override init() {
         super.init()
-        setupWebView()
-        checkLoginStatus()
+        // WebView must be created on main thread
+        DispatchQueue.main.async { [weak self] in
+            self?.setupWebView()
+            self?.checkLoginStatus()
+        }
     }
     
     private func setupWebView() {
+        // Ensure we're on main thread for WKWebView
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.setupWebView()
+            }
+            return
+        }
+        
         // Use persistent data store so cookies are saved between app launches
         let config = WKWebViewConfiguration()
         config.websiteDataStore = WKWebsiteDataStore.default()
@@ -193,7 +210,7 @@ class YouTubeExtractor: NSObject, ObservableObject {
     
     /// Extract using iOS YouTube client credentials
     private func extractViaIOSClient(videoID: String) async throws -> VideoInfo {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc&prettyPrint=false")!
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=\(iosAPIKey)&prettyPrint=false")!
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -229,7 +246,7 @@ class YouTubeExtractor: NSObject, ObservableObject {
     
     /// Extract using Android client (often less restricted)
     private func extractViaAndroidClient(videoID: String) async throws -> VideoInfo {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w&prettyPrint=false")!
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=\(androidAPIKey)&prettyPrint=false")!
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -272,7 +289,7 @@ class YouTubeExtractor: NSObject, ObservableObject {
             print("⚠️ [YouTubeExtractor] Embedded player failed, trying TV client")
         }
         
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=AIzaSyDCU8hByM-4DrUqRUYnGn-3llEO78bcxq8&prettyPrint=false")!
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=\(tvAPIKey)&prettyPrint=false")!
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
