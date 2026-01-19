@@ -104,22 +104,38 @@ struct YouTubeLoginWebView: UIViewRepresentable {
                 
                 print("🍪 [YouTubeLogin] Found \(youtubeCookies.count) YouTube/Google cookies")
                 
+                // Print all cookie names for debugging
+                for cookie in youtubeCookies {
+                    print("   - \(cookie.name): \(cookie.domain) (expires: \(cookie.expiresDate?.description ?? "session"))")
+                }
+                
                 // Check for login indicators
-                let loginCookies = ["SID", "SSID", "HSID", "LOGIN_INFO", "APISID", "SAPISID"]
+                let loginCookies = ["SID", "SSID", "HSID", "LOGIN_INFO", "APISID", "SAPISID", "__Secure-1PSID", "__Secure-3PSID"]
                 let hasLoginCookies = youtubeCookies.contains { loginCookies.contains($0.name) }
                 
                 if hasLoginCookies {
-                    print("✅ [YouTubeLogin] Login cookies found!")
+                    print("✅ [YouTubeLogin] Login cookies found! Syncing to HTTPCookieStorage...")
                     
-                    // Save cookies to HTTPCookieStorage for URLSession to use
+                    // Save ALL cookies to HTTPCookieStorage for URLSession to use
+                    var savedCount = 0
                     for cookie in youtubeCookies {
                         HTTPCookieStorage.shared.setCookie(cookie)
+                        savedCount += 1
                     }
+                    print("✅ [YouTubeLogin] Synced \(savedCount) cookies to HTTPCookieStorage")
+                    
+                    // Verify they were saved
+                    let verifyCount = HTTPCookieStorage.shared.cookies?.filter { 
+                        $0.domain.contains("youtube") || $0.domain.contains("google") 
+                    }.count ?? 0
+                    print("✅ [YouTubeLogin] Verified \(verifyCount) cookies in HTTPCookieStorage")
                     
                     DispatchQueue.main.async {
                         self.parent.extractor.isLoggedIn = true
                         self.parent.extractor.needsLogin = false
                     }
+                } else {
+                    print("⚠️ [YouTubeLogin] No login cookies found yet")
                 }
             }
         }

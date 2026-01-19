@@ -71,17 +71,45 @@ class YouTubeExtractor: NSObject, ObservableObject {
         webView?.navigationDelegate = self
     }
     
-    /// Check if we have YouTube cookies saved
+    /// Check if we have YouTube cookies saved and sync them to HTTPCookieStorage
     func checkLoginStatus() {
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { [weak self] cookies in
-            let hasYouTubeCookies = cookies.contains { cookie in
-                cookie.domain.contains("youtube.com") && 
-                (cookie.name == "SID" || cookie.name == "SSID" || cookie.name == "LOGIN_INFO")
+            let youtubeCookies = cookies.filter { 
+                $0.domain.contains("youtube.com") || $0.domain.contains("google.com")
+            }
+            
+            let hasYouTubeCookies = youtubeCookies.contains { cookie in
+                cookie.name == "SID" || cookie.name == "SSID" || cookie.name == "LOGIN_INFO" ||
+                cookie.name == "__Secure-1PSID" || cookie.name == "__Secure-3PSID"
+            }
+            
+            // Always sync WKWebView cookies to HTTPCookieStorage
+            if !youtubeCookies.isEmpty {
+                print("🔄 [YouTubeExtractor] Syncing \(youtubeCookies.count) cookies from WKWebView to HTTPCookieStorage")
+                for cookie in youtubeCookies {
+                    HTTPCookieStorage.shared.setCookie(cookie)
+                }
             }
             
             DispatchQueue.main.async {
                 self?.isLoggedIn = hasYouTubeCookies
                 print("🍪 [YouTubeExtractor] Logged in: \(hasYouTubeCookies)")
+            }
+        }
+    }
+    
+    /// Sync cookies from WKWebView to HTTPCookieStorage (call before making requests)
+    func syncCookies() async {
+        await withCheckedContinuation { continuation in
+            WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+                let youtubeCookies = cookies.filter { 
+                    $0.domain.contains("youtube.com") || $0.domain.contains("google.com")
+                }
+                for cookie in youtubeCookies {
+                    HTTPCookieStorage.shared.setCookie(cookie)
+                }
+                print("🔄 [YouTubeExtractor] Synced \(youtubeCookies.count) cookies")
+                continuation.resume()
             }
         }
     }
@@ -155,14 +183,28 @@ class YouTubeExtractor: NSObject, ObservableObject {
     
     /// Apply authentication to a request if logged in
     private func applyAuth(to request: inout URLRequest, origin: String) {
+        // Debug: print all cookies we have
+        if let allCookies = HTTPCookieStorage.shared.cookies {
+            print("🍪 [YouTubeExtractor] Total cookies in storage: \(allCookies.count)")
+            let ytCookies = allCookies.filter { $0.domain.contains("youtube") || $0.domain.contains("google") }
+            print("🍪 [YouTubeExtractor] YouTube/Google cookies: \(ytCookies.count)")
+            for cookie in ytCookies {
+                print("   - \(cookie.name): \(cookie.domain)")
+            }
+        }
+        
         if let cookies = getCookieString() {
             request.setValue(cookies, forHTTPHeaderField: "Cookie")
             print("🍪 [YouTubeExtractor] Applied \(cookies.count) chars of cookies")
+        } else {
+            print("⚠️ [YouTubeExtractor] No cookies to apply!")
         }
         
         if let authHeader = getSAPISIDHash(origin: origin) {
             request.setValue(authHeader, forHTTPHeaderField: "Authorization")
             print("🔐 [YouTubeExtractor] Applied SAPISIDHASH auth")
+        } else {
+            print("⚠️ [YouTubeExtractor] No SAPISID found for auth header")
         }
     }
     
@@ -190,6 +232,9 @@ class YouTubeExtractor: NSObject, ObservableObject {
         }
         
         print("🎬 [YouTubeExtractor] Extracting: \(videoID)")
+        
+        // Sync cookies from WKWebView before making requests
+        await syncCookies()
         
         var lastError: Error = ExtractionError.noAudioStream
         
@@ -427,7 +472,14 @@ class YouTubeExtractor: NSObject, ObservableObject {
     
     /// Perform the actual extraction request
     private func performExtraction(request: URLRequest, videoID: String, clientType: YouTubeClientType = .android) async throws -> VideoInfo {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Use a session configured to use cookies
+        let config = URLSessionConfiguration.default
+        config.httpCookieStorage = HTTPCookieStorage.shared
+        config.httpCookieAcceptPolicy = .always
+        config.httpShouldSetCookies = true
+        let session = URLSession(configuration: config)
+        
+        let (data, response) = try await session.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ExtractionError.networkError(NSError(domain: "HTTP", code: 0))
