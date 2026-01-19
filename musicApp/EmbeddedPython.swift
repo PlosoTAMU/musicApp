@@ -219,7 +219,7 @@ class EmbeddedPython: ObservableObject {
         log('Output directory created/verified')
 
         ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio[ext=m4a]/bestaudio/best',
             'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
             'quiet': False,
             'no_warnings': False,
@@ -228,7 +228,8 @@ class EmbeddedPython: ObservableObject {
             'noplaylist': True,
             'nocheckcertificate': True,
             'ignoreerrors': True,
-            'restrictfilenames': True,  # Ensure filenames are ASCII-safe
+            'restrictfilenames': True,
+            'socket_timeout': 30,
         }
         log(f'ydl_opts: {ydl_opts}')
 
@@ -253,16 +254,19 @@ class EmbeddedPython: ObservableObject {
                         # Check if this is our file
                         if video_id and f.startswith(video_id):
                             # Verify file size is not zero
-                            if os.path.getsize(full_path) > 0:
-                                result = {
-                                    'success': True,
-                                    'title': title,
-                                    'filepath': full_path
-                                }
-                                log(f'Matched file: {full_path}')
-                                break
-                            else:
-                                log(f'Found file {full_path} but it is empty')
+                            try:
+                                if os.path.getsize(full_path) > 0:
+                                    result = {
+                                        'success': True,
+                                        'title': title,
+                                        'filepath': full_path
+                                    }
+                                    log(f'Matched file: {full_path}')
+                                    break
+                                else:
+                                    log(f'Found file {full_path} but it is empty')
+                            except Exception as e:
+                                log(f'Error checking file size: {e}')
 
             if not result:
                 log('No matching file found after download')
