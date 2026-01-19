@@ -156,6 +156,9 @@ class EmbeddedPython: ObservableObject {
     }
     
     private func runYtdlp(url: String, outputDir: String) throws -> (URL, String) {
+        // Result file path - Python will write the result here
+        let resultFilePath = NSTemporaryDirectory() + "ytdlp_result.json"
+        
         let script = """
         import sys
         import os
@@ -170,6 +173,7 @@ class EmbeddedPython: ObservableObject {
 
         output_dir = '\(outputDir.replacingOccurrences(of: "'", with: "\\'"))'
         url = '\(url.replacingOccurrences(of: "'", with: "\\'"))'
+        result_file = '\(resultFilePath.replacingOccurrences(of: "'", with: "\\'"))'
 
         os.makedirs(output_dir, exist_ok=True)
 
@@ -183,53 +187,53 @@ class EmbeddedPython: ObservableObject {
 
         result = {}
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            title = info.get('title', 'Unknown')
-            video_id = info.get('id', '')
-            
-            # Find downloaded file
-            for f in os.listdir(output_dir):
-                full_path = os.path.join(output_dir, f)
-                if os.path.isfile(full_path):
-                    # Check if this is our file
-                    if video_id in f or title[:15] in f:
-                        result = {
-                            'success': True,
-                            'title': title,
-                            'filepath': full_path
-                        }
-                        break
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get('title', 'Unknown')
+                video_id = info.get('id', '')
+                
+                # Find downloaded file
+                for f in os.listdir(output_dir):
+                    full_path = os.path.join(output_dir, f)
+                    if os.path.isfile(full_path):
+                        # Check if this is our file
+                        if video_id in f or title[:15] in f:
+                            result = {
+                                'success': True,
+                                'title': title,
+                                'filepath': full_path
+                            }
+                            break
 
-        if not result:
-            result = {'success': False, 'error': 'File not found after download'}
+            if not result:
+                result = {'success': False, 'error': 'File not found after download'}
+        except Exception as e:
+            result = {'success': False, 'error': str(e)}
 
-        print('YTDLP_RESULT:' + json.dumps(result))
+        # Write result to file for Swift to read
+        with open(result_file, 'w') as f:
+            json.dump(result, f)
         """
         
-        guard let output = executePython(script) else {
+        guard executePython(script) != nil else {
             throw PythonError.executionError("Failed to execute Python")
         }
         
-        // Parse the result
-        guard let resultStart = output.range(of: "YTDLP_RESULT:") else {
-            throw PythonError.downloadFailed
+        // Read the result from file
+        guard let jsonData = try? Data(contentsOf: URL(fileURLWithPath: resultFilePath)),
+              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            throw PythonError.executionError("Failed to read yt-dlp result")
         }
         
-        let jsonString = String(output[resultStart.upperBound..<output.endIndex])
+        // Clean up result file
+        try? FileManager.default.removeItem(atPath: resultFilePath)
         
-        guard let jsonData = jsonString.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-              let success = json["success"] as? Bool, success,
+        guard let success = json["success"] as? Bool, success,
               let filepath = json["filepath"] as? String,
               let title = json["title"] as? String else {
-            
-            // Try to extract error message
-            if let errorRange = output.range(of: "error") {
-                let errorMsg = String(output[errorRange.lowerBound..<output.endIndex])
-                throw PythonError.executionError(errorMsg)
-            }
-            throw PythonError.downloadFailed
+            let errorMsg = json["error"] as? String ?? "Unknown error"
+            throw PythonError.executionError(errorMsg)
         }
         
         updateStatus("Download complete!")
@@ -289,58 +293,20 @@ class EmbeddedPython: ObservableObject {
     }
     
     private func executePython(_ code: String) -> String? {
-        // Use Python's own StringIO to capture output instead of pipe redirection
-        // This avoids EXC_BAD_ACCESS from file descriptor manipulation
+        // Simpler approach - just run the code directly without output capture
+        // The yt-dlp script writes its result with a marker we can find
         
-        // Get a valid temp path for iOS
-        let tempPath = NSTemporaryDirectory() + "python_output.txt"
-        
-        let wrappedCode = """
-        import sys
-        from io import StringIO
-        
-        _captured_output = StringIO()
-        _old_stdout = sys.stdout
-        _old_stderr = sys.stderr
-        sys.stdout = _captured_output
-        sys.stderr = _captured_output
-        
-        try:
-            exec('''
-        \(code.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'''", with: "\\'\\'\\'"))
-        ''')
-        except Exception as e:
-            print(f"Error: {e}")
-        finally:
-            sys.stdout = _old_stdout
-            sys.stderr = _old_stderr
-        
-        _result = _captured_output.getvalue()
-        _captured_output.close()
-        
-        # Write result to a temp file since we can't easily get it back to Swift
-        with open('\(tempPath)', 'w') as f:
-            f.write(_result)
-        """
-        
-        let result = wrappedCode.withCString { codePtr in
+        let result = code.withCString { codePtr in
             _PyRun_SimpleString(codePtr)
         }
         
-        // Read the output from temp file
-        if let output = try? String(contentsOfFile: tempPath, encoding: .utf8) {
-            try? FileManager.default.removeItem(atPath: tempPath)
-            if result == 0 {
-                return output
-            } else {
-                print("❌ [EmbeddedPython] Script execution failed")
-                print("Output: \(output)")
-                return output  // Return output anyway for debugging
-            }
+        if result == 0 {
+            print("✅ [EmbeddedPython] Python script executed successfully")
+            return "SUCCESS"
+        } else {
+            print("❌ [EmbeddedPython] Script execution failed with code: \(result)")
+            return nil
         }
-        
-        print("❌ [EmbeddedPython] Failed to read Python output")
-        return nil
     }
     
     enum PythonError: Error, LocalizedError {
