@@ -221,8 +221,8 @@ class EmbeddedPython: ObservableObject {
 
 
         ydl_opts = {
-            # Use webm to avoid SABR, convert to m4a after download
-            'format': 'bestaudio[ext=webm]/bestaudio/best',
+            # Prefer m4a or itag 140 (audio only, AAC)
+            'format': 'bestaudio[ext=m4a]/bestaudio[format_id=140]/bestaudio/best',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'quiet': True,
             'verbose': False,
@@ -230,8 +230,7 @@ class EmbeddedPython: ObservableObject {
             'outtmpl': os.path.join(output_dir, 'audio.%(ext)s'),
             'extractor_args': {
                 'youtube': [
-                    'player_client=web;http',  # Prefer web/http clients to avoid SABR
-                    'skip=dash,js',           # Avoid dash/JS clients
+                    'player_client=android,ios,web;skip=web',  # Prefer android/ios clients, skip web-only
                 ]
             },
             # Optionally, force generic extractor for some URLs
