@@ -219,7 +219,7 @@ class EmbeddedPython: ObservableObject {
         log('Output directory created/verified')
 
         ydl_opts = {
-            'format': '140',
+            'format': 'bestaudio/best',
             'quiet': True,
             'verbose': False,
             'noplaylist': True,
@@ -254,21 +254,34 @@ class EmbeddedPython: ObservableObject {
                 
             formats = info.get('formats', [])
             audio_url = None
+            audio_ext = None
 
+            # Prefer m4a (AAC) if available
             for f in formats:
-                if f.get('format_id') == '140' and f.get('url'):
+                if f.get('ext') == 'm4a' and f.get('url'):
                     audio_url = f['url']
+                    audio_ext = 'm4a'
                     break
 
+            # Otherwise fall back to any audio-only format
             if not audio_url:
-                raise Exception('itag 140 audio URL not found')
+                for f in formats:
+                    if f.get('acodec') != 'none' and f.get('url'):
+                        audio_url = f['url']
+                        audio_ext = f.get('ext', 'unknown')
+                        break
+
+            if not audio_url:
+                raise Exception('No usable audio format found')
+
 
             result = {
                 'success': True,
                 'title': title,
                 'audio_url': audio_url,
+                'audio_ext': audio_ext,
             }
-        
+
         except Exception as e:
             log(f'Exception during download: {type(e).__name__}: {e}')
             import traceback
