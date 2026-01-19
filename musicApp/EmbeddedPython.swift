@@ -219,23 +219,15 @@ class EmbeddedPython: ObservableObject {
         log('Output directory created/verified')
 
         ydl_opts = {
-            # FORCE progressive single-file M4A (NO fragments, NO ffmpeg)
             'format': '140',
-            'outtmpl': os.path.join(output_dir, '%(id)s.m4a'),
-
+            'quiet': True,
+            'verbose': False,
             'noplaylist': True,
-            'quiet': False,
-            'verbose': True,
 
-            # HARD FAIL instead of fragment fallback
-            'format_selection': 'fail',
+            # DO NOT DOWNLOAD
+            'skip_download': True,
 
-            # Disable ALL post-processing / merging
-            'postprocessors': [],
-            'merge_output_format': None,
-            'hls_prefer_native': False,
-
-            # iOS-safe extractor configuration
+            # iOS-safe client
             'extractor_args': {
                 'youtube': {
                     'player_client': ['web'],
@@ -243,6 +235,7 @@ class EmbeddedPython: ObservableObject {
                 }
             },
         }
+
 
         log(f'ydl_opts: {ydl_opts}')
 
@@ -252,38 +245,30 @@ class EmbeddedPython: ObservableObject {
             log('Creating YoutubeDL instance...')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 log('YoutubeDL instance created, extracting info...')
-                info = ydl.extract_info(url, download=True)
+                info = ydl.extract_info(url, download=False)
                 log(f'Info extracted, title: {info.get("title", "Unknown")}')
                 title = info.get('title', 'Unknown')
                 video_id = info.get('id', '')
                 
                 log(f'Looking for downloaded file with ID {video_id} in {output_dir}...')
                 
-                # Find downloaded file by ID (more reliable than title match)
-                for f in os.listdir(output_dir):
-                    full_path = os.path.join(output_dir, f)
-                    
-                    if os.path.isfile(full_path) and not f.endswith('.part'):
-                        # Check if this is our file
-                        if video_id and f.startswith(video_id):
-                            # Verify file size is not zero
-                            try:
-                                if os.path.getsize(full_path) > 0:
-                                    result = {
-                                        'success': True,
-                                        'title': title,
-                                        'filepath': full_path
-                                    }
-                                    log(f'Matched file: {full_path}')
-                                    break
-                                else:
-                                    log(f'Found file {full_path} but it is empty')
-                            except Exception as e:
-                                log(f'Error checking file size: {e}')
+            formats = info.get('formats', [])
+            audio_url = None
 
-            if not result:
-                log('No matching file found after download')
-                result = {'success': False, 'error': 'File not found after download'}
+            for f in formats:
+                if f.get('format_id') == '140' and f.get('url'):
+                    audio_url = f['url']
+                    break
+
+            if not audio_url:
+                raise Exception('itag 140 audio URL not found')
+
+            result = {
+                'success': True,
+                'title': title,
+                'audio_url': audio_url,
+            }
+   
         except Exception as e:
             log(f'Exception during download: {type(e).__name__}: {e}')
             import traceback
@@ -332,16 +317,17 @@ class EmbeddedPython: ObservableObject {
         try? FileManager.default.removeItem(atPath: resultFilePath)
         
         guard let success = json["success"] as? Bool, success,
-              let filepath = json["filepath"] as? String,
-              let title = json["title"] as? String else {
+            let audioURLString = json["audio_url"] as? String,
+            let title = json["title"] as? String else {
+
             let errorMsg = json["error"] as? String ?? "Unknown error"
             print("❌ [runYtdlp] Download failed: \(errorMsg)")
             throw PythonError.executionError(errorMsg)
         }
-        
-        print("✅ [runYtdlp] Download successful: \(title) -> \(filepath)")
-        updateStatus("Download complete!")
-        return (URL(fileURLWithPath: filepath), title)
+
+        let audioURL = URL(string: audioURLString)!
+        return (audioURL, title)
+
     }
     
     private func updateStatus(_ message: String) {
