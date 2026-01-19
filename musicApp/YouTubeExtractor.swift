@@ -205,7 +205,7 @@ class YouTubeExtractor: NSObject, ObservableObject {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        return try await performExtraction(request: request, videoID: videoID)
+        return try await performExtraction(request: request, videoID: videoID, clientType: .music)
     }
     
     /// Extract using iOS YouTube client credentials
@@ -241,7 +241,7 @@ class YouTubeExtractor: NSObject, ObservableObject {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        return try await performExtraction(request: request, videoID: videoID)
+        return try await performExtraction(request: request, videoID: videoID, clientType: .ios)
     }
     
     /// Extract using Android client (often less restricted)
@@ -277,7 +277,7 @@ class YouTubeExtractor: NSObject, ObservableObject {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        return try await performExtraction(request: request, videoID: videoID)
+        return try await performExtraction(request: request, videoID: videoID, clientType: .android)
     }
     
     /// Extract using TV client (usually least restricted)
@@ -318,7 +318,7 @@ class YouTubeExtractor: NSObject, ObservableObject {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        return try await performExtraction(request: request, videoID: videoID)
+        return try await performExtraction(request: request, videoID: videoID, clientType: .tv)
     }
     
     /// Extract using embedded web player - often bypasses restrictions
@@ -360,11 +360,11 @@ class YouTubeExtractor: NSObject, ObservableObject {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        return try await performExtraction(request: request, videoID: videoID)
+        return try await performExtraction(request: request, videoID: videoID, clientType: .embedded)
     }
     
     /// Perform the actual extraction request
-    private func performExtraction(request: URLRequest, videoID: String) async throws -> VideoInfo {
+    private func performExtraction(request: URLRequest, videoID: String, clientType: YouTubeClientType = .android) async throws -> VideoInfo {
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -447,7 +447,8 @@ class YouTubeExtractor: NSObject, ObservableObject {
             title: title,
             author: author,
             duration: duration,
-            audioURL: finalURL
+            audioURL: finalURL,
+            clientType: clientType
         )
     }
     

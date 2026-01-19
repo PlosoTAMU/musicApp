@@ -7,6 +7,38 @@ struct VideoInfo {
     let author: String
     let duration: Int
     let audioURL: URL
+    let clientType: YouTubeClientType
+    
+    init(title: String, author: String, duration: Int, audioURL: URL, clientType: YouTubeClientType = .android) {
+        self.title = title
+        self.author = author
+        self.duration = duration
+        self.audioURL = audioURL
+        self.clientType = clientType
+    }
+}
+
+enum YouTubeClientType {
+    case ios
+    case android
+    case tv
+    case embedded
+    case music
+    
+    var userAgent: String {
+        switch self {
+        case .ios:
+            return "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"
+        case .android:
+            return "com.google.android.youtube/19.29.37 (Linux; U; Android 14; en_US; sdk_gphone64_arm64 Build/UE1A.230829.036.A1) gzip"
+        case .tv:
+            return "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version"
+        case .embedded:
+            return "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        case .music:
+            return "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1"
+        }
+    }
 }
 
 class ShellManager: ObservableObject {

@@ -16,7 +16,7 @@ class YouTubeDownloader: ObservableObject {
             
             switch result {
             case .success(let videoInfo):
-                self.downloadFile(from: videoInfo.audioURL, title: videoInfo.title, completion: completion)
+                self.downloadFile(from: videoInfo.audioURL, title: videoInfo.title, clientType: videoInfo.clientType, completion: completion)
                 
             case .failure(let error):
                 DispatchQueue.main.async {
@@ -28,16 +28,23 @@ class YouTubeDownloader: ObservableObject {
         }
     }
     
-    private func downloadFile(from url: URL, title: String, completion: @escaping (Track?) -> Void) {
-        print("📥 [YouTubeDownloader] Starting download from: \(url.absoluteString.prefix(100))...")
+    private func downloadFile(from url: URL, title: String, clientType: YouTubeClientType, completion: @escaping (Track?) -> Void) {
+        print("📥 [YouTubeDownloader] Starting download with \(clientType) client headers...")
         
-        // Create request with proper headers for YouTube
+        // Create request with headers matching the extraction client
         var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+        request.setValue(clientType.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("*/*", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 120 // 2 minutes for large files
         
-        let session = URLSession.shared
+        // Use a custom session with no caching to avoid stale data issues
+        let config = URLSessionConfiguration.default
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let session = URLSession(configuration: config)
         let downloadTask = session.downloadTask(with: request) { [weak self] localURL, response, error in
             guard let self = self else { return }
             
