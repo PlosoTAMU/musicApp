@@ -221,20 +221,29 @@ class EmbeddedPython: ObservableObject {
 
 
         ydl_opts = {
-            # Prefer m4a or itag 140 (audio only, AAC)
-            'format': 'bestaudio[ext=m4a]/bestaudio[format_id=140]/bestaudio/best',
+            # Download full video (best video + best audio) and let ffmpeg extract m4a
+            'format': 'bestvideo+bestaudio/best',
+            # Ensure merge output is a common container so ffmpeg can read it easily
+            'merge_output_format': 'mp4',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'quiet': True,
             'verbose': False,
             'noplaylist': True,
-            'outtmpl': os.path.join(output_dir, 'audio.%(ext)s'),
+            # Save the downloaded file as 'download.<ext>' so we can predict the postprocessor output
+            'outtmpl': os.path.join(output_dir, 'download.%(ext)s'),
             'extractor_args': {
                 'youtube': [
-                    'player_client=android,ios,web;skip=web',  # Prefer android/ios clients, skip web-only
+                    'player_client=android,ios;skip=web',  # Prefer native mobile clients and skip web-only
                 ]
             },
-            # Optionally, force generic extractor for some URLs
-            # 'force_generic_extractor': True,
+            # Use yt-dlp's ffmpeg postprocessor to extract audio to m4a
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'm4a',
+                'preferredquality': '192',
+            }],
+            # If you want additional args for ffmpeg, provide them here (example forces stereo)
+            # 'postprocessor_args': ['-ac', '2'],
         }
 
 
@@ -254,23 +263,36 @@ class EmbeddedPython: ObservableObject {
                 downloaded_path = ydl.prepare_filename(info)
                 audio_ext = info.get('ext', 'unknown')
 
-            # If not m4a, convert to m4a using ffmpegkit
             import os
-            m4a_path = os.path.join(output_dir, 'audio.m4a')
-            if not downloaded_path.endswith('.m4a'):
-                log(f'Converting {downloaded_path} to m4a...')
-                import ffmpeg
-                (
-                    ffmpeg
-                    .input(downloaded_path)
-                    .output(m4a_path, acodec='aac', audio_bitrate='192k', vn=None)
-                    .overwrite_output()
-                    .run()
-                )
+            base, ext = os.path.splitext(downloaded_path)
+            # yt-dlp postprocessor will typically create '<base>.m4a'
+            m4a_path = base + '.m4a'
+            log(f'Downloaded file: {downloaded_path}, expected extracted audio: {m4a_path}')
+
+            if os.path.exists(m4a_path):
+                log(f'Postprocessor produced audio at {m4a_path}')
                 audio_url = m4a_path
                 audio_ext = 'm4a'
             else:
-                audio_url = downloaded_path
+                # Fallback: try to convert the downloaded file to m4a using ffmpeg-python
+                audio_url = None
+                try:
+                    log(f'Postprocessor output not found, attempting ffmpeg-python conversion of {downloaded_path} to {m4a_path}...')
+                    import ffmpeg
+                    (
+                        ffmpeg
+                        .input(downloaded_path)
+                        .output(m4a_path, acodec='aac', audio_bitrate='192k', vn=None)
+                        .overwrite_output()
+                        .run()
+                    )
+                    if os.path.exists(m4a_path):
+                        log(f'Fallback conversion succeeded: {m4a_path}')
+                        audio_url = m4a_path
+                        audio_ext = 'm4a'
+                except Exception as conv_e:
+                    log(f'Fallback conversion failed: {conv_e}')
+                    # Leave audio_url as None so the error handling below will pick it up
 
             result = {
                 'success': True,
