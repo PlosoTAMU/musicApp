@@ -41,9 +41,21 @@ class YouTubeDownloader: ObservableObject {
         request.setValue("*/*", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 120 // 2 minutes for large files
         
+        // Add cookies if available
+        if let cookies = HTTPCookieStorage.shared.cookies {
+            let youtubeCookies = cookies.filter { $0.domain.contains("youtube.com") || $0.domain.contains(".google.com") }
+            if !youtubeCookies.isEmpty {
+                let cookieString = youtubeCookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+                request.setValue(cookieString, forHTTPHeaderField: "Cookie")
+                print("🍪 [YouTubeDownloader] Applied cookies to download request")
+            }
+        }
+        
         // Use a custom session with no caching to avoid stale data issues
         let config = URLSessionConfiguration.default
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.httpCookieAcceptPolicy = .always
+        config.httpShouldSetCookies = true
         let session = URLSession(configuration: config)
         let downloadTask = session.downloadTask(with: request) { [weak self] localURL, response, error in
             guard let self = self else { return }

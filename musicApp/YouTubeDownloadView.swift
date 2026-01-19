@@ -3,14 +3,46 @@ import SwiftUI
 struct YouTubeDownloadView: View {
     @ObservedObject var playlistManager: PlaylistManager
     @StateObject private var downloader = YouTubeDownloader()
+    @ObservedObject var extractor = YouTubeExtractor.shared
     @State private var youtubeURL = ""
     @State private var detectedURL: String? = nil
     @State private var showManualEntry = false
+    @State private var showLogin = false
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             VStack(spacing: 24) {
+                
+                // Login status indicator
+                if extractor.isLoggedIn {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Signed in to YouTube")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("Sign Out") {
+                            extractor.logout()
+                        }
+                        .font(.caption)
+                        .foregroundColor(.red)
+                    }
+                    .padding(.horizontal)
+                } else {
+                    Button {
+                        showLogin = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "person.circle")
+                            Text("Sign in to YouTube (recommended)")
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.blue)
+                    }
+                    .padding(.top, 8)
+                }
                 
                 // Auto-detected URL section
                 if let detected = detectedURL, !showManualEntry {
@@ -116,6 +148,9 @@ struct YouTubeDownloadView: View {
             }
             .onAppear {
                 checkClipboardForYouTubeLink()
+            }
+            .sheet(isPresented: $showLogin) {
+                YouTubeLoginView(extractor: extractor)
             }
         }
     }

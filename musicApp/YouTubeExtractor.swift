@@ -1,5 +1,6 @@
 import Foundation
 import WebKit
+import CommonCrypto
 
 /// YouTube audio extractor using authenticated WebView session
 class YouTubeExtractor: NSObject, ObservableObject {
@@ -18,6 +19,9 @@ class YouTubeExtractor: NSObject, ObservableObject {
     private let iosAPIKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc"
     private let androidAPIKey = "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w"
     private let tvAPIKey = "AIzaSyDCU8hByM-4DrUqRUYnGn-3llEO78bcxq8"
+    
+    // Cached SAPISID for authorization header
+    private var cachedSAPISID: String?
     
     enum ExtractionError: Error, LocalizedError {
         case invalidURL
@@ -104,9 +108,61 @@ class YouTubeExtractor: NSObject, ObservableObject {
             dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: youtubeRecords) {
                 DispatchQueue.main.async {
                     self.isLoggedIn = false
+                    self.cachedSAPISID = nil
+                    // Also clear HTTPCookieStorage
+                    if let cookies = HTTPCookieStorage.shared.cookies {
+                        for cookie in cookies where cookie.domain.contains("youtube") || cookie.domain.contains("google") {
+                            HTTPCookieStorage.shared.deleteCookie(cookie)
+                        }
+                    }
                     print("🍪 [YouTubeExtractor] Logged out")
                 }
             }
+        }
+    }
+    
+    /// Get cookie string for requests
+    private func getCookieString() -> String? {
+        guard let cookies = HTTPCookieStorage.shared.cookies else { return nil }
+        let youtubeCookies = cookies.filter { $0.domain.contains("youtube.com") || $0.domain.contains(".google.com") }
+        if youtubeCookies.isEmpty { return nil }
+        return youtubeCookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+    }
+    
+    /// Get SAPISID hash for authorization (required for authenticated API calls)
+    private func getSAPISIDHash(origin: String) -> String? {
+        guard let cookies = HTTPCookieStorage.shared.cookies else { return nil }
+        
+        // Find SAPISID cookie
+        guard let sapisid = cookies.first(where: { $0.name == "SAPISID" || $0.name == "__Secure-3PAPISID" })?.value else {
+            return nil
+        }
+        
+        // Create SAPISIDHASH: timestamp_sha1(timestamp + " " + SAPISID + " " + origin)
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let input = "\(timestamp) \(sapisid) \(origin)"
+        
+        // SHA-1 hash
+        guard let data = input.data(using: .utf8) else { return nil }
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
+        data.withUnsafeBytes {
+            _ = CC_SHA1($0.baseAddress, CC_LONG(data.count), &hash)
+        }
+        let hashString = hash.map { String(format: "%02x", $0) }.joined()
+        
+        return "SAPISIDHASH \(timestamp)_\(hashString)"
+    }
+    
+    /// Apply authentication to a request if logged in
+    private func applyAuth(to request: inout URLRequest, origin: String) {
+        if let cookies = getCookieString() {
+            request.setValue(cookies, forHTTPHeaderField: "Cookie")
+            print("🍪 [YouTubeExtractor] Applied \(cookies.count) chars of cookies")
+        }
+        
+        if let authHeader = getSAPISIDHash(origin: origin) {
+            request.setValue(authHeader, forHTTPHeaderField: "Authorization")
+            print("🔐 [YouTubeExtractor] Applied SAPISIDHASH auth")
         }
     }
     
@@ -221,6 +277,9 @@ class YouTubeExtractor: NSObject, ObservableObject {
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
         request.timeoutInterval = 30
         
+        // Apply authentication if logged in
+        applyAuth(to: &request, origin: "https://www.youtube.com")
+        
         let body: [String: Any] = [
             "videoId": videoID,
             "context": [
@@ -256,6 +315,9 @@ class YouTubeExtractor: NSObject, ObservableObject {
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
         request.timeoutInterval = 30
+        
+        // Apply authentication if logged in
+        applyAuth(to: &request, origin: "https://www.youtube.com")
         
         let body: [String: Any] = [
             "videoId": videoID,
