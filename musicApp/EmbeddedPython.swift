@@ -26,7 +26,7 @@ class EmbeddedPython: ObservableObject {
     @Published var statusMessage = ""
     @Published var downloadProgress: Double = 0.0
     
-    private var pythonInitialized = true
+    private var pythonInitialized = false
     
     init() {
         // Python will be initialized on first use
@@ -193,10 +193,9 @@ class EmbeddedPython: ObservableObject {
     
     // MARK: - Python C API Bridge
     // These functions call into Python's C API via the xcframework
-    // The bridging header (Python-Bridging-Header.h) imports Python.h
     
-    // Set this to true once you've added Python.xcframework to the project
-    private let pythonFrameworkAvailable = false
+    // Python framework is now configured
+    private let pythonFrameworkAvailable = true
     
     private func initializePythonRuntime() -> Bool {
         // Safety check - don't try to call Python if framework isn't linked

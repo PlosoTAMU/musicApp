@@ -1,5 +1,4 @@
 import Foundation
-import WebKit
 
 class YouTubeDownloader: ObservableObject {
     @Published var isDownloading = false
@@ -9,31 +8,28 @@ class YouTubeDownloader: ObservableObject {
     
     private let embeddedPython = EmbeddedPython.shared
     
-    /// Download method priority:
-    /// 1. Embedded Python + yt-dlp (if available)
-    /// 2. WebView-based extraction (fallback)
     func downloadAudio(from youtubeURL: String, completion: @escaping (Track?) -> Void) {
         isDownloading = true
         errorMessage = nil
         downloadProgress = 0.0
         statusMessage = "Starting download..."
         
+        guard embeddedPython.isInitialized else {
+            DispatchQueue.main.async {
+                self.errorMessage = "Python not initialized. Please set up yt-dlp first."
+                self.isDownloading = false
+                self.statusMessage = "Setup required"
+                completion(nil)
+            }
+            return
+        }
+        
         Task {
             do {
-                let (fileURL, title): (URL, String)
+                print("[YouTubeDownloader] Using yt-dlp...")
+                updateStatus("Downloading with yt-dlp...")
                 
-                // Try embedded Python first (most reliable when available)
-                if embeddedPython.isInitialized {
-                    print("� [YouTubeDownloader] Using embedded Python + yt-dlp...")
-                    updateStatus("Using yt-dlp...")
-                    (fileURL, title) = try await embeddedPython.downloadAudio(url: youtubeURL)
-                } else {
-                    // Fallback to WebView method
-                    print("🌐 [YouTubeDownloader] Using WebView method...")
-                    updateStatus("Extracting via WebView...")
-                    (fileURL, title) = try await YouTubeExtractor.shared.downloadAudioDirectly(from: youtubeURL)
-                }
-                
+                let (fileURL, title) = try await embeddedPython.downloadAudio(url: youtubeURL)
                 let track = Track(name: title, url: fileURL, folderName: "YouTube Downloads")
                 
                 DispatchQueue.main.async {
@@ -43,37 +39,10 @@ class YouTubeDownloader: ObservableObject {
                     completion(track)
                 }
             } catch {
-                print("❌ [YouTubeDownloader] Error: \(error.localizedDescription)")
-                
-                // If Python failed, try WebView as fallback
-                if embeddedPython.isInitialized {
-                    print("🔄 [YouTubeDownloader] Python failed, trying WebView fallback...")
-                    updateStatus("Trying alternate method...")
-                    
-                    do {
-                        let (fileURL, title) = try await YouTubeExtractor.shared.downloadAudioDirectly(from: youtubeURL)
-                        let track = Track(name: title, url: fileURL, folderName: "YouTube Downloads")
-                        
-                        DispatchQueue.main.async {
-                            self.isDownloading = false
-                            self.downloadProgress = 1.0
-                            self.statusMessage = "Download complete!"
-                            completion(track)
-                        }
-                        return
-                    } catch let fallbackError {
-                        DispatchQueue.main.async {
-                            self.errorMessage = "All methods failed: \(fallbackError.localizedDescription)"
-                            self.isDownloading = false
-                            self.statusMessage = "Download failed"
-                            completion(nil)
-                        }
-                        return
-                    }
-                }
+                print("[YouTubeDownloader] Error: \(error.localizedDescription)")
                 
                 DispatchQueue.main.async {
-                    self.errorMessage = "Error: \(error.localizedDescription)"
+                    self.errorMessage = "Download failed: \(error.localizedDescription)"
                     self.isDownloading = false
                     self.statusMessage = "Download failed"
                     completion(nil)

@@ -3,52 +3,27 @@ import SwiftUI
 struct YouTubeDownloadView: View {
     @ObservedObject var playlistManager: PlaylistManager
     @StateObject private var downloader = YouTubeDownloader()
-    @ObservedObject var extractor = YouTubeExtractor.shared
     @ObservedObject var embeddedPython = EmbeddedPython.shared
     @State private var youtubeURL = ""
     @State private var detectedURL: String? = nil
     @State private var showManualEntry = false
-    @State private var showLogin = false
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             VStack(spacing: 24) {
                 
-                // Status bar - shows Python status and YouTube login
+                // Status bar - shows Python/yt-dlp status
                 HStack {
-                    // Python/yt-dlp status
                     HStack(spacing: 4) {
-                        Image(systemName: embeddedPython.isInitialized ? "checkmark.circle.fill" : "circle")
-                            .foregroundColor(embeddedPython.isInitialized ? .green : .gray)
-                        Text(embeddedPython.isInitialized ? "yt-dlp ready" : "WebView mode")
+                        Image(systemName: embeddedPython.isInitialized ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundColor(embeddedPython.isInitialized ? .green : .red)
+                        Text(embeddedPython.isInitialized ? "yt-dlp ready" : "yt-dlp not ready")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     
                     Spacer()
-                    
-                    // YouTube login status (optional, helps with some videos)
-                    if extractor.isLoggedIn {
-                        HStack(spacing: 4) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                            Text("Signed in")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    } else {
-                        Button {
-                            showLogin = true
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "person.circle")
-                                Text("Sign in")
-                            }
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                        }
-                    }
                 }
                 .padding(.horizontal)
                 
@@ -169,9 +144,6 @@ struct YouTubeDownloadView: View {
             }
             .onAppear {
                 checkClipboardForYouTubeLink()
-            }
-            .sheet(isPresented: $showLogin) {
-                YouTubeLoginView(extractor: extractor)
             }
         }
     }
