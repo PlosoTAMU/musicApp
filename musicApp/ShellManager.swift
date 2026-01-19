@@ -151,32 +151,16 @@ class ShellManager: ObservableObject {
         
         // Create _apple_support stub
         let appleSupport = types.ModuleType("_apple_support")
-        appleSupport.__doc__ = PythonObject("Stub module for iOS compatibility")
-        
-        // Create a no-op function in Python
-        let builtins = Python.import("builtins")
-        let noopFunc = builtins.eval("lambda *args, **kwargs: None")
-        
-        appleSupport.init_apple_support = noopFunc
-        appleSupport.init_streams = noopFunc
-        appleSupport.os_log_create = noopFunc
-        appleSupport.os_log_with_type = noopFunc
-        
         sys.modules["_apple_support"] = appleSupport
         print("✅ [Shell] _apple_support stub registered")
         
         // Create os_log stub
         let osLog = types.ModuleType("os_log")
-        osLog.os_log_create = noopFunc
-        osLog.os_log_with_type = noopFunc
         sys.modules["os_log"] = osLog
         print("✅ [Shell] os_log stub registered")
         
         // Create _scproxy stub
         let scproxy = types.ModuleType("_scproxy")
-        let emptyDictFunc = builtins.eval("lambda: {}")
-        scproxy._get_proxy_settings = emptyDictFunc
-        scproxy._get_proxies = emptyDictFunc
         sys.modules["_scproxy"] = scproxy
         print("✅ [Shell] _scproxy stub registered")
         
