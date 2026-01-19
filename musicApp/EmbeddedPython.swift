@@ -1,5 +1,5 @@
 import Foundation
-import FFmpegKit
+import ffmpegkit
 
 final class EmbeddedPython: ObservableObject {
     static let shared = EmbeddedPython()
@@ -121,7 +121,7 @@ except Exception as e:
         let sem = DispatchSemaphore(value: 0)
         var ok = false
         var convErr: Error?
-        FFmpegKit.executeAsync(cmd) { session in
+        ffmpegkit.executeAsync(cmd) { session in
             if ReturnCode.isSuccess(session?.getReturnCode()) { ok = true } else { convErr = PythonError.executionError("ffmpeg failed") }
             sem.signal()
         }
