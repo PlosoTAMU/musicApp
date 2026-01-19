@@ -5,23 +5,13 @@ class YouTubeDownloader: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var errorMessage: String?
     
-    private let shellManager = ShellManager.shared
-    
     func downloadAudio(from youtubeURL: String, completion: @escaping (Track?) -> Void) {
-        guard shellManager.isReady else {
-            DispatchQueue.main.async {
-                self.errorMessage = "Python environment not ready. Please wait..."
-            }
-            completion(nil)
-            return
-        }
-        
         isDownloading = true
         errorMessage = nil
         downloadProgress = 0.0
         
-        // Use ShellManager to extract video info with yt-dlp
-        shellManager.executeYTDLP(url: youtubeURL) { [weak self] result in
+        // Use native YouTubeExtractor instead of Python
+        YouTubeExtractor.extractVideoInfo(from: youtubeURL) { [weak self] result in
             guard let self = self else { return }
             
             switch result {
@@ -30,18 +20,7 @@ class YouTubeDownloader: ObservableObject {
                 
             case .failure(let error):
                 DispatchQueue.main.async {
-                    if let shellError = error as? ShellError {
-                        switch shellError {
-                        case .notInitialized:
-                            self.errorMessage = "Python not initialized"
-                        case .invalidURL:
-                            self.errorMessage = "Invalid YouTube URL"
-                        case .executionFailed:
-                            self.errorMessage = "Failed to extract video info"
-                        }
-                    } else {
-                        self.errorMessage = "Error: \(error.localizedDescription)"
-                    }
+                    self.errorMessage = "Error: \(error.localizedDescription)"
                     self.isDownloading = false
                     completion(nil)
                 }
