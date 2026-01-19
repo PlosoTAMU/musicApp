@@ -5,21 +5,7 @@ import Foundation
 /// SETUP INSTRUCTIONS:
 /// 
 /// 1. Download Python iOS Framework:
-///    - G        log_file = r'''\(logFilePath)'''
-
-        def log(msg):
-            try:
-                with open(log_file, 'a', encoding='utf-8') as f:
-                    f.write(str(msg) + '\\n')
-            except:
-                pass
-            try:
-                print(msg)
-            except:
-                try:
-                    print(str(msg).encode('utf-8', errors='replace').decode('utf-8'))
-                except:
-                    passttps://github.com/beeware/Python-Apple-support/releases
+///    - Go to https://github.com/beeware/Python-Apple-support/releases
 ///    - Download Python-3.11-iOS-support.b1.tar.gz (or latest)
 ///    - Extract and add Python.xcframework to Xcode project
 ///    - Add python-stdlib folder to project as folder reference
@@ -192,9 +178,18 @@ class EmbeddedPython: ObservableObject {
         log_file = r'''\(logFilePath)'''
 
         def log(msg):
-            with open(log_file, 'a') as f:
-                f.write(str(msg) + '\\n')
-            print(msg)
+            try:
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(str(msg) + '\\n')
+            except:
+                pass
+            try:
+                print(msg)
+            except:
+                try:
+                    print(str(msg).encode('utf-8', errors='replace').decode('utf-8'))
+                except:
+                    pass
 
         log('=== yt-dlp Debug Log ===')
         log(f'Python version: {sys.version}')
