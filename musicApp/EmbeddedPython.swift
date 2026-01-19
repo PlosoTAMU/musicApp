@@ -221,13 +221,21 @@ class EmbeddedPython: ObservableObject {
 
 
         ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio',
+            # Use webm to avoid SABR, convert to m4a after download
+            'format': 'bestaudio[ext=webm]/bestaudio/best',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'quiet': True,
             'verbose': False,
             'noplaylist': True,
             'outtmpl': os.path.join(output_dir, 'audio.%(ext)s'),
-            # No extractor_args: let yt-dlp try all available clients and formats
+            'extractor_args': {
+                'youtube': [
+                    'player_client=web;http',  # Prefer web/http clients to avoid SABR
+                    'skip=dash,js',           # Avoid dash/JS clients
+                ]
+            },
+            # Optionally, force generic extractor for some URLs
+            # 'force_generic_extractor': True,
         }
 
 
