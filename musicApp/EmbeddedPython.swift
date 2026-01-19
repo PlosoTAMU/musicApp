@@ -338,7 +338,7 @@ class EmbeddedPython: ObservableObject {
 
     let audioURL = URL(string: audioURLString)!
     // Log the local file path where the audio was saved
-    print("✅ [runYtdlp] Audio downloaded to: \(audioURL.path)")
+    print("✅ [runYtdlp] Audio downloaded to: \(audioURL.absoluteString)")
     return (audioURL, title)
 
     }
