@@ -1,3 +1,4 @@
+
 import Foundation
 
 /// Manages an embedded Python interpreter for running yt-dlp on iOS
@@ -318,9 +319,9 @@ class EmbeddedPython: ObservableObject {
             throw PythonError.executionError(errorMsg)
         }
 
-    let audioURL = URL(string: audioURLString)!
+    let audioURL = URL(fileURLWithPath: audioURLString)
     // Log the local file path where the audio was saved
-    print("✅ [runYtdlp] Audio downloaded to: \(audioURL.absoluteString)")
+    print("✅ [runYtdlp] Audio downloaded to: \(audioURL.path)")
     return (audioURL, title)
 
     }
