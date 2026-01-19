@@ -566,6 +566,161 @@ class YouTubeExtractor: NSObject, ObservableObject {
         )
     }
     
+    /// Download audio data directly and return the local file URL
+    func downloadAudioDirectly(from urlString: String) async throws -> (URL, String) {
+        // First extract the info
+        let info = try await extractInfo(from: urlString)
+        
+        print("📥 [YouTubeExtractor] Downloading audio directly...")
+        
+        // Download using the same session configuration that worked for extraction
+        let config = URLSessionConfiguration.default
+        config.httpCookieStorage = HTTPCookieStorage.shared
+        config.httpCookieAcceptPolicy = .always
+        config.httpShouldSetCookies = true
+        
+        var request = URLRequest(url: info.audioURL)
+        request.setValue(info.clientType.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        request.timeoutInterval = 300
+        
+        // Apply cookies
+        if let cookies = getCookieString() {
+            request.setValue(cookies, forHTTPHeaderField: "Cookie")
+        }
+        
+        let session = URLSession(configuration: config)
+        
+        // Try direct download first
+        let (tempURL, response) = try await session.download(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ExtractionError.networkError(NSError(domain: "HTTP", code: 0))
+        }
+        
+        print("📡 [YouTubeExtractor] Download response: \(httpResponse.statusCode)")
+        
+        if httpResponse.statusCode == 403 {
+            // If 403, try fetching via web page scraping
+            print("⚠️ [YouTubeExtractor] 403 on direct URL, trying web scrape method...")
+            return try await downloadViaWebScrape(videoID: extractVideoID(from: urlString)!, title: info.title)
+        }
+        
+        guard httpResponse.statusCode == 200 || httpResponse.statusCode == 206 else {
+            throw ExtractionError.networkError(NSError(domain: "HTTP", code: httpResponse.statusCode))
+        }
+        
+        // Move to documents
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let youtubeFolder = documentsPath.appendingPathComponent("YouTube Downloads", isDirectory: true)
+        try? FileManager.default.createDirectory(at: youtubeFolder, withIntermediateDirectories: true)
+        
+        let cleanTitle = info.title.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
+        let destinationURL = youtubeFolder.appendingPathComponent("\(cleanTitle).m4a")
+        
+        try? FileManager.default.removeItem(at: destinationURL)
+        try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+        
+        print("✅ [YouTubeExtractor] Saved to: \(destinationURL.lastPathComponent)")
+        
+        return (destinationURL, info.title)
+    }
+    
+    /// Fallback: scrape the YouTube watch page for audio URL
+    private func downloadViaWebScrape(videoID: String, title: String) async throws -> (URL, String) {
+        print("🌐 [YouTubeExtractor] Trying web scrape method...")
+        
+        // Fetch the watch page HTML
+        let watchURL = URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
+        var request = URLRequest(url: watchURL)
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        
+        if let cookies = getCookieString() {
+            request.setValue(cookies, forHTTPHeaderField: "Cookie")
+        }
+        
+        let config = URLSessionConfiguration.default
+        config.httpCookieStorage = HTTPCookieStorage.shared
+        let session = URLSession(configuration: config)
+        
+        let (data, _) = try await session.data(for: request)
+        
+        guard let html = String(data: data, encoding: .utf8) else {
+            throw ExtractionError.parsingError
+        }
+        
+        // Look for ytInitialPlayerResponse in the HTML
+        guard let startRange = html.range(of: "var ytInitialPlayerResponse = "),
+              let endRange = html.range(of: ";</script>", range: startRange.upperBound..<html.endIndex) else {
+            print("❌ [YouTubeExtractor] Could not find player response in HTML")
+            throw ExtractionError.parsingError
+        }
+        
+        let jsonString = String(html[startRange.upperBound..<endRange.lowerBound])
+        
+        guard let jsonData = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let streamingData = json["streamingData"] as? [String: Any] else {
+            throw ExtractionError.parsingError
+        }
+        
+        // Find audio URL
+        var audioURLString: String? = nil
+        
+        if let adaptiveFormats = streamingData["adaptiveFormats"] as? [[String: Any]] {
+            let audioFormats = adaptiveFormats
+                .filter { ($0["mimeType"] as? String)?.contains("audio") == true }
+                .sorted { ($0["bitrate"] as? Int ?? 0) > ($1["bitrate"] as? Int ?? 0) }
+            
+            for format in audioFormats {
+                if let urlStr = format["url"] as? String {
+                    audioURLString = urlStr
+                    break
+                }
+            }
+        }
+        
+        guard let audioURL = audioURLString, let url = URL(string: audioURL) else {
+            throw ExtractionError.noAudioStream
+        }
+        
+        print("🎵 [YouTubeExtractor] Found audio URL from web scrape")
+        
+        // Download the audio
+        var audioRequest = URLRequest(url: url)
+        audioRequest.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+        audioRequest.setValue("https://www.youtube.com", forHTTPHeaderField: "Referer")
+        if let cookies = getCookieString() {
+            audioRequest.setValue(cookies, forHTTPHeaderField: "Cookie")
+        }
+        
+        let (tempURL, response) = try await session.download(for: audioRequest)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 || httpResponse.statusCode == 206 else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            print("❌ [YouTubeExtractor] Web scrape download failed: \(code)")
+            throw ExtractionError.networkError(NSError(domain: "HTTP", code: code))
+        }
+        
+        // Move to documents
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let youtubeFolder = documentsPath.appendingPathComponent("YouTube Downloads", isDirectory: true)
+        try? FileManager.default.createDirectory(at: youtubeFolder, withIntermediateDirectories: true)
+        
+        let cleanTitle = title.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
+        let destinationURL = youtubeFolder.appendingPathComponent("\(cleanTitle).m4a")
+        
+        try? FileManager.default.removeItem(at: destinationURL)
+        try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+        
+        print("✅ [YouTubeExtractor] Saved via web scrape: \(destinationURL.lastPathComponent)")
+        
+        return (destinationURL, title)
+    }
+    
     /// Completion handler version
     static func extractVideoInfo(from url: String, completion: @escaping (Result<VideoInfo, Error>) -> Void) {
         Task {
