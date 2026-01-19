@@ -219,19 +219,31 @@ class EmbeddedPython: ObservableObject {
         log('Output directory created/verified')
 
         ydl_opts = {
-            'format': '140/m4a/bestaudio',  # itag 140 = direct m4a stream
-            'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
-            'quiet': False,
-            'no_warnings': False,
-            'extract_flat': False,
-            'verbose': True,
+            # FORCE progressive single-file M4A (NO fragments, NO ffmpeg)
+            'format': '140',
+            'outtmpl': os.path.join(output_dir, '%(id)s.m4a'),
+
             'noplaylist': True,
-            'nocheckcertificate': True,
-            'ignoreerrors': False,
-            'restrictfilenames': True,
-            'socket_timeout': 30,
-            'extractor_args': {'youtube': {'player_client': ['android_music'], 'skip': ['hls', 'dash']}},
+            'quiet': False,
+            'verbose': True,
+
+            # HARD FAIL instead of fragment fallback
+            'format_selection': 'fail',
+
+            # Disable ALL post-processing / merging
+            'postprocessors': [],
+            'merge_output_format': None,
+            'hls_prefer_native': False,
+
+            # iOS-safe extractor configuration
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web'],
+                    'skip': ['dash', 'hls'],
+                }
+            },
         }
+
         log(f'ydl_opts: {ydl_opts}')
 
         result = {}
