@@ -1,5 +1,6 @@
 
 import Foundation
+import FFmpegKit
 
 /// Manages an embedded Python interpreter for running yt-dlp on iOS
 /// 
@@ -79,158 +80,102 @@ class EmbeddedPython: ObservableObject {
         
         let pythonPath = [
             libPath,                           // Core stdlib including encodings
-            libPath + "/lib-dynload",          // C extension modules
-            libPath + "/site-packages",        // Any installed packages
-            pythonHome,                        // Also include python-stdlib root
-            resourcePath,                      // Add bundle root so 'import yt_dlp' works (it's in the root)
-        ].joined(separator: ":")
-        
-        // Debug: Print paths to help troubleshoot
-        print("📂 [EmbeddedPython] Resource path: \(resourcePath)")
-        print("📂 [EmbeddedPython] PYTHONHOME: \(pythonHome)")
-        print("📂 [EmbeddedPython] Lib path: \(libPath)")
-        print("📂 [EmbeddedPython] PYTHONPATH: \(pythonPath)")
-        
-        // Check if encodings module exists
-        let encodingsPath = libPath + "/encodings"
-        if FileManager.default.fileExists(atPath: encodingsPath) {
-            print("✅ [EmbeddedPython] Found encodings at: \(encodingsPath)")
-        } else {
-            print("❌ [EmbeddedPython] encodings NOT found at: \(encodingsPath)")
-            print("❌ [EmbeddedPython] Please verify python-stdlib folder structure")
-            
-            // List what's actually in the folders to help debug
-            if let homeContents = try? FileManager.default.contentsOfDirectory(atPath: pythonHome) {
-                print("📂 [EmbeddedPython] python-stdlib contains: \(homeContents)")
-            }
-            if let libContents = try? FileManager.default.contentsOfDirectory(atPath: libPath) {
-                print("📂 [EmbeddedPython] lib path contains: \(libContents.prefix(20))...")
-            }
-            
-            updateStatus("Python stdlib not found - check setup")
-            return
-        }
-        
-        setenv("PYTHONHOME", pythonHome, 1)
-        setenv("PYTHONPATH", pythonPath, 1)
-        setenv("PYTHONDONTWRITEBYTECODE", "1", 1)
-        setenv("PYTHONUNBUFFERED", "1", 1)
-        setenv("PYTHONIOENCODING", "utf-8", 1)
-        
-        // The actual Python initialization happens via the C API
-        // When Python.xcframework is properly linked, we can call Py_Initialize()
-        
-        if initializePythonRuntime() {
-            pythonInitialized = true
-            DispatchQueue.main.async {
-                self.isInitialized = true
-                self.statusMessage = "Python ready"
-            }
-            print("✅ [EmbeddedPython] Initialized")
-        } else {
-            updateStatus("Failed to initialize Python")
-        }
-    }
-    
-    /// Download audio using yt-dlp
-    func downloadAudio(url: String) async throws -> (URL, String) {
-        guard pythonInitialized else {
-            throw PythonError.notInitialized
-        }
-        
-        updateStatus("Starting download...")
-        
-        // Get output directory
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let outputDir = documentsPath.appendingPathComponent("YouTube Downloads", isDirectory: true)
-        try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-        
-        return try await withCheckedThrowingContinuation { continuation in
-            // CRITICAL: Run on the same queue where Python was initialized
-            pythonQueue.async { [weak self] in
-                do {
-                    let result = try self?.runYtdlp(url: url, outputDir: outputDir.path)
-                    if let result = result {
-                        continuation.resume(returning: result)
-                    } else {
-                        continuation.resume(throwing: PythonError.downloadFailed)
-                    }
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-    }
-    
-    private func runYtdlp(url: String, outputDir: String) throws -> (URL, String) {
-        // Result file path - Python will write the result here
-        let resultFilePath = NSTemporaryDirectory() + "ytdlp_result.json"
-        let logFilePath = NSTemporaryDirectory() + "ytdlp_debug.log"
-        
-        print("🎬 [runYtdlp] Starting download for URL: \(url)")
-        print("🎬 [runYtdlp] Output directory: \(outputDir)")
-        print("🎬 [runYtdlp] Result file: \(resultFilePath)")
-        
-        let script = """
-        import sys
-        import os
-        import json
+            let script = """
+            import sys
+            import os
+            import json
 
-        log_file = r'''\(logFilePath)'''
+            log_file = r'''\(logFilePath)'''
 
-        def log(msg):
-            try:
-                with open(log_file, 'a', encoding='utf-8') as f:
-                    f.write(str(msg) + '\\n')
-            except:
-                pass
-            try:
-                print(msg)
-            except:
+            def log(msg):
                 try:
-                    print(str(msg).encode('utf-8', errors='replace').decode('utf-8'))
+                    with open(log_file, 'a', encoding='utf-8') as f:
+                        f.write(str(msg) + '\\\n')
                 except:
                     pass
+                try:
+                    print(msg)
+                except:
+                    try:
+                        print(str(msg).encode('utf-8', errors='replace').decode('utf-8'))
+                    except:
+                        pass
 
-        log('=== yt-dlp Debug Log ===')
-        log(f'Python version: {sys.version}')
-        log(f'sys.path: {sys.path}')
-        log(f'CWD: {os.getcwd()}')
+            log('=== yt-dlp Debug Log ===')
+            log(f'Python version: {sys.version}')
+            log(f'sys.path: {sys.path}')
+            log(f'CWD: {os.getcwd()}')
 
-        log('Attempting to import yt_dlp...')
-        try:
-            import yt_dlp
-            log(f'yt_dlp imported successfully, version: {getattr(yt_dlp, "version", "unknown")}')
-        except Exception as e:
-            log(f'Failed to import yt_dlp: {e}')
-            result = {'success': False, 'error': f'Failed to import yt_dlp: {e}'}
+            log('Attempting to import yt_dlp...')
+            try:
+                import yt_dlp
+                log(f'yt_dlp imported successfully, version: {getattr(yt_dlp, "version", "unknown")}')
+            except Exception as e:
+                log(f'Failed to import yt_dlp: {e}')
+                result = {'success': False, 'error': f'Failed to import yt_dlp: {e}'}
+                result_file = r'''\(resultFilePath)'''
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump(result, f)
+                raise
+
+            output_dir = r'''\(outputDir)'''
+            url = r'''\(url.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: ""))'''
             result_file = r'''\(resultFilePath)'''
+
+            log(f'Output dir: {output_dir}')
+            log(f'URL: {url}')
+
+            os.makedirs(output_dir, exist_ok=True)
+            log('Output directory created/verified')
+
+            ydl_opts = {
+                'format': 'bestaudio[ext=m4a]/bestaudio',
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Referer': 'https://www.youtube.com/',
+                },
+                'allow_unplayable_formats': True,
+                'ignore_no_formats_error': True,
+                'quiet': True,
+                'noplaylist': True,
+                'outtmpl': os.path.join(output_dir, 'audio.%(ext)s'),
+            }
+
+            log(f'ydl_opts: {ydl_opts}')
+
+            result = {}
+
+            try:
+                log('Creating YoutubeDL instance...')
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    log('YoutubeDL instance created, extracting info...')
+                    info = ydl.extract_info(url, download=True)
+                    log(f'Info extracted, title: {info.get("title", "Unknown")}')
+                    title = info.get('title', 'Unknown')
+                    video_id = info.get('id', '')
+                    log(f'Looking for downloaded file with ID {video_id} in {output_dir}...')
+                    downloaded_path = ydl.prepare_filename(info)
+                    audio_ext = info.get('ext', 'unknown')
+
+                result = {
+                    'success': True,
+                    'title': title,
+                    'audio_url': downloaded_path,
+                    'audio_ext': audio_ext,
+                }
+
+            except Exception as e:
+                log(f'Exception during download: {type(e).__name__}: {e}')
+                import traceback
+                log(traceback.format_exc())
+                result = {'success': False, 'error': str(e)}
+
+            log(f'Final result: {result}')
+            # Write result to file for Swift to read
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(result, f)
-            raise
-
-        output_dir = r'''\(outputDir)'''
-        url = r'''\(url.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: ""))'''
-        result_file = r'''\(resultFilePath)'''
-
-        log(f'Output dir: {output_dir}')
-        log(f'URL: {url}')
-
-        os.makedirs(output_dir, exist_ok=True)
-        log('Output directory created/verified')
-
-
-        ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio',
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'quiet': True,
-            'verbose': False,
-            'noplaylist': True,
-            'outtmpl': os.path.join(output_dir, 'audio.%(ext)s'),
-            # No extractor_args: let yt-dlp try all available clients and formats
-        }
-
-
+            log('Result written to file')
+            """
         log(f'ydl_opts: {ydl_opts}')
 
         result = {}
@@ -243,32 +188,54 @@ class EmbeddedPython: ObservableObject {
                 log(f'Info extracted, title: {info.get("title", "Unknown")}')
                 title = info.get('title', 'Unknown')
                 video_id = info.get('id', '')
+
+    /// Convert a local file to m4a using FFmpegKit. Runs synchronously on the current queue.
+    private func convertToM4A(inputURL: URL, title: String) throws -> URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        // sanitize title for filename
+        let safeName = title.replacingOccurrences(of: "[\\/:*?\"<>|]", with: "-", options: .regularExpression)
+        let outputURL = documents.appendingPathComponent("\(safeName).m4a")
+
+        // If file already exists, remove it
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let command = "-i \"\(inputURL.path)\" -vn -acodec aac -b:a 192k \"\(outputURL.path)\""
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var conversionError: Error?
+        var success = false
+
+        FFmpegKit.executeAsync(command) { session in
+            let returnCode = session?.getReturnCode()
+            if ReturnCode.isSuccess(returnCode) {
+                success = true
+            } else {
+                let rc = returnCode?.getValue() ?? -1
+                conversionError = PythonError.executionError("ffmpeg failed, returnCode=\(rc)")
+            }
+            semaphore.signal()
+        }
+
+        // Wait for conversion to finish (we're already running on the pythonQueue)
+        _ = semaphore.wait(timeout: .distantFuture)
+
+        if success {
+            print("✅ [convertToM4A] Conversion succeeded: \(outputURL.path)")
+            return outputURL
+        } else {
+            throw conversionError ?? PythonError.executionError("ffmpeg conversion failed")
+        }
+    }
                 log(f'Looking for downloaded file with ID {video_id} in {output_dir}...')
                 downloaded_path = ydl.prepare_filename(info)
                 audio_ext = info.get('ext', 'unknown')
 
-            # If not m4a, convert to m4a using ffmpegkit
-            import os
-            m4a_path = os.path.join(output_dir, 'audio.m4a')
-            if not downloaded_path.endswith('.m4a'):
-                log(f'Converting {downloaded_path} to m4a...')
-                import ffmpeg
-                (
-                    ffmpeg
-                    .input(downloaded_path)
-                    .output(m4a_path, acodec='aac', audio_bitrate='192k', vn=None)
-                    .overwrite_output()
-                    .run()
-                )
-                audio_url = m4a_path
-                audio_ext = 'm4a'
-            else:
-                audio_url = downloaded_path
-
             result = {
                 'success': True,
                 'title': title,
-                'audio_url': audio_url,
+                'audio_url': downloaded_path,
                 'audio_ext': audio_ext,
             }
 
