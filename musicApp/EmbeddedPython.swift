@@ -81,7 +81,7 @@ class EmbeddedPython: ObservableObject {
             libPath + "/lib-dynload",          // C extension modules
             libPath + "/site-packages",        // Any installed packages
             pythonHome,                        // Also include python-stdlib root
-            resourcePath + "/yt_dlp",          // yt-dlp module
+            resourcePath,                      // Add bundle root so 'import yt_dlp' works (it's in the root)
         ].joined(separator: ":")
         
         // Debug: Print paths to help troubleshoot
@@ -184,18 +184,7 @@ class EmbeddedPython: ObservableObject {
         log('=== yt-dlp Debug Log ===')
         log(f'Python version: {sys.version}')
         log(f'sys.path: {sys.path}')
-
-        # Ensure yt_dlp is in path
-        log('Setting up yt_dlp path...')
-        pythonpath = os.environ.get('PYTHONPATH', '')
-        log(f'PYTHONPATH: {pythonpath}')
-        
-        yt_dlp_path = os.path.join(pythonpath.split(':')[0], '..', 'yt_dlp')
-        log(f'yt_dlp_path: {yt_dlp_path}')
-        
-        if yt_dlp_path not in sys.path:
-            sys.path.insert(0, yt_dlp_path)
-            log(f'Added to sys.path')
+        log(f'CWD: {os.getcwd()}')
 
         log('Attempting to import yt_dlp...')
         try:
