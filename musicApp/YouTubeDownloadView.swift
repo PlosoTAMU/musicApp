@@ -18,21 +18,6 @@ struct YouTubeDownloadView: View {
                     .disableAutocorrection(true)
                     .padding(.horizontal)
                 
-                // Wi-Fi override checkbox
-                Toggle(isOn: $downloader.allowWiFi) {
-                    HStack {
-                        Image(systemName: downloader.allowWiFi ? "wifi" : "antenna.radiowaves.left.and.right")
-                            .foregroundColor(downloader.allowWiFi ? .blue : .orange)
-                        Text("Allow Wi-Fi (otherwise cellular only)")
-                            .font(.subheadline)
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                .background(Color.gray.opacity(0.1))
-                .cornerRadius(8)
-                .padding(.horizontal)
-                
                 if downloader.isDownloading {
                     ProgressView("Downloading...")
                         .padding()
@@ -46,19 +31,7 @@ struct YouTubeDownloadView: View {
                         .padding(.horizontal)
                 }
                 
-                Button {
-                    startDownload()
-                } label: {
-                    Text("Download Audio")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(youtubeURL.isEmpty || downloader.isDownloading ? Color.gray : Color.blue)
-                        .cornerRadius(10)
-                }
-                .disabled(youtubeURL.isEmpty || downloader.isDownloading)
-                .padding(.horizontal)
+                downloadButton
                 
                 Spacer()
             }
@@ -73,6 +46,25 @@ struct YouTubeDownloadView: View {
                 }
             }
         }
+    }
+    
+    private var downloadButton: some View {
+        let isDisabled = youtubeURL.isEmpty || downloader.isDownloading
+        let backgroundColor = isDisabled ? Color.gray : Color.blue
+        
+        return Button {
+            startDownload()
+        } label: {
+            Text("Download Audio")
+                .font(.headline)
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(backgroundColor)
+                .cornerRadius(10)
+        }
+        .disabled(isDisabled)
+        .padding(.horizontal)
     }
     
     private func startDownload() {
