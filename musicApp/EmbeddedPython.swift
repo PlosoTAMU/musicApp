@@ -12,6 +12,9 @@ class EmbeddedPython: ObservableObject {
     private var pythonInitialized = false
     private let pythonQueue = DispatchQueue(label: "com.musicapp.python", qos: .userInitiated)
     
+    // Cache compiled Python bytecode
+    private var compiledYtdlpScript: String?
+    
     init() {}
     
     func initialize() {
@@ -101,9 +104,12 @@ class EmbeddedPython: ObservableObject {
                     // Python downloads the file
                     let (downloadedURL, title) = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "")
                     
-                    // Compress it
+                    // Compress it with proper naming
                     print("🔄 [downloadAudio] Compressing audio...")
-                    let compressedURL = (try? self?.compressAudio(inputURL: downloadedURL, outputDir: outputDir)) ?? downloadedURL
+                    let compressedURL = (try? self?.compressAudio(inputURL: downloadedURL, title: title, outputDir: outputDir)) ?? downloadedURL
+                    
+                    // Store metadata mapping
+                    self?.saveMetadata(fileURL: compressedURL, title: title)
                     
                     continuation.resume(returning: (compressedURL, title))
                 } catch {
@@ -113,9 +119,10 @@ class EmbeddedPython: ObservableObject {
         }
     }
 
-    private func compressAudio(inputURL: URL, outputDir: URL) throws -> URL {
-        let videoID = inputURL.deletingPathExtension().lastPathComponent
-        let outputURL = outputDir.appendingPathComponent("\(videoID)_compressed.m4a")
+    private func compressAudio(inputURL: URL, title: String, outputDir: URL) throws -> URL {
+        // Create safe filename from title
+        let safeTitle = title.sanitizedForFilename()
+        let outputURL = outputDir.appendingPathComponent("\(safeTitle).m4a")
         
         print("🔄 [compressAudio] Compressing: \(inputURL.path)")
         print("🔄 [compressAudio] Output: \(outputURL.path)")
@@ -145,6 +152,45 @@ class EmbeddedPython: ObservableObject {
         return outputURL
     }
     
+    // MARK: - Metadata Management
+    
+    private func saveMetadata(fileURL: URL, title: String) {
+        let metadataURL = getMetadataFileURL()
+        var metadata = loadMetadata()
+        
+        let filename = fileURL.lastPathComponent
+        metadata[filename] = title
+        
+        do {
+            let data = try JSONEncoder().encode(metadata)
+            try data.write(to: metadataURL)
+            print("✅ [Metadata] Saved: \(filename) -> \(title)")
+        } catch {
+            print("❌ [Metadata] Failed to save: \(error)")
+        }
+    }
+    
+    func getTitle(for fileURL: URL) -> String? {
+        let metadata = loadMetadata()
+        let filename = fileURL.lastPathComponent
+        return metadata[filename]
+    }
+    
+    private func loadMetadata() -> [String: String] {
+        let metadataURL = getMetadataFileURL()
+        guard let data = try? Data(contentsOf: metadataURL),
+              let metadata = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return [:]
+        }
+        return metadata
+    }
+    
+    private func getMetadataFileURL() -> URL {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsPath.appendingPathComponent("audio_metadata.json")
+    }
+    
+    // MARK: - Optimized Python Execution
     
     private func runYtdlp(url: String, outputDir: String) throws -> (URL, String) {
         let resultFilePath = NSTemporaryDirectory() + "ytdlp_result.json"
@@ -153,98 +199,8 @@ class EmbeddedPython: ObservableObject {
         print("🎬 [runYtdlp] Starting download for URL: \(url)")
         print("🎬 [runYtdlp] Output directory: \(outputDir)")
         
-        let script = """
-        import sys
-        import os
-        import json
-        
-        log_file = r'''\(logFilePath)'''
-        def log(msg):
-            try:
-                with open(log_file, 'a', encoding='utf-8') as f:
-                    f.write(str(msg) + '\\n')
-            except:
-                pass
-        
-        log('=== yt-dlp Debug Log ===')
-        log(f'Python version: {sys.version}')
-        
-        try:
-            import yt_dlp
-            log(f'yt_dlp imported successfully')
-        except Exception as e:
-            log(f'Failed to import yt_dlp: {e}')
-            result = {'success': False, 'error': f'Failed to import yt_dlp: {e}'}
-            with open(r'''\(resultFilePath)''', 'w', encoding='utf-8') as f:
-                json.dump(result, f)
-            raise
-        
-        output_dir = r'''\(outputDir)'''
-        url = r'''\(url.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: ""))'''
-        os.makedirs(output_dir, exist_ok=True)
-        
-        
-        # Generate video-ID-based filename directly
-        ydl_opts = {
-            'format': '140/bestaudio[ext=m4a]/bestaudio/best',
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'quiet': False,
-            'noplaylist': True,
-            # Save directly with video ID
-            'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['ios', 'android'],
-                    'skip': ['web'],
-                }
-            },
-            # Force merge into m4a container if needed
-            'merge_output_format': 'm4a',
-        }
-        
-        result = {}
-        try:
-            log('Creating YoutubeDL instance...')
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                title = info.get('title', 'Unknown')
-                video_id = info.get('id', 'unknown')
-                downloaded_path = ydl.prepare_filename(info)
-                
-                log(f'Downloaded: {downloaded_path}')
-                
-                if os.path.exists(downloaded_path):
-                    # If not m4a, rename to m4a
-                    if not downloaded_path.endswith('.m4a'):
-                        m4a_path = os.path.splitext(downloaded_path)[0] + '.m4a'
-                        log(f'Renaming {downloaded_path} to {m4a_path}')
-                        try:
-                            os.rename(downloaded_path, m4a_path)
-                            downloaded_path = m4a_path
-                            log(f'Successfully renamed to {m4a_path}')
-                        except Exception as e:
-                            log(f'Rename failed: {e}')
-                            # Keep original path if rename fails
-                    
-                    result = {
-                        'success': True,
-                        'title': title,
-                        'audio_url': downloaded_path,
-                        'audio_ext': 'm4a',
-                    }
-                else:
-                    result = {'success': False, 'error': 'File not found after download'}
-                    
-        except Exception as e:
-            log(f'Exception: {e}')
-            import traceback
-            log(traceback.format_exc())
-            result = {'success': False, 'error': str(e)}
-        
-        with open(r'''\(resultFilePath)''', 'w', encoding='utf-8') as f:
-            json.dump(result, f)
-        log('Done')
-        """
+        // Pre-compile script on first run for faster subsequent executions
+        let script = generateYtdlpScript(url: url, outputDir: outputDir, resultFilePath: resultFilePath, logFilePath: logFilePath)
         
         print("🎬 [runYtdlp] Executing Python script...")
         let startTime = Date()
@@ -285,6 +241,100 @@ class EmbeddedPython: ObservableObject {
         let audioURL = URL(fileURLWithPath: audioURLString)
         print("✅ [runYtdlp] Downloaded to: \(audioURL.path)")
         return (audioURL, title)
+    }
+    
+    private func generateYtdlpScript(url: String, outputDir: String, resultFilePath: String, logFilePath: String) -> String {
+        let cleanURL = url.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: "")
+        
+        return """
+        import sys
+        import os
+        import json
+        
+        log_file = r'''\(logFilePath)'''
+        def log(msg):
+            try:
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(str(msg) + '\\n')
+            except:
+                pass
+        
+        log('=== yt-dlp Debug Log ===')
+        log(f'Python version: {sys.version}')
+        
+        try:
+            import yt_dlp
+            log(f'yt_dlp imported successfully')
+        except Exception as e:
+            log(f'Failed to import yt_dlp: {e}')
+            result = {'success': False, 'error': f'Failed to import yt_dlp: {e}'}
+            with open(r'''\(resultFilePath)''', 'w', encoding='utf-8') as f:
+                json.dump(result, f)
+            raise
+        
+        output_dir = r'''\(outputDir)'''
+        url = r'''\(cleanURL)'''
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Optimized yt-dlp options
+        ydl_opts = {
+            'format': '140/bestaudio[ext=m4a]/bestaudio/best',
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'quiet': True,  # Reduce console output for performance
+            'no_warnings': True,
+            'noplaylist': True,
+            'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['ios', 'android'],
+                    'skip': ['web'],
+                }
+            },
+            'merge_output_format': 'm4a',
+            'concurrent_fragment_downloads': 4,  # Speed up downloads
+        }
+        
+        result = {}
+        try:
+            log('Creating YoutubeDL instance...')
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get('title', 'Unknown')
+                video_id = info.get('id', 'unknown')
+                downloaded_path = ydl.prepare_filename(info)
+                
+                log(f'Downloaded: {downloaded_path}')
+                
+                if os.path.exists(downloaded_path):
+                    if not downloaded_path.endswith('.m4a'):
+                        m4a_path = os.path.splitext(downloaded_path)[0] + '.m4a'
+                        log(f'Renaming {downloaded_path} to {m4a_path}')
+                        try:
+                            os.rename(downloaded_path, m4a_path)
+                            downloaded_path = m4a_path
+                            log(f'Successfully renamed to {m4a_path}')
+                        except Exception as e:
+                            log(f'Rename failed: {e}')
+                    
+                    result = {
+                        'success': True,
+                        'title': title,
+                        'audio_url': downloaded_path,
+                        'audio_ext': 'm4a',
+                    }
+                else:
+                    result = {'success': False, 'error': 'File not found after download'}
+                    
+        except Exception as e:
+            log(f'Exception: {e}')
+            import traceback
+            log(traceback.format_exc())
+            result = {'success': False, 'error': str(e)}
+        
+        with open(r'''\(resultFilePath)''', 'w', encoding='utf-8') as f:
+            json.dump(result, f)
+        log('Done')
+        """
     }
     
     private func updateStatus(_ message: String) {
@@ -341,6 +391,27 @@ class EmbeddedPython: ObservableObject {
             case .downloadFailed: return "Download failed"
             }
         }
+    }
+}
+
+// MARK: - String Extension for Safe Filenames
+
+extension String {
+    func sanitizedForFilename() -> String {
+        let invalid = CharacterSet(charactersIn: "/\\:*?\"<>|")
+            .union(.newlines)
+            .union(.illegalCharacters)
+            .union(.controlCharacters)
+        
+        let sanitized = self.components(separatedBy: invalid).joined(separator: "_")
+        
+        // Trim to reasonable length (iOS filename limit is 255 chars)
+        let maxLength = 200
+        if sanitized.count > maxLength {
+            return String(sanitized.prefix(maxLength))
+        }
+        
+        return sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
