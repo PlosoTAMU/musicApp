@@ -98,7 +98,7 @@ class EmbeddedPython: ObservableObject {
         return try await withCheckedThrowingContinuation { continuation in
             pythonQueue.async { [weak self] in
                 do {
-                    // Python downloads directly with final filename
+                    // Python downloads directly with final filename - no conversion needed
                     let result = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "")
                     continuation.resume(returning: result)
                 } catch {
@@ -120,7 +120,6 @@ class EmbeddedPython: ObservableObject {
         import sys
         import os
         import json
-        import uuid
         
         log_file = r'''\(logFilePath)'''
         def log(msg):
@@ -147,8 +146,6 @@ class EmbeddedPython: ObservableObject {
         url = r'''\(url.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: ""))'''
         os.makedirs(output_dir, exist_ok=True)
         
-        unique_id = str(uuid.uuid4())[:8]
-        temp_filename = f'temp_{unique_id}'
         
         # Generate video-ID-based filename directly
         ydl_opts = {
