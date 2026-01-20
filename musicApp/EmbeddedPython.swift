@@ -120,17 +120,23 @@ class EmbeddedPython: ObservableObject {
         print("🔄 [convertToAAC] Input: \(inputURL.path)")
         print("🔄 [convertToAAC] Output: \(outputURL.path)")
         
-        let command = "-i \"\(inputURL.path)\" -vn -acodec aac -b:a 64k -y \"\(outputURL.path)\""
+        // Use -c:a copy to stream copy (no re-encoding)
+        // This is instant if the codec is already AAC
+        let command = "-i \"\(inputURL.path)\" -vn -c:a copy -y \"\(outputURL.path)\""
         print("🔄 [convertToAAC] Command: \(command)")
         
         let session = FFmpegKit.execute(command)
         
         guard let returnCode = session?.getReturnCode(), returnCode.isValueSuccess() else {
-            print("❌ [convertToAAC] FFmpeg failed")
-            if let output = session?.getFailStackTrace() {
-                print("❌ [convertToAAC] Error: \(output)")
+            print("⚠️ [convertToAAC] Stream copy failed, trying re-encode...")
+            // Fallback: re-encode
+            let reencodeCommand = "-i \"\(inputURL.path)\" -vn -acodec aac -b:a 64k -y \"\(outputURL.path)\""
+            let reencodeSession = FFmpegKit.execute(reencodeCommand)
+            
+            guard let reencodeCode = reencodeSession?.getReturnCode(), reencodeCode.isValueSuccess() else {
+                print("❌ [convertToAAC] Re-encode also failed")
+                return inputURL
             }
-            return inputURL
         }
         
         print("✅ [convertToAAC] Conversion successful")
