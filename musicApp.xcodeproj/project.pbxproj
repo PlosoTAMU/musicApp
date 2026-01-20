@@ -6,6 +6,29 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		BF33574B2F1F0CD200C362AD /* ffmpegkit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */; };
+		BF33574C2F1F0CD200C362AD /* ffmpegkit.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BF33574D2F1F0CD300C362AD /* libavcodec.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782112F1ECD7E0056E8CB /* libavcodec.xcframework */; };
+		BF33574E2F1F0CD300C362AD /* libavcodec.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782112F1ECD7E0056E8CB /* libavcodec.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BF33574F2F1F0CD400C362AD /* libavdevice.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782122F1ECD7E0056E8CB /* libavdevice.xcframework */; };
+		BF3357502F1F0CD400C362AD /* libavdevice.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782122F1ECD7E0056E8CB /* libavdevice.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BF3357512F1F0CD600C362AD /* libavfilter.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782132F1ECD7E0056E8CB /* libavfilter.xcframework */; };
+		BF3357522F1F0CD600C362AD /* libavfilter.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782132F1ECD7E0056E8CB /* libavfilter.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BF3357532F1F0CD700C362AD /* libavformat.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782142F1ECD7E0056E8CB /* libavformat.xcframework */; };
+		BF3357542F1F0CD700C362AD /* libavformat.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782142F1ECD7E0056E8CB /* libavformat.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BF3357552F1F0CD900C362AD /* libavutil.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782152F1ECD7E0056E8CB /* libavutil.xcframework */; };
+		BF3357562F1F0CD900C362AD /* libavutil.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782152F1ECD7E0056E8CB /* libavutil.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BF3357572F1F0CDA00C362AD /* libswresample.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782162F1ECD7E0056E8CB /* libswresample.xcframework */; };
+		BF3357582F1F0CDA00C362AD /* libswresample.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782162F1ECD7E0056E8CB /* libswresample.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BF3357592F1F0CDB00C362AD /* libswscale.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */; };
+		BF33575A2F1F0CDB00C362AD /* libswscale.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BF57651F2F1EB3CF0056E8CB /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF57651D2F1EB3CC0056E8CB /* Python.xcframework */; };
+		BF5765202F1EB3CF0056E8CB /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF57651D2F1EB3CC0056E8CB /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BF5779242F1EB4630056E8CB /* python-stdlib in Resources */ = {isa = PBXBuildFile; fileRef = BF5779232F1EB45D0056E8CB /* python-stdlib */; };
+		BF5781D02F1EB4D70056E8CB /* yt_dlp in Resources */ = {isa = PBXBuildFile; fileRef = BF5781CF2F1EB4D20056E8CB /* yt_dlp */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		BFFDD6022F1C478D0032409D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -23,7 +46,40 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		BF5765212F1EB3D00056E8CB /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				BF3357502F1F0CD400C362AD /* libavdevice.xcframework in Embed Frameworks */,
+				BF3357542F1F0CD700C362AD /* libavformat.xcframework in Embed Frameworks */,
+				BF3357582F1F0CDA00C362AD /* libswresample.xcframework in Embed Frameworks */,
+				BF5765202F1EB3CF0056E8CB /* Python.xcframework in Embed Frameworks */,
+				BF33574E2F1F0CD300C362AD /* libavcodec.xcframework in Embed Frameworks */,
+				BF3357522F1F0CD600C362AD /* libavfilter.xcframework in Embed Frameworks */,
+				BF3357562F1F0CD900C362AD /* libavutil.xcframework in Embed Frameworks */,
+				BF33575A2F1F0CDB00C362AD /* libswscale.xcframework in Embed Frameworks */,
+				BF33574C2F1F0CD200C362AD /* ffmpegkit.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		BF57651D2F1EB3CC0056E8CB /* Python.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = "../Downloads/Python-3.14-iOS-support.b8/Python.xcframework"; sourceTree = SOURCE_ROOT; };
+		BF5779232F1EB45D0056E8CB /* python-stdlib */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "python-stdlib"; sourceTree = "<group>"; };
+		BF5781CF2F1EB4D20056E8CB /* yt_dlp */ = {isa = PBXFileReference; lastKnownFileType = folder; name = yt_dlp; path = "../Desktop/yt-dlp-bundle/yt_dlp-2025.10.14/yt_dlp"; sourceTree = SOURCE_ROOT; };
+		BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = ffmpegkit.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/ffmpegkit.xcframework"; sourceTree = SOURCE_ROOT; };
+		BF5782112F1ECD7E0056E8CB /* libavcodec.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libavcodec.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libavcodec.xcframework"; sourceTree = SOURCE_ROOT; };
+		BF5782122F1ECD7E0056E8CB /* libavdevice.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libavdevice.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libavdevice.xcframework"; sourceTree = SOURCE_ROOT; };
+		BF5782132F1ECD7E0056E8CB /* libavfilter.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libavfilter.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libavfilter.xcframework"; sourceTree = SOURCE_ROOT; };
+		BF5782142F1ECD7E0056E8CB /* libavformat.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libavformat.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libavformat.xcframework"; sourceTree = SOURCE_ROOT; };
+		BF5782152F1ECD7E0056E8CB /* libavutil.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libavutil.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libavutil.xcframework"; sourceTree = SOURCE_ROOT; };
+		BF5782162F1ECD7E0056E8CB /* libswresample.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libswresample.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libswresample.xcframework"; sourceTree = SOURCE_ROOT; };
+		BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libswscale.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libswscale.xcframework"; sourceTree = SOURCE_ROOT; };
 		BFFDD5EF2F1C47850032409D /* musicApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = musicApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFFDD6012F1C478D0032409D /* musicAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = musicAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFFDD60B2F1C478D0032409D /* musicAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = musicAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -52,6 +108,15 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BF3357592F1F0CDB00C362AD /* libswscale.xcframework in Frameworks */,
+				BF33574D2F1F0CD300C362AD /* libavcodec.xcframework in Frameworks */,
+				BF33574F2F1F0CD400C362AD /* libavdevice.xcframework in Frameworks */,
+				BF33574B2F1F0CD200C362AD /* ffmpegkit.xcframework in Frameworks */,
+				BF3357552F1F0CD900C362AD /* libavutil.xcframework in Frameworks */,
+				BF3357572F1F0CDA00C362AD /* libswresample.xcframework in Frameworks */,
+				BF3357512F1F0CD600C362AD /* libavfilter.xcframework in Frameworks */,
+				BF57651F2F1EB3CF0056E8CB /* Python.xcframework in Frameworks */,
+				BF3357532F1F0CD700C362AD /* libavformat.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -75,10 +140,21 @@
 		BFFDD5E62F1C47850032409D = {
 			isa = PBXGroup;
 			children = (
+				BF5781CF2F1EB4D20056E8CB /* yt_dlp */,
+				BF57651D2F1EB3CC0056E8CB /* Python.xcframework */,
+				BF5779232F1EB45D0056E8CB /* python-stdlib */,
 				BFFDD5F12F1C47850032409D /* musicApp */,
 				BFFDD6042F1C478D0032409D /* musicAppTests */,
 				BFFDD60E2F1C478D0032409D /* musicAppUITests */,
 				BFFDD5F02F1C47850032409D /* Products */,
+				BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */,
+				BF5782112F1ECD7E0056E8CB /* libavcodec.xcframework */,
+				BF5782122F1ECD7E0056E8CB /* libavdevice.xcframework */,
+				BF5782132F1ECD7E0056E8CB /* libavfilter.xcframework */,
+				BF5782142F1ECD7E0056E8CB /* libavformat.xcframework */,
+				BF5782152F1ECD7E0056E8CB /* libavutil.xcframework */,
+				BF5782162F1ECD7E0056E8CB /* libswresample.xcframework */,
+				BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */,
 			);
 			sourceTree = "<group>";
 		};
@@ -102,6 +178,7 @@
 				BFFDD5EB2F1C47850032409D /* Sources */,
 				BFFDD5EC2F1C47850032409D /* Frameworks */,
 				BFFDD5ED2F1C47850032409D /* Resources */,
+				BF5765212F1EB3D00056E8CB /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -195,6 +272,9 @@
 			);
 			mainGroup = BFFDD5E62F1C47850032409D;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BF5782072F1EC0AB0056E8CB /* XCRemoteSwiftPackageReference "ffmpeg-kit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BFFDD5F02F1C47850032409D /* Products */;
 			projectDirPath = "";
@@ -212,6 +292,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BF5781D02F1EB4D70056E8CB /* yt_dlp in Resources */,
+				BF5779242F1EB4630056E8CB /* python-stdlib in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -407,6 +489,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/python-stdlib/lib/python3.14/lib-dynload",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Ploso.musicApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -434,6 +520,10 @@
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/python-stdlib/lib/python3.14/lib-dynload",
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Ploso.musicApp;
@@ -552,6 +642,17 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BF5782072F1EC0AB0056E8CB /* XCRemoteSwiftPackageReference "ffmpeg-kit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/arthenica/ffmpeg-kit";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 	};
 	rootObject = BFFDD5E72F1C47850032409D /* Project object */;
 }
