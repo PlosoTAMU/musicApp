@@ -351,29 +351,25 @@ class EmbeddedPython: ObservableObject {
         url = r'''\(cleanURL)'''
         os.makedirs(output_dir, exist_ok=True)
         
-        # SPEED OPTIMIZATIONS:
-        # 1. Target format 140 directly (YouTube's M4A audio)
-        # 2. Skip unnecessary metadata extraction
-        # 3. Use simple template for faster I/O
-        # 4. Disable fragment retries for speed (trade reliability for speed)
+        # SPEED OPTIMIZATIONS while keeping format fallbacks
         ydl_opts = {
-            'format': '140',  # Direct M4A format - fastest
+            'format': '140/bestaudio[ext=m4a]/bestaudio/best',  # Keep fallbacks for compatibility
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'quiet': False,
             'noplaylist': True,
             'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['ios'],  # iOS only - faster than trying multiple
-                    'skip': ['web', 'android'],
+                    'player_client': ['ios', 'android'],  # Keep both for reliability
+                    'skip': ['web'],
                 }
             },
+            'merge_output_format': 'm4a',
             'http_chunk_size': 10485760,  # 10MB chunks for faster download
             'retries': 3,  # Fewer retries
             'fragment_retries': 1,  # Fewer fragment retries
             'skip_unavailable_fragments': True,  # Don't wait for missing fragments
             'socket_timeout': 20,  # Shorter timeout
-            'extractor_retries': 2,  # Fewer extractor retries
             'noprogress': True,  # Disable progress bar overhead
             'no_color': True,  # Disable color codes
         }
