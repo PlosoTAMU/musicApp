@@ -175,16 +175,19 @@ struct NowPlayingView: View {
     @Binding var isPresented: Bool
     @State private var isSeeking = false
     @State private var seekValue: Double = 0
+    @State private var dominantColors: [Color] = [Color.blue.opacity(0.3), Color.purple.opacity(0.3)]
+    @State private var showPlaylistPicker = false
     
     var body: some View {
         ZStack {
-            // Background gradient
+            // Dynamic background gradient based on thumbnail
             LinearGradient(
-                colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
+                colors: dominantColors,
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
+            .animation(.easeInOut(duration: 0.5), value: dominantColors)
             
             VStack(spacing: 0) {
                 // Top bar
@@ -200,7 +203,7 @@ struct NowPlayingView: View {
                     Spacer()
                     
                     Menu {
-                        Button(action: {}) {
+                        Button(action: { showPlaylistPicker = true }) {
                             Label("Add to Playlist", systemImage: "plus")
                         }
                         Button(action: {}) {
@@ -218,13 +221,16 @@ struct NowPlayingView: View {
                 
                 // Album artwork
                 ZStack {
-                    if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
-                        Image(uiImage: thumbnailPath)
+                    if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
+                        Image(uiImage: thumbnailImage)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                             .frame(width: 320, height: 320)
                             .clipShape(RoundedRectangle(cornerRadius: 20))
                             .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
+                            .onAppear {
+                                extractDominantColors(from: thumbnailImage)
+                            }
                     } else {
                         RoundedRectangle(cornerRadius: 20)
                             .fill(
@@ -297,8 +303,18 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Playback controls
-                HStack(spacing: 60) {
+                // Playback controls with 2x skip buttons
+                HStack(spacing: 40) {
+                    // 2x Rewind
+                    Button {
+                        audioPlayer.skip(seconds: -10)
+                    } label: {
+                        Image(systemName: "gobackward.10")
+                            .font(.system(size: 28))
+                            .foregroundColor(.primary)
+                    }
+                    
+                    // Previous
                     Button {
                         audioPlayer.previous()
                     } label: {
@@ -307,6 +323,7 @@ struct NowPlayingView: View {
                             .foregroundColor(.primary)
                     }
                     
+                    // Play/Pause
                     Button {
                         if audioPlayer.isPlaying {
                             audioPlayer.pause()
@@ -319,11 +336,21 @@ struct NowPlayingView: View {
                             .foregroundColor(.primary)
                     }
                     
+                    // Next
                     Button {
                         audioPlayer.next()
                     } label: {
                         Image(systemName: "forward.fill")
                             .font(.system(size: 32))
+                            .foregroundColor(.primary)
+                    }
+                    
+                    // 2x Forward
+                    Button {
+                        audioPlayer.skip(seconds: 10)
+                    } label: {
+                        Image(systemName: "goforward.10")
+                            .font(.system(size: 28))
                             .foregroundColor(.primary)
                     }
                 }
@@ -343,35 +370,12 @@ struct NowPlayingView: View {
                         .font(.caption)
                 }
                 .padding(.horizontal, 32)
-                .padding(.bottom, 10)
-                
-                // Bottom controls
-                HStack {
-                    Button(action: {}) {
-                        Image(systemName: "quote.bubble")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Spacer()
-                    
-                    Button(action: {}) {
-                        Image(systemName: "airplayaudio")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Spacer()
-                    
-                    Button(action: {}) {
-                        Image(systemName: "list.bullet")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding(.horizontal, 40)
-                .padding(.bottom, 30)
+                .padding(.bottom, 40)
             }
+        }
+        .sheet(isPresented: $showPlaylistPicker) {
+            Text("Playlist picker coming soon")
+                .padding()
         }
     }
     
@@ -388,5 +392,42 @@ struct NowPlayingView: View {
             return nil
         }
         return image
+    }
+    
+    private func extractDominantColors(from image: UIImage) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let inputImage = CIImage(image: image) else { return }
+            
+            let extentVector = CIVector(x: inputImage.extent.origin.x,
+                                       y: inputImage.extent.origin.y,
+                                       z: inputImage.extent.size.width,
+                                       w: inputImage.extent.size.height)
+            
+            guard let filter = CIFilter(name: "CIAreaAverage",
+                                       parameters: [kCIInputImageKey: inputImage,
+                                                   kCIInputExtentKey: extentVector]) else { return }
+            guard let outputImage = filter.outputImage else { return }
+            
+            var bitmap = [UInt8](repeating: 0, count: 4)
+            let context = CIContext(options: [.workingColorSpace: kCFNull as Any])
+            context.render(outputImage,
+                          toBitmap: &bitmap,
+                          rowBytes: 4,
+                          bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                          format: .RGBA8,
+                          colorSpace: nil)
+            
+            let color = Color(red: Double(bitmap[0]) / 255.0,
+                            green: Double(bitmap[1]) / 255.0,
+                            blue: Double(bitmap[2]) / 255.0)
+            
+            DispatchQueue.main.async {
+                // Create gradient with darker and lighter versions
+                self.dominantColors = [
+                    color.opacity(0.6),
+                    color.opacity(0.3)
+                ]
+            }
+        }
     }
 }

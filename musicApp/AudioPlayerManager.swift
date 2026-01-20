@@ -122,6 +122,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
         }
     }
     
+    func skip(seconds: Double) {
+        let newTime = max(0, min(currentTime + seconds, duration))
+        seek(to: newTime)
+    }
+    
     func next() {
         guard !currentPlaylist.isEmpty else { return }
         currentIndex = (currentIndex + 1) % currentPlaylist.count
