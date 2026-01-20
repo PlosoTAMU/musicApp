@@ -98,14 +98,51 @@ class EmbeddedPython: ObservableObject {
         return try await withCheckedThrowingContinuation { continuation in
             pythonQueue.async { [weak self] in
                 do {
-                    // Python downloads directly with final filename - no conversion needed
-                    let result = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "")
-                    continuation.resume(returning: result)
+                    // Python downloads the file
+                    let (downloadedURL, title) = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "")
+                    
+                    // Compress it
+                    print("🔄 [downloadAudio] Compressing audio...")
+                    let compressedURL = (try? self?.compressAudio(inputURL: downloadedURL, outputDir: outputDir)) ?? downloadedURL
+                    
+                    continuation.resume(returning: (compressedURL, title))
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
         }
+    }
+
+    private func compressAudio(inputURL: URL, outputDir: URL) throws -> URL {
+        let videoID = inputURL.deletingPathExtension().lastPathComponent
+        let outputURL = outputDir.appendingPathComponent("\(videoID)_compressed.m4a")
+        
+        print("🔄 [compressAudio] Compressing: \(inputURL.path)")
+        print("🔄 [compressAudio] Output: \(outputURL.path)")
+        
+        // Use hardware encoder (aac_at) at 48kbps - fast and tiny
+        let command = "-i \"\(inputURL.path)\" -vn -c:a aac_at -b:a 48k -y \"\(outputURL.path)\""
+        print("🔄 [compressAudio] Command: \(command)")
+        
+        let session = FFmpegKit.execute(command)
+        
+        guard let returnCode = session?.getReturnCode(), returnCode.isValueSuccess() else {
+            print("❌ [compressAudio] Compression failed, keeping original")
+            if let output = session?.getFailStackTrace() {
+                print("❌ [compressAudio] Error: \(output)")
+            }
+            return inputURL
+        }
+        
+        let originalSize = (try? FileManager.default.attributesOfItem(atPath: inputURL.path)[.size] as? Int64) ?? 0
+        let compressedSize = (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int64) ?? 0
+        
+        print("✅ [compressAudio] Original: \(originalSize / 1024)KB → Compressed: \(compressedSize / 1024)KB")
+        
+        // Delete original file
+        try? FileManager.default.removeItem(at: inputURL)
+        
+        return outputURL
     }
     
     
