@@ -263,50 +263,56 @@ class EmbeddedPython: ObservableObject {
                     
                     log(f'Converting to m4a: {final_path}')
                     
+                    # Now convert to AAC (iOS-compatible, highly compressed)
+                    final_filename = f'{video_id}.m4a'
+                    final_path = os.path.join(output_dir, final_filename)
+
+                    log(f'Converting to AAC: {final_path}')
+
                     try:
-                        import ffmpeg
-                        log('ffmpeg-python imported')
+                        import ffmpegkit
+                        log('ffmpegkit imported')
                         
-                        # AAC at 64kbps is very efficient and iOS-native
-                        final_filename = f'{video_id}.m4a'
-                        final_path = os.path.join(output_dir, final_filename)
-
-                        log(f'Converting to AAC: {final_path}')
-
-                        (
-                            ffmpeg
-                            .input(downloaded_path)
-                            .output(final_path, 
-                                    acodec='aac',
-                                    audio_bitrate='64k',
-                                    vn=None)
-                            .overwrite_output()
-                            .run(capture_stdout=True, capture_stderr=True)
-                        )
+                        # Build FFmpeg command for AAC conversion at 64kbps
+                        ffmpeg_command = f'-i "{downloaded_path}" -vn -acodec aac -b:a 64k -y "{final_path}"'
+                        log(f'FFmpeg command: {ffmpeg_command}')
                         
-                        if os.path.exists(final_path):
-                            log(f'Conversion successful: {final_path}')
-                            log(f'Final size: {os.path.getsize(final_path)} bytes')
-                            
-                            # Delete temp file
-                            try:
-                                os.remove(downloaded_path)
-                                log(f'Removed temp file: {downloaded_path}')
-                            except Exception as e:
-                                log(f'Failed to remove temp file: {e}')
-                            
-                            result = {
-                                'success': True,
-                                'title': title,
-                                'audio_url': final_path,
-                                'audio_ext': 'm4a',
-                            }
+                        # Execute FFmpeg command
+                        session = ffmpegkit.FFmpegKit.execute(ffmpeg_command)
+                        return_code = session.getReturnCode()
+                        
+                        log(f'FFmpeg return code: {return_code}')
+                        
+                        if return_code.isValueSuccess():
+                            if os.path.exists(final_path):
+                                log(f'Conversion successful: {final_path}')
+                                log(f'Final size: {os.path.getsize(final_path)} bytes')
+                                
+                                # Delete temp file
+                                try:
+                                    os.remove(downloaded_path)
+                                    log(f'Removed temp file: {downloaded_path}')
+                                except Exception as e:
+                                    log(f'Failed to remove temp file: {e}')
+                                
+                                result = {
+                                    'success': True,
+                                    'title': title,
+                                    'audio_url': final_path,
+                                    'audio_ext': 'm4a',
+                                }
+                            else:
+                                log(f'ERROR: Conversion completed but output file not found')
+                                result = {'success': False, 'error': 'FFmpeg output file missing'}
                         else:
-                            log(f'ERROR: Conversion failed - output file not found')
-                            result = {'success': False, 'error': 'FFmpeg conversion failed'}
+                            # Get error output
+                            error_output = session.getFailStackTrace()
+                            log(f'ERROR: FFmpeg conversion failed')
+                            log(f'Error output: {error_output}')
+                            result = {'success': False, 'error': f'FFmpeg failed with code {return_code}'}
                             
                     except ImportError as e:
-                        log(f'ERROR: ffmpeg-python not available: {e}')
+                        log(f'ERROR: ffmpegkit not available: {e}')
                         log('Falling back to original file without conversion')
                         # Rename temp file to use video ID
                         fallback_path = os.path.join(output_dir, f'{video_id}.{info.get("ext", "m4a")}')
