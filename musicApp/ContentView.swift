@@ -154,8 +154,8 @@ struct MiniPlayerBar: View {
 struct NowPlayingView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var isPresented: Bool
-    @State private var currentTime: Double = 0
-    @State private var duration: Double = 100
+    @State private var isSeeking = false
+    @State private var seekValue: Double = 0
     
     var body: some View {
         ZStack {
@@ -234,17 +234,31 @@ struct NowPlayingView: View {
                 
                 // Progress bar
                 VStack(spacing: 8) {
-                    Slider(value: $currentTime, in: 0...duration)
-                        .accentColor(.white)
+                    Slider(
+                        value: isSeeking ? $seekValue : Binding(
+                            get: { audioPlayer.currentTime },
+                            set: { _ in }
+                        ),
+                        in: 0...max(audioPlayer.duration, 1),
+                        onEditingChanged: { editing in
+                            isSeeking = editing
+                            if !editing {
+                                audioPlayer.seek(to: seekValue)
+                            } else {
+                                seekValue = audioPlayer.currentTime
+                            }
+                        }
+                    )
+                    .accentColor(.white)
                     
                     HStack {
-                        Text(formatTime(currentTime))
+                        Text(formatTime(isSeeking ? seekValue : audioPlayer.currentTime))
                             .font(.caption)
                             .foregroundColor(.secondary)
                         
                         Spacer()
                         
-                        Text(formatTime(duration))
+                        Text(formatTime(audioPlayer.duration))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -285,20 +299,18 @@ struct NowPlayingView: View {
                 }
                 .padding(.bottom, 20)
                 
-                // Volume and additional controls
-                HStack(spacing: 40) {
-                    Button(action: {}) {
-                        Image(systemName: "speaker.fill")
-                            .foregroundColor(.secondary)
-                    }
+                // Volume control
+                HStack(spacing: 12) {
+                    Image(systemName: "speaker.fill")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
                     
-                    Slider(value: .constant(0.5))
+                    Slider(value: $audioPlayer.volume, in: 0...1)
                         .accentColor(.white)
                     
-                    Button(action: {}) {
-                        Image(systemName: "speaker.wave.3.fill")
-                            .foregroundColor(.secondary)
-                    }
+                    Image(systemName: "speaker.wave.3.fill")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
                 }
                 .padding(.horizontal, 32)
                 .padding(.bottom, 10)
@@ -339,5 +351,3 @@ struct NowPlayingView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 }
-
-

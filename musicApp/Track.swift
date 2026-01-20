@@ -1,4 +1,4 @@
-// MARK: - Updated Track.swift (add conformance)
+// MARK: - Updated Track.swift
 import Foundation
 
 struct Track: Identifiable, Codable, Equatable {
