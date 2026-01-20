@@ -106,14 +106,14 @@ class EmbeddedPython: ObservableObject {
                     // Start progress monitoring
                     self?.startProgressMonitoring(outputDir: outputDir.path)
                     
-                    updateStatus("Downloading...")
-                    updateProgress(0.1)
+                    self?.updateStatus("Downloading...")
+                    self?.updateProgress(0.1)
                     
                     // Python downloads the file
                     let (downloadedURL, title) = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "")
                     
-                    updateStatus("Download complete, compressing...")
-                    updateProgress(0.7)
+                    self?.updateStatus("Download complete, compressing...")
+                    self?.updateProgress(0.7)
                     
                     // Stop progress monitoring
                     self?.stopProgressMonitoring()
@@ -122,19 +122,19 @@ class EmbeddedPython: ObservableObject {
                     print("🔄 [downloadAudio] Compressing audio...")
                     let compressedURL = (try? self?.compressAudio(inputURL: downloadedURL, title: title, outputDir: outputDir)) ?? downloadedURL
                     
-                    updateProgress(0.9)
+                    self?.updateProgress(0.9)
                     
                     // Store metadata mapping
                     self?.saveMetadata(fileURL: compressedURL, title: title)
                     
-                    updateStatus("Complete!")
-                    updateProgress(1.0)
+                    self?.updateStatus("Complete!")
+                    self?.updateProgress(1.0)
                     
                     continuation.resume(returning: (compressedURL, title))
                 } catch {
                     self?.stopProgressMonitoring()
-                    updateStatus("Failed")
-                    updateProgress(0.0)
+                    self?.updateStatus("Failed")
+                    self?.updateProgress(0.0)
                     continuation.resume(throwing: error)
                 }
             }
