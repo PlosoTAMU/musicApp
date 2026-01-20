@@ -171,6 +171,8 @@ class EmbeddedPython: ObservableObject {
         print("🎬 [runYtdlp] Output directory: \(outputDir)")
         print("🎬 [runYtdlp] Result file: \(resultFilePath)")
         
+
+        // it works now
         let script = """
         import sys
         import os
