@@ -98,14 +98,9 @@ class EmbeddedPython: ObservableObject {
         return try await withCheckedThrowingContinuation { continuation in
             pythonQueue.async { [weak self] in
                 do {
-                    // Python downloads the file
-                    let (downloadedURL, title) = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "")
-                    
-                    // Swift converts with FFmpegKit
-                    print("🔄 [downloadAudio] Converting with FFmpegKit...")
-                    let finalURL = (try? self?.convertToAAC(inputURL: downloadedURL, outputDir: outputDir)) ?? downloadedURL
-                    
-                    continuation.resume(returning: (finalURL, title))
+                    // Python downloads directly with final filename
+                    let result = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "")
+                    continuation.resume(returning: result)
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -113,37 +108,6 @@ class EmbeddedPython: ObservableObject {
         }
     }
     
-    private func convertToAAC(inputURL: URL, outputDir: URL) throws -> URL {
-        let videoID = inputURL.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "temp_", with: "")
-        let outputURL = outputDir.appendingPathComponent("\(videoID).m4a")
-        
-        print("🔄 [convertToAAC] Input: \(inputURL.path)")
-        print("🔄 [convertToAAC] Output: \(outputURL.path)")
-        
-        // Use -c:a copy to stream copy (no re-encoding)
-        // This is instant if the codec is already AAC
-        let command = "-i \"\(inputURL.path)\" -vn -c:a copy -y \"\(outputURL.path)\""
-        print("🔄 [convertToAAC] Command: \(command)")
-        
-        let session = FFmpegKit.execute(command)
-        
-        guard let returnCode = session?.getReturnCode(), returnCode.isValueSuccess() else {
-            print("⚠️ [convertToAAC] Stream copy failed, trying re-encode...")
-            // Fallback: re-encode
-            let reencodeCommand = "-i \"\(inputURL.path)\" -vn -acodec aac -b:a 64k -y \"\(outputURL.path)\""
-            let reencodeSession = FFmpegKit.execute(reencodeCommand)
-            
-            guard let reencodeCode = reencodeSession?.getReturnCode(), reencodeCode.isValueSuccess() else {
-                print("❌ [convertToAAC] Re-encode also failed")
-                return inputURL
-            }
-        }
-        
-        print("✅ [convertToAAC] Conversion successful")
-        try? FileManager.default.removeItem(at: inputURL)
-        
-        return outputURL
-    }
     
     private func runYtdlp(url: String, outputDir: String) throws -> (URL, String) {
         let resultFilePath = NSTemporaryDirectory() + "ytdlp_result.json"
@@ -186,12 +150,14 @@ class EmbeddedPython: ObservableObject {
         unique_id = str(uuid.uuid4())[:8]
         temp_filename = f'temp_{unique_id}'
         
+        # Generate video-ID-based filename directly
         ydl_opts = {
             'format': '140/bestaudio[ext=m4a]/bestaudio/best',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'quiet': False,
             'noplaylist': True,
-            'outtmpl': os.path.join(output_dir, f'{temp_filename}.%(ext)s'),
+            # Save directly with video ID (no temp file)
+            'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
             'extractor_args': {
                 'youtube': {
                     'player_client': ['ios', 'android'],
