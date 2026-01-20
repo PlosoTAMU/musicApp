@@ -1,3 +1,4 @@
+// MARK: - Updated ContentView.swift
 import SwiftUI
 
 struct ContentView: View {
@@ -5,55 +6,67 @@ struct ContentView: View {
     @StateObject private var playlistManager = PlaylistManager()
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
+    @State private var showNowPlaying = false
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                List {
-                    PlaylistRow(
-                        playlist: playlistManager.everythingPlaylist,
-                        audioPlayer: audioPlayer
-                    )
-                    
-                    ForEach(playlistManager.playlists) { playlist in
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    List {
                         PlaylistRow(
-                            playlist: playlist,
+                            playlist: playlistManager.everythingPlaylist,
                             audioPlayer: audioPlayer
                         )
+                        
+                        ForEach(playlistManager.playlists) { playlist in
+                            PlaylistRow(
+                                playlist: playlist,
+                                audioPlayer: audioPlayer
+                            )
+                        }
+                        .onDelete(perform: deletePlaylists)
                     }
-                    .onDelete(perform: deletePlaylists)
+                    .listStyle(.plain)
+                    
+                    // Add bottom padding when mini player is showing
+                    if audioPlayer.currentTrack != nil {
+                        Color.clear.frame(height: 64)
+                    }
                 }
-                .listStyle(.plain)
+                .navigationTitle("Library")
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button {
+                            showYouTubeDownload = true
+                        } label: {
+                            Image(systemName: "link.badge.plus")
+                        }
+                    }
+                    
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button {
+                            showFolderPicker = true
+                        } label: {
+                            Image(systemName: "folder.badge.plus")
+                        }
+                    }
+                }
+                .sheet(isPresented: $showFolderPicker) {
+                    FolderPicker(playlistManager: playlistManager)
+                }
+                .sheet(isPresented: $showYouTubeDownload) {
+                    YouTubeDownloadView(playlistManager: playlistManager)
+                }
                 
-                // Now Playing Bar
+                // Mini Player Bar (persistent at bottom)
                 if audioPlayer.currentTrack != nil {
-                    NowPlayingBar(audioPlayer: audioPlayer)
+                    MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
+                        .transition(.move(edge: .bottom))
                 }
             }
-            .navigationTitle("Playlists")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        showYouTubeDownload = true
-                    } label: {
-                        Image(systemName: "link.badge.plus")
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showFolderPicker = true
-                    } label: {
-                        Image(systemName: "folder.badge.plus")
-                    }
-                }
-            }
-            .sheet(isPresented: $showFolderPicker) {
-                FolderPicker(playlistManager: playlistManager)
-            }
-            .sheet(isPresented: $showYouTubeDownload) {
-                YouTubeDownloadView(playlistManager: playlistManager)
-            }
+        }
+        .fullScreenCover(isPresented: $showNowPlaying) {
+            NowPlayingView(audioPlayer: audioPlayer, isPresented: $showNowPlaying)
         }
     }
     
@@ -64,66 +77,265 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Now Playing Bar
-struct NowPlayingBar: View {
+// MARK: - Mini Player Bar (iOS Music style)
+struct MiniPlayerBar: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
+    @Binding var showNowPlaying: Bool
     
     var body: some View {
-        HStack(spacing: 16) {
-            // Track info
-            VStack(alignment: .leading, spacing: 2) {
-                Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
+        Button {
+            showNowPlaying = true
+        } label: {
+            HStack(spacing: 12) {
+                // Album artwork placeholder
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(width: 48, height: 48)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .foregroundColor(.gray)
+                    )
                 
-                Text(audioPlayer.currentTrack?.folderName ?? "")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-            
-            Spacer()
-            
-            // Previous button
-            Button {
-                audioPlayer.previous()
-            } label: {
-                Image(systemName: "backward.fill")
-                    .font(.title3)
-            }
-            .buttonStyle(.plain)
-            
-            // Play/Pause button
-            Button {
-                if audioPlayer.isPlaying {
-                    audioPlayer.pause()
-                } else {
-                    audioPlayer.resume()
+                // Track info
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                        .foregroundColor(.primary)
+                    
+                    Text(audioPlayer.currentTrack?.folderName ?? "")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
-            } label: {
-                Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title2)
+                
+                Spacer()
+                
+                // Play/Pause button
+                Button {
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
+                    } else {
+                        audioPlayer.resume()
+                    }
+                } label: {
+                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title2)
+                        .foregroundColor(.primary)
+                }
+                .buttonStyle(.plain)
+                
+                // Next button
+                Button {
+                    audioPlayer.next()
+                } label: {
+                    Image(systemName: "forward.fill")
+                        .font(.title3)
+                        .foregroundColor(.primary)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            
-            // Next button
-            Button {
-                audioPlayer.next()
-            } label: {
-                Image(systemName: "forward.fill")
-                    .font(.title3)
-            }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 12)
+        .buttonStyle(.plain)
         .background(.ultraThinMaterial)
+        .overlay(
+            Rectangle()
+                .fill(Color.gray.opacity(0.3))
+                .frame(height: 0.5),
+            alignment: .top
+        )
     }
 }
 
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
+// MARK: - Full Now Playing View (iOS Music style)
+struct NowPlayingView: View {
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    @Binding var isPresented: Bool
+    @State private var currentTime: Double = 0
+    @State private var duration: Double = 100
+    
+    var body: some View {
+        ZStack {
+            // Background gradient
+            LinearGradient(
+                colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            VStack(spacing: 0) {
+                // Top bar
+                HStack {
+                    Button {
+                        isPresented = false
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.title2)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    Spacer()
+                    
+                    Menu {
+                        Button(action: {}) {
+                            Label("Add to Playlist", systemImage: "plus")
+                        }
+                        Button(action: {}) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.title2)
+                            .foregroundColor(.primary)
+                    }
+                }
+                .padding()
+                
+                Spacer()
+                
+                // Album artwork
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 320, height: 320)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .font(.system(size: 80))
+                            .foregroundColor(.white.opacity(0.5))
+                    )
+                    .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+                
+                Spacer()
+                
+                // Track info
+                VStack(spacing: 8) {
+                    Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                    
+                    Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal)
+                
+                Spacer()
+                
+                // Progress bar
+                VStack(spacing: 8) {
+                    Slider(value: $currentTime, in: 0...duration)
+                        .accentColor(.white)
+                    
+                    HStack {
+                        Text(formatTime(currentTime))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                        
+                        Text(formatTime(duration))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 32)
+                
+                Spacer()
+                
+                // Playback controls
+                HStack(spacing: 60) {
+                    Button {
+                        audioPlayer.previous()
+                    } label: {
+                        Image(systemName: "backward.fill")
+                            .font(.system(size: 32))
+                            .foregroundColor(.primary)
+                    }
+                    
+                    Button {
+                        if audioPlayer.isPlaying {
+                            audioPlayer.pause()
+                        } else {
+                            audioPlayer.resume()
+                        }
+                    } label: {
+                        Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 72))
+                            .foregroundColor(.primary)
+                    }
+                    
+                    Button {
+                        audioPlayer.next()
+                    } label: {
+                        Image(systemName: "forward.fill")
+                            .font(.system(size: 32))
+                            .foregroundColor(.primary)
+                    }
+                }
+                .padding(.bottom, 20)
+                
+                // Volume and additional controls
+                HStack(spacing: 40) {
+                    Button(action: {}) {
+                        Image(systemName: "speaker.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Slider(value: .constant(0.5))
+                        .accentColor(.white)
+                    
+                    Button(action: {}) {
+                        Image(systemName: "speaker.wave.3.fill")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 32)
+                .padding(.bottom, 10)
+                
+                // Bottom controls
+                HStack {
+                    Button(action: {}) {
+                        Image(systemName: "quote.bubble")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Button(action: {}) {
+                        Image(systemName: "airplayaudio")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Button(action: {}) {
+                        Image(systemName: "list.bullet")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 40)
+                .padding(.bottom, 30)
+            }
+        }
+    }
+    
+    private func formatTime(_ time: Double) -> String {
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }

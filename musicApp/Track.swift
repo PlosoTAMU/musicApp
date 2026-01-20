@@ -1,6 +1,7 @@
+// MARK: - Updated Track.swift (add conformance)
 import Foundation
 
-struct Track: Identifiable, Codable {
+struct Track: Identifiable, Codable, Equatable {
     let id: UUID
     let name: String
     let url: URL
@@ -11,5 +12,9 @@ struct Track: Identifiable, Codable {
         self.name = name
         self.url = url
         self.folderName = folderName
+    }
+    
+    static func == (lhs: Track, rhs: Track) -> Bool {
+        lhs.id == rhs.id
     }
 }
