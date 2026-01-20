@@ -32,7 +32,7 @@ class EmbeddedPython: ObservableObject {
         }
         
         let pythonHome = resourcePath + "/python-stdlib"
-        var pythonVersion = "python3.14"
+        var pythonVersion = "python3.11"
         var libPath = pythonHome + "/lib/" + pythonVersion
         
         let libFolder = pythonHome + "/lib"

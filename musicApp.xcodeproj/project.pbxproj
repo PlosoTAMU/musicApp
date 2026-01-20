@@ -23,10 +23,9 @@
 		BF3357582F1F0CDA00C362AD /* libswresample.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782162F1ECD7E0056E8CB /* libswresample.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		BF3357592F1F0CDB00C362AD /* libswscale.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */; };
 		BF33575A2F1F0CDB00C362AD /* libswscale.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		BF57651F2F1EB3CF0056E8CB /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF57651D2F1EB3CC0056E8CB /* Python.xcframework */; };
-		BF5765202F1EB3CF0056E8CB /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF57651D2F1EB3CC0056E8CB /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		BF5779242F1EB4630056E8CB /* python-stdlib in Resources */ = {isa = PBXBuildFile; fileRef = BF5779232F1EB45D0056E8CB /* python-stdlib */; };
 		BF5781D02F1EB4D70056E8CB /* yt_dlp in Resources */ = {isa = PBXBuildFile; fileRef = BF5781CF2F1EB4D20056E8CB /* yt_dlp */; };
+		BFB82D982F203CDD005AC5A2 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BFB82D972F203CDD005AC5A2 /* Python.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,7 +55,6 @@
 				BF3357502F1F0CD400C362AD /* libavdevice.xcframework in Embed Frameworks */,
 				BF3357542F1F0CD700C362AD /* libavformat.xcframework in Embed Frameworks */,
 				BF3357582F1F0CDA00C362AD /* libswresample.xcframework in Embed Frameworks */,
-				BF5765202F1EB3CF0056E8CB /* Python.xcframework in Embed Frameworks */,
 				BF33574E2F1F0CD300C362AD /* libavcodec.xcframework in Embed Frameworks */,
 				BF3357522F1F0CD600C362AD /* libavfilter.xcframework in Embed Frameworks */,
 				BF3357562F1F0CD900C362AD /* libavutil.xcframework in Embed Frameworks */,
@@ -69,7 +67,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		BF57651D2F1EB3CC0056E8CB /* Python.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = "../Downloads/Python-3.14-iOS-support.b8/Python.xcframework"; sourceTree = SOURCE_ROOT; };
 		BF5779232F1EB45D0056E8CB /* python-stdlib */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "python-stdlib"; sourceTree = "<group>"; };
 		BF5781CF2F1EB4D20056E8CB /* yt_dlp */ = {isa = PBXFileReference; lastKnownFileType = folder; name = yt_dlp; path = "../Desktop/yt-dlp-bundle/yt_dlp-2025.10.14/yt_dlp"; sourceTree = SOURCE_ROOT; };
 		BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = ffmpegkit.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/ffmpegkit.xcframework"; sourceTree = SOURCE_ROOT; };
@@ -80,6 +77,7 @@
 		BF5782152F1ECD7E0056E8CB /* libavutil.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libavutil.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libavutil.xcframework"; sourceTree = SOURCE_ROOT; };
 		BF5782162F1ECD7E0056E8CB /* libswresample.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libswresample.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libswresample.xcframework"; sourceTree = SOURCE_ROOT; };
 		BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libswscale.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libswscale.xcframework"; sourceTree = SOURCE_ROOT; };
+		BFB82D972F203CDD005AC5A2 /* Python.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = "../Downloads/Python-3.11-iOS-support.b7/Python.xcframework"; sourceTree = SOURCE_ROOT; };
 		BFFDD5EF2F1C47850032409D /* musicApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = musicApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFFDD6012F1C478D0032409D /* musicAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = musicAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFFDD60B2F1C478D0032409D /* musicAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = musicAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -112,10 +110,10 @@
 				BF33574D2F1F0CD300C362AD /* libavcodec.xcframework in Frameworks */,
 				BF33574F2F1F0CD400C362AD /* libavdevice.xcframework in Frameworks */,
 				BF33574B2F1F0CD200C362AD /* ffmpegkit.xcframework in Frameworks */,
+				BFB82D982F203CDD005AC5A2 /* Python.xcframework in Frameworks */,
 				BF3357552F1F0CD900C362AD /* libavutil.xcframework in Frameworks */,
 				BF3357572F1F0CDA00C362AD /* libswresample.xcframework in Frameworks */,
 				BF3357512F1F0CD600C362AD /* libavfilter.xcframework in Frameworks */,
-				BF57651F2F1EB3CF0056E8CB /* Python.xcframework in Frameworks */,
 				BF3357532F1F0CD700C362AD /* libavformat.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -140,8 +138,8 @@
 		BFFDD5E62F1C47850032409D = {
 			isa = PBXGroup;
 			children = (
+				BFB82D972F203CDD005AC5A2 /* Python.xcframework */,
 				BF5781CF2F1EB4D20056E8CB /* yt_dlp */,
-				BF57651D2F1EB3CC0056E8CB /* Python.xcframework */,
 				BF5779232F1EB45D0056E8CB /* python-stdlib */,
 				BFFDD5F12F1C47850032409D /* musicApp */,
 				BFFDD6042F1C478D0032409D /* musicAppTests */,
@@ -478,6 +476,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"musicApp/Preview Content\"";
+				DEVELOPMENT_TEAM = 74JNGCVVMG;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -510,6 +509,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"musicApp/Preview Content\"";
+				DEVELOPMENT_TEAM = 74JNGCVVMG;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
