@@ -169,7 +169,6 @@ class EmbeddedPython: ObservableObject {
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 title = info.get('title', 'Unknown')
-                video_id = info.get('id', unique_id)
                 downloaded_path = ydl.prepare_filename(info)
                 
                 log(f'Downloaded: {downloaded_path}')
