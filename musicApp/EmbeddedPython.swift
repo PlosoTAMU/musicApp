@@ -175,9 +175,7 @@ class EmbeddedPython: ObservableObject {
         import sys
         import os
         import json
-
         log_file = r'''\(logFilePath)'''
-
         def log(msg):
             try:
                 with open(log_file, 'a', encoding='utf-8') as f:
@@ -191,12 +189,10 @@ class EmbeddedPython: ObservableObject {
                     print(str(msg).encode('utf-8', errors='replace').decode('utf-8'))
                 except:
                     pass
-
         log('=== yt-dlp Debug Log ===')
         log(f'Python version: {sys.version}')
         log(f'sys.path: {sys.path}')
         log(f'CWD: {os.getcwd()}')
-
         log('Attempting to import yt_dlp...')
         try:
             import yt_dlp
@@ -208,41 +204,36 @@ class EmbeddedPython: ObservableObject {
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(result, f)
             raise
-
         output_dir = r'''\(outputDir)'''
         url = r'''\(url.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: ""))'''
         result_file = r'''\(resultFilePath)'''
-
         log(f'Output dir: {output_dir}')
         log(f'URL: {url}')
-
         os.makedirs(output_dir, exist_ok=True)
         log('Output directory created/verified')
 
-
         ydl_opts = {
-            # Download MP4-only (video file) and do NOT attempt to merge audio
-            # This forces yt-dlp to select a mp4 video-only format when available.
-            'format': 'bestvideo[ext=mp4]/best[ext=mp4]/best',
+            # CRITICAL: Force audio-only format to avoid SABR issues
+            # Format 140 is m4a audio-only (works reliably)
+            'format': '140/bestaudio[ext=m4a]/bestaudio/best',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'quiet': True,
+            'quiet': False,  # Changed to False to see warnings
             'verbose': False,
             'noplaylist': True,
-            # Save the downloaded file as 'download.<ext>' so we can predict the filename
+            # Save directly as m4a
             'outtmpl': os.path.join(output_dir, 'download.%(ext)s'),
             'extractor_args': {
-                'youtube': [
-                    'player_client=android,ios;skip=web',  # Prefer native mobile clients and skip web-only
-                ]
+                'youtube': {
+                    # Use clients that work better on iOS
+                    'player_client': ['ios', 'android'],
+                    'skip': ['web'],
+                }
             },
-            # No postprocessors here: we will run ffmpeg ourselves to extract audio from the MP4
+            # No postprocessing needed since we're getting audio directly
         }
 
-
         log(f'ydl_opts: {ydl_opts}')
-
         result = {}
-
         try:
             log('Creating YoutubeDL instance...')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -250,55 +241,31 @@ class EmbeddedPython: ObservableObject {
                 info = ydl.extract_info(url, download=True)
                 log(f'Info extracted, title: {info.get("title", "Unknown")}')
                 title = info.get('title', 'Unknown')
-                video_id = info.get('id', '')
-                log(f'Looking for downloaded file with ID {video_id} in {output_dir}...')
+                log(f'Looking for downloaded file in {output_dir}...')
                 downloaded_path = ydl.prepare_filename(info)
-                audio_ext = info.get('ext', 'unknown')
-
-            import os
-            base, ext = os.path.splitext(downloaded_path)
-            # yt-dlp postprocessor will typically create '<base>.m4a'
-            m4a_path = base + '.m4a'
-            log(f'Downloaded file: {downloaded_path}, expected extracted audio: {m4a_path}')
-
-            if os.path.exists(m4a_path):
-                log(f'Postprocessor produced audio at {m4a_path}')
-                audio_url = m4a_path
-                audio_ext = 'm4a'
-            else:
-                # Fallback: try to convert the downloaded file to m4a using ffmpeg-python
-                audio_url = None
-                try:
-                    log(f'Postprocessor output not found, attempting ffmpeg-python conversion of {downloaded_path} to {m4a_path}...')
-                    import ffmpeg
-                    (
-                        ffmpeg
-                        .input(downloaded_path)
-                        .output(m4a_path, acodec='aac', audio_bitrate='192k', vn=None)
-                        .overwrite_output()
-                        .run()
-                    )
-                    if os.path.exists(m4a_path):
-                        log(f'Fallback conversion succeeded: {m4a_path}')
-                        audio_url = m4a_path
-                        audio_ext = 'm4a'
-                except Exception as conv_e:
-                    log(f'Fallback conversion failed: {conv_e}')
-                    # Leave audio_url as None so the error handling below will pick it up
-
-            result = {
-                'success': True,
-                'title': title,
-                'audio_url': audio_url,
-                'audio_ext': audio_ext,
-            }
-
+                log(f'Downloaded file: {downloaded_path}')
+                
+                # The file should be directly usable (m4a audio)
+                if os.path.exists(downloaded_path):
+                    log(f'Audio file found at {downloaded_path}')
+                    audio_url = downloaded_path
+                    audio_ext = info.get('ext', 'm4a')
+                    result = {
+                        'success': True,
+                        'title': title,
+                        'audio_url': audio_url,
+                        'audio_ext': audio_ext,
+                    }
+                else:
+                    log(f'ERROR: Downloaded file not found at expected path')
+                    result = {'success': False, 'error': 'Downloaded file not found'}
+                    
         except Exception as e:
             log(f'Exception during download: {type(e).__name__}: {e}')
             import traceback
             log(traceback.format_exc())
             result = {'success': False, 'error': str(e)}
-
+        
         log(f'Final result: {result}')
         # Write result to file for Swift to read
         with open(result_file, 'w', encoding='utf-8') as f:
@@ -330,7 +297,7 @@ class EmbeddedPython: ObservableObject {
         // Read the result from file
         print("🎬 [runYtdlp] Reading result file...")
         guard let jsonData = try? Data(contentsOf: URL(fileURLWithPath: resultFilePath)),
-              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
             print("❌ [runYtdlp] Failed to read result file at: \(resultFilePath)")
             throw PythonError.executionError("Failed to read yt-dlp result")
         }
@@ -343,18 +310,20 @@ class EmbeddedPython: ObservableObject {
         guard let success = json["success"] as? Bool, success,
             let audioURLString = json["audio_url"] as? String,
             let title = json["title"] as? String else {
-
             let errorMsg = json["error"] as? String ?? "Unknown error"
             print("❌ [runYtdlp] Download failed: \(errorMsg)")
             throw PythonError.executionError(errorMsg)
         }
 
-    let audioURL = URL(fileURLWithPath: audioURLString)
-    // Log the local file path where the audio was saved
-    print("✅ [runYtdlp] Audio downloaded to: \(audioURL.path)")
-    return (audioURL, title)
-
+        let audioURL = URL(fileURLWithPath: audioURLString)
+        print("✅ [runYtdlp] Audio downloaded to: \(audioURL.path)")
+        return (audioURL, title)
     }
+
+
+
+
+
     
     private func updateStatus(_ message: String) {
         DispatchQueue.main.async {
