@@ -171,12 +171,11 @@ class EmbeddedPython: ObservableObject {
         print("🎬 [runYtdlp] Output directory: \(outputDir)")
         print("🎬 [runYtdlp] Result file: \(resultFilePath)")
         
-
-        // it works now
         let script = """
         import sys
         import os
         import json
+        import uuid
         log_file = r'''\(logFilePath)'''
         def log(msg):
             try:
@@ -214,27 +213,30 @@ class EmbeddedPython: ObservableObject {
         os.makedirs(output_dir, exist_ok=True)
         log('Output directory created/verified')
 
+        # Generate unique ID for this download
+        unique_id = str(uuid.uuid4())[:8]
+        temp_filename = f'temp_{unique_id}'
+        
         ydl_opts = {
             # CRITICAL: Force audio-only format to avoid SABR issues
             # Format 140 is m4a audio-only (works reliably)
             'format': '140/bestaudio[ext=m4a]/bestaudio/best',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'quiet': False,  # Changed to False to see warnings
+            'quiet': False,
             'verbose': False,
             'noplaylist': True,
-            # Save directly as m4a
-            'outtmpl': os.path.join(output_dir, 'download.%(ext)s'),
+            # Save with unique temp name
+            'outtmpl': os.path.join(output_dir, f'{temp_filename}.%(ext)s'),
             'extractor_args': {
                 'youtube': {
-                    # Use clients that work better on iOS
                     'player_client': ['ios', 'android'],
                     'skip': ['web'],
                 }
             },
-            # No postprocessing needed since we're getting audio directly
         }
 
         log(f'ydl_opts: {ydl_opts}')
+        log(f'Unique ID for this download: {unique_id}')
         result = {}
         try:
             log('Creating YoutubeDL instance...')
@@ -243,24 +245,102 @@ class EmbeddedPython: ObservableObject {
                 info = ydl.extract_info(url, download=True)
                 log(f'Info extracted, title: {info.get("title", "Unknown")}')
                 title = info.get('title', 'Unknown')
+                video_id = info.get('id', unique_id)
+                log(f'Video ID: {video_id}')
                 log(f'Looking for downloaded file in {output_dir}...')
                 downloaded_path = ydl.prepare_filename(info)
                 log(f'Downloaded file: {downloaded_path}')
                 
-                # The file should be directly usable (m4a audio)
-                if os.path.exists(downloaded_path):
-                    log(f'Audio file found at {downloaded_path}')
-                    audio_url = downloaded_path
-                    audio_ext = info.get('ext', 'm4a')
-                    result = {
-                        'success': True,
-                        'title': title,
-                        'audio_url': audio_url,
-                        'audio_ext': audio_ext,
-                    }
-                else:
+                if not os.path.exists(downloaded_path):
                     log(f'ERROR: Downloaded file not found at expected path')
                     result = {'success': False, 'error': 'Downloaded file not found'}
+                else:
+                    log(f'File found, size: {os.path.getsize(downloaded_path)} bytes')
+                    
+                    # Now convert to m4a (most compressed audio format)
+                    final_filename = f'{video_id}.m4a'
+                    final_path = os.path.join(output_dir, final_filename)
+                    
+                    log(f'Converting to m4a: {final_path}')
+                    
+                    try:
+                        import ffmpeg
+                        log('ffmpeg-python imported')
+                        
+                        # AAC at 64kbps is very efficient and iOS-native
+                        final_filename = f'{video_id}.m4a'
+                        final_path = os.path.join(output_dir, final_filename)
+
+                        log(f'Converting to AAC: {final_path}')
+
+                        (
+                            ffmpeg
+                            .input(downloaded_path)
+                            .output(final_path, 
+                                    acodec='aac',
+                                    audio_bitrate='64k',
+                                    vn=None)
+                            .overwrite_output()
+                            .run(capture_stdout=True, capture_stderr=True)
+                        )
+                        
+                        if os.path.exists(final_path):
+                            log(f'Conversion successful: {final_path}')
+                            log(f'Final size: {os.path.getsize(final_path)} bytes')
+                            
+                            # Delete temp file
+                            try:
+                                os.remove(downloaded_path)
+                                log(f'Removed temp file: {downloaded_path}')
+                            except Exception as e:
+                                log(f'Failed to remove temp file: {e}')
+                            
+                            result = {
+                                'success': True,
+                                'title': title,
+                                'audio_url': final_path,
+                                'audio_ext': 'm4a',
+                            }
+                        else:
+                            log(f'ERROR: Conversion failed - output file not found')
+                            result = {'success': False, 'error': 'FFmpeg conversion failed'}
+                            
+                    except ImportError as e:
+                        log(f'ERROR: ffmpeg-python not available: {e}')
+                        log('Falling back to original file without conversion')
+                        # Rename temp file to use video ID
+                        fallback_path = os.path.join(output_dir, f'{video_id}.{info.get("ext", "m4a")}')
+                        try:
+                            os.rename(downloaded_path, fallback_path)
+                            log(f'Renamed to: {fallback_path}')
+                            result = {
+                                'success': True,
+                                'title': title,
+                                'audio_url': fallback_path,
+                                'audio_ext': info.get('ext', 'm4a'),
+                            }
+                        except Exception as e:
+                            log(f'ERROR: Failed to rename: {e}')
+                            result = {'success': False, 'error': f'Rename failed: {e}'}
+                            
+                    except Exception as e:
+                        log(f'ERROR: FFmpeg conversion failed: {e}')
+                        import traceback
+                        log(traceback.format_exc())
+                        # Fall back to original file
+                        fallback_path = os.path.join(output_dir, f'{video_id}.{info.get("ext", "m4a")}')
+                        try:
+                            os.rename(downloaded_path, fallback_path)
+                            log(f'Fallback: renamed to {fallback_path}')
+                            result = {
+                                'success': True,
+                                'title': title,
+                                'audio_url': fallback_path,
+                                'audio_ext': info.get('ext', 'm4a'),
+                            }
+                        except Exception as e:
+                            log(f'ERROR: Fallback rename failed: {e}')
+                            result = {'success': False, 'error': f'Conversion and fallback failed: {e}'}
                     
         except Exception as e:
             log(f'Exception during download: {type(e).__name__}: {e}')
@@ -280,7 +360,6 @@ class EmbeddedPython: ObservableObject {
         
         guard executePython(script) != nil else {
             print("❌ [runYtdlp] executePython returned nil")
-            // Try to read debug log
             if let debugLog = try? String(contentsOfFile: logFilePath, encoding: .utf8) {
                 print("📋 [runYtdlp] Debug log:\n\(debugLog)")
             }
@@ -290,13 +369,11 @@ class EmbeddedPython: ObservableObject {
         let elapsed = Date().timeIntervalSince(startTime)
         print("🎬 [runYtdlp] Python script completed in \(elapsed) seconds")
         
-        // Print debug log
         if let debugLog = try? String(contentsOfFile: logFilePath, encoding: .utf8) {
             print("📋 [runYtdlp] Debug log:\n\(debugLog)")
         }
         try? FileManager.default.removeItem(atPath: logFilePath)
         
-        // Read the result from file
         print("🎬 [runYtdlp] Reading result file...")
         guard let jsonData = try? Data(contentsOf: URL(fileURLWithPath: resultFilePath)),
             let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
@@ -305,8 +382,6 @@ class EmbeddedPython: ObservableObject {
         }
         
         print("🎬 [runYtdlp] Result JSON: \(json)")
-        
-        // Clean up result file
         try? FileManager.default.removeItem(atPath: resultFilePath)
         
         guard let success = json["success"] as? Bool, success,
@@ -318,12 +393,9 @@ class EmbeddedPython: ObservableObject {
         }
 
         let audioURL = URL(fileURLWithPath: audioURLString)
-        print("✅ [runYtdlp] Audio downloaded to: \(audioURL.path)")
+        print("✅ [runYtdlp] Audio saved to: \(audioURL.path)")
         return (audioURL, title)
     }
-
-
-
 
 
     
