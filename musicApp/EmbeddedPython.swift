@@ -171,16 +171,29 @@ class EmbeddedPython: ObservableObject {
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 title = info.get('title', 'Unknown')
+                video_id = info.get('id', 'unknown')
                 downloaded_path = ydl.prepare_filename(info)
                 
                 log(f'Downloaded: {downloaded_path}')
                 
                 if os.path.exists(downloaded_path):
+                    # If not m4a, rename to m4a
+                    if not downloaded_path.endswith('.m4a'):
+                        m4a_path = os.path.splitext(downloaded_path)[0] + '.m4a'
+                        log(f'Renaming {downloaded_path} to {m4a_path}')
+                        try:
+                            os.rename(downloaded_path, m4a_path)
+                            downloaded_path = m4a_path
+                            log(f'Successfully renamed to {m4a_path}')
+                        except Exception as e:
+                            log(f'Rename failed: {e}')
+                            # Keep original path if rename fails
+                    
                     result = {
                         'success': True,
                         'title': title,
                         'audio_url': downloaded_path,
-                        'audio_ext': info.get('ext', 'm4a'),
+                        'audio_ext': 'm4a',
                     }
                 else:
                     result = {'success': False, 'error': 'File not found after download'}
