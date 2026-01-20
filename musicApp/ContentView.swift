@@ -88,13 +88,23 @@ struct MiniPlayerBar: View {
         } label: {
             HStack(spacing: 12) {
                 // Album artwork placeholder
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(width: 48, height: 48)
-                    .overlay(
-                        Image(systemName: "music.note")
-                            .foregroundColor(.gray)
-                    )
+                ZStack {
+                    if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
+                        Image(uiImage: thumbnailPath)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 48, height: 48)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 48, height: 48)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .foregroundColor(.gray)
+                            )
+                    }
+                }
                 
                 // Track info
                 VStack(alignment: .leading, spacing: 2) {
@@ -148,6 +158,15 @@ struct MiniPlayerBar: View {
             alignment: .top
         )
     }
+    
+    private func getThumbnailImage(for track: Track?) -> UIImage? {
+        guard let track = track,
+              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
+            return nil
+        }
+        return image
+    }
 }
 
 // MARK: - Full Now Playing View (iOS Music style)
@@ -198,21 +217,32 @@ struct NowPlayingView: View {
                 Spacer()
                 
                 // Album artwork
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 320, height: 320)
-                    .overlay(
-                        Image(systemName: "music.note")
-                            .font(.system(size: 80))
-                            .foregroundColor(.white.opacity(0.5))
-                    )
-                    .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+                ZStack {
+                    if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
+                        Image(uiImage: thumbnailPath)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 320, height: 320)
+                            .clipShape(RoundedRectangle(cornerRadius: 20))
+                            .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
+                    } else {
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 320, height: 320)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 80))
+                                    .foregroundColor(.white.opacity(0.5))
+                            )
+                            .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+                    }
+                }
                 
                 Spacer()
                 
@@ -349,5 +379,14 @@ struct NowPlayingView: View {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    private func getThumbnailImage(for track: Track?) -> UIImage? {
+        guard let track = track,
+              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
+            return nil
+        }
+        return image
     }
 }

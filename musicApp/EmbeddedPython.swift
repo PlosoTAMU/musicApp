@@ -110,7 +110,7 @@ class EmbeddedPython: ObservableObject {
                     self?.updateProgress(0.1)
                     
                     // Python downloads the file
-                    let (downloadedURL, title) = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "")
+                    let (downloadedURL, title, thumbnailURL) = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "", nil)
                     
                     self?.updateStatus("Download complete, compressing...")
                     self?.updateProgress(0.7)
@@ -124,8 +124,8 @@ class EmbeddedPython: ObservableObject {
                     
                     self?.updateProgress(0.9)
                     
-                    // Store metadata mapping
-                    self?.saveMetadata(fileURL: compressedURL, title: title)
+                    // Store metadata mapping with thumbnail
+                    self?.saveMetadata(fileURL: compressedURL, title: title, thumbnailURL: thumbnailURL)
                     
                     self?.updateStatus("Complete!")
                     self?.updateProgress(1.0)
@@ -230,12 +230,20 @@ class EmbeddedPython: ObservableObject {
     
     // MARK: - Metadata Management
     
-    private func saveMetadata(fileURL: URL, title: String) {
+    private func saveMetadata(fileURL: URL, title: String, thumbnailURL: String? = nil) {
         let metadataURL = getMetadataFileURL()
         var metadata = loadMetadata()
         
         let filename = fileURL.lastPathComponent
-        metadata[filename] = title
+        var trackMetadata: [String: String] = ["title": title]
+        
+        if let thumbnailURL = thumbnailURL {
+            trackMetadata["thumbnail"] = thumbnailURL
+            // Download and save thumbnail
+            downloadThumbnail(url: thumbnailURL, for: filename)
+        }
+        
+        metadata[filename] = trackMetadata
         
         do {
             let data = try JSONEncoder().encode(metadata)
@@ -249,13 +257,42 @@ class EmbeddedPython: ObservableObject {
     func getTitle(for fileURL: URL) -> String? {
         let metadata = loadMetadata()
         let filename = fileURL.lastPathComponent
-        return metadata[filename]
+        return metadata[filename]?["title"]
     }
     
-    private func loadMetadata() -> [String: String] {
+    func getThumbnailPath(for fileURL: URL) -> URL? {
+        let filename = fileURL.lastPathComponent
+        let thumbnailsDir = getThumbnailsDirectory()
+        let thumbnailPath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+        
+        if FileManager.default.fileExists(atPath: thumbnailPath.path) {
+            return thumbnailPath
+        }
+        return nil
+    }
+    
+    private func downloadThumbnail(url: String, for filename: String) {
+        guard let thumbnailURL = URL(string: url) else { return }
+        
+        Task {
+            do {
+                let (data, _) = try await URLSession.shared.data(from: thumbnailURL)
+                let thumbnailsDir = getThumbnailsDirectory()
+                try? FileManager.default.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
+                
+                let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+                try data.write(to: savePath)
+                print("✅ [Thumbnail] Saved: \(savePath.lastPathComponent)")
+            } catch {
+                print("❌ [Thumbnail] Failed to download: \(error)")
+            }
+        }
+    }
+    
+    private func loadMetadata() -> [String: [String: String]] {
         let metadataURL = getMetadataFileURL()
         guard let data = try? Data(contentsOf: metadataURL),
-              let metadata = try? JSONDecoder().decode([String: String].self, from: data) else {
+              let metadata = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
             return [:]
         }
         return metadata
@@ -266,9 +303,14 @@ class EmbeddedPython: ObservableObject {
         return documentsPath.appendingPathComponent("audio_metadata.json")
     }
     
+    private func getThumbnailsDirectory() -> URL {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsPath.appendingPathComponent("Thumbnails", isDirectory: true)
+    }
+    
     // MARK: - Optimized Python Execution
     
-    private func runYtdlp(url: String, outputDir: String) throws -> (URL, String) {
+    private func runYtdlp(url: String, outputDir: String) throws -> (URL, String, String?) {
         let resultFilePath = NSTemporaryDirectory() + "ytdlp_result.json"
         let logFilePath = NSTemporaryDirectory() + "ytdlp_debug.log"
         
@@ -313,9 +355,13 @@ class EmbeddedPython: ObservableObject {
             throw PythonError.executionError(errorMsg)
         }
         
+        let thumbnailURL = json["thumbnail"] as? String
         let audioURL = URL(fileURLWithPath: audioURLString)
         print("✅ [runYtdlp] Downloaded to: \(audioURL.path)")
-        return (audioURL, title)
+        if let thumb = thumbnailURL {
+            print("🖼️ [runYtdlp] Thumbnail URL: \(thumb)")
+        }
+        return (audioURL, title, thumbnailURL)
     }
     
     private func generateYtdlpScript(url: String, outputDir: String, resultFilePath: String, logFilePath: String) -> String {
@@ -384,6 +430,18 @@ class EmbeddedPython: ObservableObject {
                 title = info.get('title', 'Unknown')
                 video_id = info.get('id', 'unknown')
                 
+                # Get best thumbnail (maxresdefault > sddefault > hqdefault > default)
+                thumbnail_url = None
+                thumbnails = info.get('thumbnails', [])
+                if thumbnails:
+                    # Sort by preference
+                    thumbnail_url = thumbnails[-1].get('url')  # Usually highest quality is last
+                else:
+                    # Fallback to standard YouTube thumbnail URL
+                    thumbnail_url = f'https://img.youtube.com/vi/{video_id}/maxresdefault.jpg'
+                
+                log(f'Thumbnail URL: {thumbnail_url}')
+                
                 # Now download
                 log('Downloading...')
                 info = ydl.extract_info(url, download=True)
@@ -407,6 +465,7 @@ class EmbeddedPython: ObservableObject {
                         'title': title,
                         'audio_url': downloaded_path,
                         'audio_ext': 'm4a',
+                        'thumbnail': thumbnail_url,
                     }
                 else:
                     result = {'success': False, 'error': 'File not found after download'}
