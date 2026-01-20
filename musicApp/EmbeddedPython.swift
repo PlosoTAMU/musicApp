@@ -12,8 +12,9 @@ class EmbeddedPython: ObservableObject {
     private var pythonInitialized = false
     private let pythonQueue = DispatchQueue(label: "com.musicapp.python", qos: .userInitiated)
     
-    // Cache compiled Python bytecode
-    private var compiledYtdlpScript: String?
+    // Progress monitoring
+    private var progressTimer: Timer?
+    private var currentProgressFile: String?
     
     init() {}
     
@@ -93,6 +94,7 @@ class EmbeddedPython: ObservableObject {
         }
         
         updateStatus("Starting download...")
+        updateProgress(0.0)
         
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let outputDir = documentsPath.appendingPathComponent("YouTube Downloads", isDirectory: true)
@@ -101,21 +103,91 @@ class EmbeddedPython: ObservableObject {
         return try await withCheckedThrowingContinuation { continuation in
             pythonQueue.async { [weak self] in
                 do {
+                    // Start progress monitoring
+                    self?.startProgressMonitoring(outputDir: outputDir.path)
+                    
+                    updateStatus("Downloading...")
+                    updateProgress(0.1)
+                    
                     // Python downloads the file
                     let (downloadedURL, title) = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "")
+                    
+                    updateStatus("Download complete, compressing...")
+                    updateProgress(0.7)
+                    
+                    // Stop progress monitoring
+                    self?.stopProgressMonitoring()
                     
                     // Compress it with proper naming
                     print("🔄 [downloadAudio] Compressing audio...")
                     let compressedURL = (try? self?.compressAudio(inputURL: downloadedURL, title: title, outputDir: outputDir)) ?? downloadedURL
                     
+                    updateProgress(0.9)
+                    
                     // Store metadata mapping
                     self?.saveMetadata(fileURL: compressedURL, title: title)
                     
+                    updateStatus("Complete!")
+                    updateProgress(1.0)
+                    
                     continuation.resume(returning: (compressedURL, title))
                 } catch {
+                    self?.stopProgressMonitoring()
+                    updateStatus("Failed")
+                    updateProgress(0.0)
                     continuation.resume(throwing: error)
                 }
             }
+        }
+    }
+    
+    // MARK: - Progress Monitoring
+    
+    private func startProgressMonitoring(outputDir: String) {
+        stopProgressMonitoring() // Clean up any existing timer
+        
+        currentProgressFile = outputDir
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                self?.checkDownloadProgress()
+            }
+        }
+    }
+    
+    private func stopProgressMonitoring() {
+        DispatchQueue.main.async { [weak self] in
+            self?.progressTimer?.invalidate()
+            self?.progressTimer = nil
+        }
+        currentProgressFile = nil
+    }
+    
+    private func checkDownloadProgress() {
+        guard let outputDir = currentProgressFile else { return }
+        
+        // Check for .part files (in-progress downloads)
+        do {
+            let contents = try FileManager.default.contentsOfDirectory(atPath: outputDir)
+            
+            for file in contents where file.hasSuffix(".part") || file.hasSuffix(".ytdl") {
+                let filePath = (outputDir as NSString).appendingPathComponent(file)
+                
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: filePath),
+                   let fileSize = attrs[.size] as? Int64 {
+                    
+                    // Estimate progress based on typical audio file sizes (5-15MB)
+                    let estimatedTotal: Double = 10_000_000 // 10MB estimate
+                    let progress = min(Double(fileSize) / estimatedTotal, 0.65) // Cap at 65% during download
+                    
+                    updateProgress(0.1 + progress * 0.6) // Scale to 10-70% range
+                    
+                    let sizeMB = Double(fileSize) / 1_000_000
+                    updateStatus(String(format: "Downloading... %.1f MB", sizeMB))
+                }
+            }
+        } catch {
+            // Ignore errors during progress checking
         }
     }
 
@@ -127,8 +199,12 @@ class EmbeddedPython: ObservableObject {
         print("🔄 [compressAudio] Compressing: \(inputURL.path)")
         print("🔄 [compressAudio] Output: \(outputURL.path)")
         
-        // Use hardware encoder (aac_at) at 48kbps - fast and tiny
-        let command = "-i \"\(inputURL.path)\" -vn -c:a aac_at -b:a 48k -y \"\(outputURL.path)\""
+        updateStatus("Compressing...")
+        
+        // SPEED OPTIMIZATION: Use ultrafast preset with hardware encoder
+        // -threads 0 = use all available cores
+        // -async 1 = reduce latency
+        let command = "-i \"\(inputURL.path)\" -vn -c:a aac_at -b:a 48k -threads 0 -preset ultrafast -async 1 -y \"\(outputURL.path)\""
         print("🔄 [compressAudio] Command: \(command)")
         
         let session = FFmpegKit.execute(command)
@@ -199,7 +275,6 @@ class EmbeddedPython: ObservableObject {
         print("🎬 [runYtdlp] Starting download for URL: \(url)")
         print("🎬 [runYtdlp] Output directory: \(outputDir)")
         
-        // Pre-compile script on first run for faster subsequent executions
         let script = generateYtdlpScript(url: url, outputDir: outputDir, resultFilePath: resultFilePath, logFilePath: logFilePath)
         
         print("🎬 [runYtdlp] Executing Python script...")
@@ -276,43 +351,58 @@ class EmbeddedPython: ObservableObject {
         url = r'''\(cleanURL)'''
         os.makedirs(output_dir, exist_ok=True)
         
-        # Optimized yt-dlp options
+        # SPEED OPTIMIZATIONS:
+        # 1. Target format 140 directly (YouTube's M4A audio)
+        # 2. Skip unnecessary metadata extraction
+        # 3. Use simple template for faster I/O
+        # 4. Disable fragment retries for speed (trade reliability for speed)
         ydl_opts = {
-            'format': '140/bestaudio[ext=m4a]/bestaudio/best',
+            'format': '140',  # Direct M4A format - fastest
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'quiet': True,  # Reduce console output for performance
-            'no_warnings': True,
+            'quiet': False,
             'noplaylist': True,
             'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['ios', 'android'],
-                    'skip': ['web'],
+                    'player_client': ['ios'],  # iOS only - faster than trying multiple
+                    'skip': ['web', 'android'],
                 }
             },
-            'merge_output_format': 'm4a',
-            'concurrent_fragment_downloads': 4,  # Speed up downloads
+            'http_chunk_size': 10485760,  # 10MB chunks for faster download
+            'retries': 3,  # Fewer retries
+            'fragment_retries': 1,  # Fewer fragment retries
+            'skip_unavailable_fragments': True,  # Don't wait for missing fragments
+            'socket_timeout': 20,  # Shorter timeout
+            'extractor_retries': 2,  # Fewer extractor retries
+            'noprogress': True,  # Disable progress bar overhead
+            'no_color': True,  # Disable color codes
         }
         
         result = {}
         try:
             log('Creating YoutubeDL instance...')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+                # Extract info WITHOUT downloading first to get metadata quickly
+                log('Extracting info...')
+                info = ydl.extract_info(url, download=False)
                 title = info.get('title', 'Unknown')
                 video_id = info.get('id', 'unknown')
+                
+                # Now download
+                log('Downloading...')
+                info = ydl.extract_info(url, download=True)
                 downloaded_path = ydl.prepare_filename(info)
                 
                 log(f'Downloaded: {downloaded_path}')
                 
                 if os.path.exists(downloaded_path):
+                    # Format 140 is already M4A, but check anyway
                     if not downloaded_path.endswith('.m4a'):
                         m4a_path = os.path.splitext(downloaded_path)[0] + '.m4a'
                         log(f'Renaming {downloaded_path} to {m4a_path}')
                         try:
                             os.rename(downloaded_path, m4a_path)
                             downloaded_path = m4a_path
-                            log(f'Successfully renamed to {m4a_path}')
                         except Exception as e:
                             log(f'Rename failed: {e}')
                     
@@ -340,6 +430,12 @@ class EmbeddedPython: ObservableObject {
     private func updateStatus(_ message: String) {
         DispatchQueue.main.async {
             self.statusMessage = message
+        }
+    }
+    
+    private func updateProgress(_ progress: Double) {
+        DispatchQueue.main.async {
+            self.downloadProgress = progress
         }
     }
     
