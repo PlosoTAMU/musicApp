@@ -153,7 +153,7 @@ class EmbeddedPython: ObservableObject {
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'quiet': False,
             'noplaylist': True,
-            # Save directly with video ID (no temp file)
+            # Save directly with video ID
             'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
             'extractor_args': {
                 'youtube': {
@@ -161,6 +161,8 @@ class EmbeddedPython: ObservableObject {
                     'skip': ['web'],
                 }
             },
+            # Force merge into m4a container if needed
+            'merge_output_format': 'm4a',
         }
         
         result = {}
