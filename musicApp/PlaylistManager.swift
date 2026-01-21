@@ -1,3 +1,6 @@
+import Foundation
+import SwiftUI
+
 class PlaylistManager: ObservableObject {
     @Published var playlists: [Playlist] = []
     @Published var allTracks: [Track] = []
