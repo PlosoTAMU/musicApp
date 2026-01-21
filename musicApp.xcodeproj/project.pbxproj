@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		BF1938282F206F230067A7A8 /* cacert.pem in Resources */ = {isa = PBXBuildFile; fileRef = BF1938272F206F230067A7A8 /* cacert.pem */; };
 		BF33574B2F1F0CD200C362AD /* ffmpegkit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */; };
 		BF33574C2F1F0CD200C362AD /* ffmpegkit.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		BF33574D2F1F0CD300C362AD /* libavcodec.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782112F1ECD7E0056E8CB /* libavcodec.xcframework */; };
@@ -26,8 +25,7 @@
 		BF33575A2F1F0CDB00C362AD /* libswscale.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		BF5779242F1EB4630056E8CB /* python-stdlib in Resources */ = {isa = PBXBuildFile; fileRef = BF5779232F1EB45D0056E8CB /* python-stdlib */; };
 		BF5781D02F1EB4D70056E8CB /* yt_dlp in Resources */ = {isa = PBXBuildFile; fileRef = BF5781CF2F1EB4D20056E8CB /* yt_dlp */; };
-		BFB82DA12F203F12005AC5A2 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BFB82D9F2F203EF8005AC5A2 /* Python.xcframework */; };
-		BFB82DA22F203F12005AC5A2 /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BFB82D9F2F203EF8005AC5A2 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BFB82D982F203CDD005AC5A2 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BFB82D972F203CDD005AC5A2 /* Python.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,7 +56,6 @@
 				BF3357542F1F0CD700C362AD /* libavformat.xcframework in Embed Frameworks */,
 				BF3357582F1F0CDA00C362AD /* libswresample.xcframework in Embed Frameworks */,
 				BF33574E2F1F0CD300C362AD /* libavcodec.xcframework in Embed Frameworks */,
-				BFB82DA22F203F12005AC5A2 /* Python.xcframework in Embed Frameworks */,
 				BF3357522F1F0CD600C362AD /* libavfilter.xcframework in Embed Frameworks */,
 				BF3357562F1F0CD900C362AD /* libavutil.xcframework in Embed Frameworks */,
 				BF33575A2F1F0CDB00C362AD /* libswscale.xcframework in Embed Frameworks */,
@@ -70,7 +67,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		BF1938272F206F230067A7A8 /* cacert.pem */ = {isa = PBXFileReference; lastKnownFileType = text; path = cacert.pem; sourceTree = "<group>"; };
 		BF5779232F1EB45D0056E8CB /* python-stdlib */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "python-stdlib"; sourceTree = "<group>"; };
 		BF5781CF2F1EB4D20056E8CB /* yt_dlp */ = {isa = PBXFileReference; lastKnownFileType = folder; name = yt_dlp; path = "../Desktop/yt-dlp-bundle/yt_dlp-2025.10.14/yt_dlp"; sourceTree = SOURCE_ROOT; };
 		BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = ffmpegkit.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/ffmpegkit.xcframework"; sourceTree = SOURCE_ROOT; };
@@ -81,7 +77,7 @@
 		BF5782152F1ECD7E0056E8CB /* libavutil.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libavutil.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libavutil.xcframework"; sourceTree = SOURCE_ROOT; };
 		BF5782162F1ECD7E0056E8CB /* libswresample.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libswresample.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libswresample.xcframework"; sourceTree = SOURCE_ROOT; };
 		BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libswscale.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libswscale.xcframework"; sourceTree = SOURCE_ROOT; };
-		BFB82D9F2F203EF8005AC5A2 /* Python.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = "../Downloads/Python-3.11-iOS-support.b7/Python.xcframework"; sourceTree = SOURCE_ROOT; };
+		BFB82D972F203CDD005AC5A2 /* Python.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = "../Downloads/Python-3.11-iOS-support.b7/Python.xcframework"; sourceTree = SOURCE_ROOT; };
 		BFFDD5EF2F1C47850032409D /* musicApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = musicApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFFDD6012F1C478D0032409D /* musicAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = musicAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFFDD60B2F1C478D0032409D /* musicAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = musicAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -114,7 +110,7 @@
 				BF33574D2F1F0CD300C362AD /* libavcodec.xcframework in Frameworks */,
 				BF33574F2F1F0CD400C362AD /* libavdevice.xcframework in Frameworks */,
 				BF33574B2F1F0CD200C362AD /* ffmpegkit.xcframework in Frameworks */,
-				BFB82DA12F203F12005AC5A2 /* Python.xcframework in Frameworks */,
+				BFB82D982F203CDD005AC5A2 /* Python.xcframework in Frameworks */,
 				BF3357552F1F0CD900C362AD /* libavutil.xcframework in Frameworks */,
 				BF3357572F1F0CDA00C362AD /* libswresample.xcframework in Frameworks */,
 				BF3357512F1F0CD600C362AD /* libavfilter.xcframework in Frameworks */,
@@ -142,7 +138,7 @@
 		BFFDD5E62F1C47850032409D = {
 			isa = PBXGroup;
 			children = (
-				BFB82D9F2F203EF8005AC5A2 /* Python.xcframework */,
+				BFB82D972F203CDD005AC5A2 /* Python.xcframework */,
 				BF5781CF2F1EB4D20056E8CB /* yt_dlp */,
 				BF5779232F1EB45D0056E8CB /* python-stdlib */,
 				BFFDD5F12F1C47850032409D /* musicApp */,
@@ -157,7 +153,6 @@
 				BF5782152F1ECD7E0056E8CB /* libavutil.xcframework */,
 				BF5782162F1ECD7E0056E8CB /* libswresample.xcframework */,
 				BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */,
-				BF1938272F206F230067A7A8 /* cacert.pem */,
 			);
 			sourceTree = "<group>";
 		};
@@ -182,7 +177,6 @@
 				BFFDD5EC2F1C47850032409D /* Frameworks */,
 				BFFDD5ED2F1C47850032409D /* Resources */,
 				BF5765212F1EB3D00056E8CB /* Embed Frameworks */,
-				BF1938262F206D150067A7A8 /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -298,7 +292,6 @@
 			files = (
 				BF5781D02F1EB4D70056E8CB /* yt_dlp in Resources */,
 				BF5779242F1EB4630056E8CB /* python-stdlib in Resources */,
-				BF1938282F206F230067A7A8 /* cacert.pem in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -317,26 +310,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		BF1938262F206D150067A7A8 /* ShellScript */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "#!/bin/bash\n# Type a script or drag a script file from your workspace to insert its path.\nfind \"$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app\" -name \"*.so\" -type f -exec codesign --force --sign - {} \\;\necho \"Signed all python extension modules\"\n";
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		BFFDD5EB2F1C47850032409D /* Sources */ = {
@@ -517,7 +490,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(PROJECT_DIR)/python-stdlib/lib/python3.11/lib-dynload",
+					"$(PROJECT_DIR)/python-stdlib/lib/python3.14/lib-dynload",
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Ploso.musicApp;
@@ -550,7 +523,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(PROJECT_DIR)/python-stdlib/lib/python3.11/lib-dynload",
+					"$(PROJECT_DIR)/python-stdlib/lib/python3.14/lib-dynload",
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Ploso.musicApp;
