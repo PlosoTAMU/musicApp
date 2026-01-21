@@ -1,174 +1,3 @@
-// MARK: - Updated ContentView.swift
-import SwiftUI
-
-struct ContentView: View {
-    @StateObject private var audioPlayer = AudioPlayerManager()
-    @StateObject private var playlistManager = PlaylistManager()
-    @State private var showFolderPicker = false
-    @State private var showYouTubeDownload = false
-    @State private var showNowPlaying = false
-    
-    var body: some View {
-        NavigationView {
-            ZStack(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    List {
-                        PlaylistRow(
-                            playlist: playlistManager.everythingPlaylist,
-                            audioPlayer: audioPlayer
-                        )
-                        
-                        ForEach(playlistManager.playlists) { playlist in
-                            PlaylistRow(
-                                playlist: playlist,
-                                audioPlayer: audioPlayer
-                            )
-                        }
-                        .onDelete(perform: deletePlaylists)
-                    }
-                    .listStyle(.plain)
-                    
-                    // Add bottom padding when mini player is showing
-                    if audioPlayer.currentTrack != nil {
-                        Color.clear.frame(height: 64)
-                    }
-                }
-                .navigationTitle("Library")
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button {
-                            showYouTubeDownload = true
-                        } label: {
-                            Image(systemName: "link.badge.plus")
-                        }
-                    }
-                    
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button {
-                            showFolderPicker = true
-                        } label: {
-                            Image(systemName: "folder.badge.plus")
-                        }
-                    }
-                }
-                .sheet(isPresented: $showFolderPicker) {
-                    FolderPicker(playlistManager: playlistManager)
-                }
-                .sheet(isPresented: $showYouTubeDownload) {
-                    YouTubeDownloadView(playlistManager: playlistManager)
-                }
-                
-                // Mini Player Bar (persistent at bottom)
-                if audioPlayer.currentTrack != nil {
-                    MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
-                        .transition(.move(edge: .bottom))
-                }
-            }
-        }
-        .fullScreenCover(isPresented: $showNowPlaying) {
-            NowPlayingView(audioPlayer: audioPlayer, isPresented: $showNowPlaying)
-        }
-    }
-    
-    func deletePlaylists(at offsets: IndexSet) {
-        for index in offsets {
-            playlistManager.removePlaylist(playlistManager.playlists[index])
-        }
-    }
-}
-
-// MARK: - Mini Player Bar (iOS Music style)
-struct MiniPlayerBar: View {
-    @ObservedObject var audioPlayer: AudioPlayerManager
-    @Binding var showNowPlaying: Bool
-    
-    var body: some View {
-        Button {
-            showNowPlaying = true
-        } label: {
-            HStack(spacing: 12) {
-                // Album artwork placeholder
-                ZStack {
-                    if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
-                        Image(uiImage: thumbnailPath)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 48, height: 48)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .foregroundColor(.gray)
-                            )
-                    }
-                }
-                
-                // Track info
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                        .foregroundColor(.primary)
-                    
-                    Text(audioPlayer.currentTrack?.folderName ?? "")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                
-                Spacer()
-                
-                // Play/Pause button
-                Button {
-                    if audioPlayer.isPlaying {
-                        audioPlayer.pause()
-                    } else {
-                        audioPlayer.resume()
-                    }
-                } label: {
-                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                        .foregroundColor(.primary)
-                }
-                .buttonStyle(.plain)
-                
-                // Next button
-                Button {
-                    audioPlayer.next()
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.title3)
-                        .foregroundColor(.primary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
-        .buttonStyle(.plain)
-        .background(.ultraThinMaterial)
-        .overlay(
-            Rectangle()
-                .fill(Color.gray.opacity(0.3))
-                .frame(height: 0.5),
-            alignment: .top
-        )
-    }
-    
-    private func getThumbnailImage(for track: Track?) -> UIImage? {
-        guard let track = track,
-              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
-              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
-            return nil
-        }
-        return image
-    }
-}
-
 // MARK: - Full Now Playing View (iOS Music style)
 struct NowPlayingView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
@@ -303,23 +132,35 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Playback controls with 2x skip buttons
-                HStack(spacing: 40) {
-                    // 2x Rewind
+                // Playback controls with 2x speed on hold
+                HStack(spacing: 30) {
+                    // Rewind button (tap = -10s, hold = 2x backward)
                     Button {
                         audioPlayer.skip(seconds: -10)
                     } label: {
                         Image(systemName: "gobackward.10")
-                            .font(.system(size: 28))
+                            .font(.system(size: 32))
                             .foregroundColor(.primary)
                     }
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.3)
+                            .onEnded { _ in
+                                audioPlayer.startRewind()
+                            }
+                    )
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 0)
+                            .onEnded { _ in
+                                audioPlayer.resumeNormalSpeed()
+                            }
+                    )
                     
                     // Previous
                     Button {
                         audioPlayer.previous()
                     } label: {
                         Image(systemName: "backward.fill")
-                            .font(.system(size: 32))
+                            .font(.system(size: 36))
                             .foregroundColor(.primary)
                     }
                     
@@ -341,18 +182,30 @@ struct NowPlayingView: View {
                         audioPlayer.next()
                     } label: {
                         Image(systemName: "forward.fill")
-                            .font(.system(size: 32))
+                            .font(.system(size: 36))
                             .foregroundColor(.primary)
                     }
                     
-                    // 2x Forward
+                    // Fast Forward button (tap = +10s, hold = 2x forward)
                     Button {
                         audioPlayer.skip(seconds: 10)
                     } label: {
                         Image(systemName: "goforward.10")
-                            .font(.system(size: 28))
+                            .font(.system(size: 32))
                             .foregroundColor(.primary)
                     }
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.3)
+                            .onEnded { _ in
+                                audioPlayer.startFastForward()
+                            }
+                    )
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 0)
+                            .onEnded { _ in
+                                audioPlayer.resumeNormalSpeed()
+                            }
+                    )
                 }
                 .padding(.bottom, 20)
                 
@@ -422,7 +275,6 @@ struct NowPlayingView: View {
                             blue: Double(bitmap[2]) / 255.0)
             
             DispatchQueue.main.async {
-                // Create gradient with darker and lighter versions
                 self.dominantColors = [
                     color.opacity(0.6),
                     color.opacity(0.3)

@@ -1,7 +1,7 @@
 import Foundation
 import AVFoundation
 
-class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
+class AudioPlayerManager: NSObject, ObservableObject {
     @Published var isPlaying = false
     @Published var currentTrack: Track?
     @Published var currentPlaylist: [Track] = []
@@ -10,14 +10,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var duration: Double = 0
     @Published var volume: Double = 0.5 {
         didSet {
-            player?.volume = Float(volume)
             avPlayer?.volume = Float(volume)
         }
     }
     
-    private var player: AVAudioPlayer?
     private var avPlayer: AVPlayer?
-    private var timeObserverToken: Any?
+    private var playerObserver: Any?
     private var displayLink: CADisplayLink?
     
     override init() {
@@ -28,10 +26,9 @@ class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
     
     private func setupAudioSession() {
         do {
-            // Configure for background playback
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
             try AVAudioSession.sharedInstance().setActive(true)
-            print("✅ Audio session configured for background playback")
+            print("✅ Audio session configured")
         } catch {
             print("❌ Failed to setup audio session: \(error)")
         }
@@ -46,48 +43,25 @@ class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
     
     func play(_ track: Track) {
-        // CRITICAL: Stop previous track completely before starting new one
+        // Stop previous track
         if isPlaying {
-            player?.stop()
             avPlayer?.pause()
             isPlaying = false
         }
         
         stopTimeUpdates()
+        removePlayerObserver()
         
         do {
-            // Reactivate audio session
             try AVAudioSession.sharedInstance().setActive(true)
             
             _ = track.url.startAccessingSecurityScopedResource()
             
-            player = try AVAudioPlayer(contentsOf: track.url)
-            player?.delegate = self
-            player?.volume = Float(volume)
-            player?.prepareToPlay()
-            duration = player?.duration ?? 0
-            currentTime = 0
-            player?.play()
-            
-            avPlayer = nil
-            isPlaying = true
-            currentTrack = track
-            
-            if let index = currentPlaylist.firstIndex(where: { $0.id == track.id }) {
-                currentIndex = index
-            }
-            
-            startTimeUpdates()
-            print("▶️ Now playing: \(track.name)")
-            
-        } catch {
-            print("AVAudioPlayer failed: \(error.localizedDescription). Trying AVPlayer...")
             let playerItem = AVPlayerItem(url: track.url)
             avPlayer = AVPlayer(playerItem: playerItem)
             avPlayer?.volume = Float(volume)
             avPlayer?.play()
             
-            player = nil
             isPlaying = true
             currentTrack = track
             
@@ -95,33 +69,39 @@ class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
                 currentIndex = index
             }
             
+            // Get duration
             Task { @MainActor in
                 if let duration = try? await playerItem.asset.load(.duration) {
                     self.duration = CMTimeGetSeconds(duration)
                 }
             }
             
+            // Observe when track finishes
+            setupPlayerObserver()
             startTimeUpdates()
+            
+            print("▶️ Now playing: \(track.name)")
+            
+        } catch {
+            print("❌ Playback error: \(error)")
         }
     }
     
     func pause() {
-        player?.pause()
         avPlayer?.pause()
         isPlaying = false
     }
     
     func resume() {
-        player?.play()
         avPlayer?.play()
         isPlaying = true
     }
     
     func stop() {
-        player?.stop()
         avPlayer?.pause()
         avPlayer?.seek(to: .zero)
         stopTimeUpdates()
+        removePlayerObserver()
         isPlaying = false
         currentTrack = nil
         currentTime = 0
@@ -129,19 +109,35 @@ class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
     
     func seek(to time: Double) {
-        if let player = player {
-            player.currentTime = time
-            currentTime = time
-        } else if let avPlayer = avPlayer {
-            avPlayer.seek(to: CMTime(seconds: time, preferredTimescale: 600))
-            currentTime = time
-        }
+        avPlayer?.seek(to: CMTime(seconds: time, preferredTimescale: 600))
+        currentTime = time
     }
     
     func skip(seconds: Double) {
         let newTime = max(0, min(currentTime + seconds, duration))
         seek(to: newTime)
     }
+    
+    // MARK: - Fast Forward / Rewind
+    
+    func setPlaybackRate(_ rate: Float) {
+        avPlayer?.rate = rate
+        isPlaying = (rate != 0)
+    }
+    
+    func startFastForward() {
+        setPlaybackRate(2.0)
+    }
+    
+    func startRewind() {
+        setPlaybackRate(-2.0)
+    }
+    
+    func resumeNormalSpeed() {
+        setPlaybackRate(1.0)
+    }
+    
+    // MARK: - Playlist Navigation
     
     func next() {
         guard !currentPlaylist.isEmpty else { return }
@@ -159,10 +155,24 @@ class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
         }
     }
     
-    // Auto-play next track when current finishes
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        if flag {
-            next()
+    // MARK: - Observers
+    
+    private func setupPlayerObserver() {
+        guard let player = avPlayer else { return }
+        
+        playerObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: player.currentItem,
+            queue: .main
+        ) { [weak self] _ in
+            self?.next()
+        }
+    }
+    
+    private func removePlayerObserver() {
+        if let observer = playerObserver {
+            NotificationCenter.default.removeObserver(observer)
+            playerObserver = nil
         }
     }
     
@@ -179,18 +189,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
     
     @objc private func updateTime() {
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            if let player = self.player {
-                self.currentTime = player.currentTime
-                self.duration = player.duration
-            } else if let avPlayer = self.avPlayer {
-                self.currentTime = CMTimeGetSeconds(avPlayer.currentTime())
-            }
+            guard let self = self, let avPlayer = self.avPlayer else { return }
+            self.currentTime = CMTimeGetSeconds(avPlayer.currentTime())
         }
     }
     
     deinit {
         stopTimeUpdates()
+        removePlayerObserver()
     }
 }
