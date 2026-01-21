@@ -1,8 +1,17 @@
-import Foundation
-
 class PlaylistManager: ObservableObject {
     @Published var playlists: [Playlist] = []
     @Published var allTracks: [Track] = []
+    
+    private let playlistsFileURL: URL
+    
+    init() {
+        // Set up file path for saving playlists
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        playlistsFileURL = documentsPath.appendingPathComponent("playlists.json")
+        
+        // Load saved playlists on init
+        loadPlaylists()
+    }
     
     var everythingPlaylist: Playlist {
         Playlist(name: "Everything", tracks: allTracks)
@@ -33,19 +42,21 @@ class PlaylistManager: ObservableObject {
         if !newTracks.isEmpty {
             let playlist = Playlist(name: folderName, tracks: newTracks)
             playlists.append(playlist)
+            savePlaylists()
         }
     }
     
     func addYouTubeTrack(_ track: Track) {
         allTracks.append(track)
         
-        // Find or create YouTube Downloads playlist
         if let index = playlists.firstIndex(where: { $0.name == "YouTube Downloads" }) {
             playlists[index].tracks.append(track)
         } else {
             let playlist = Playlist(name: "YouTube Downloads", tracks: [track])
             playlists.append(playlist)
         }
+        
+        savePlaylists()
     }
     
     func removePlaylist(_ playlist: Playlist) {
@@ -53,5 +64,45 @@ class PlaylistManager: ObservableObject {
             playlist.tracks.contains(where: { $0.id == track.id })
         }
         playlists.removeAll { $0.id == playlist.id }
+        savePlaylists()
     }
+    
+    // MARK: - Persistence
+    
+    private func savePlaylists() {
+        do {
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(PlaylistsData(playlists: playlists, allTracks: allTracks))
+            try data.write(to: playlistsFileURL)
+            print("✅ [PlaylistManager] Playlists saved")
+        } catch {
+            print("❌ [PlaylistManager] Failed to save playlists: \(error)")
+        }
+    }
+    
+    private func loadPlaylists() {
+        guard FileManager.default.fileExists(atPath: playlistsFileURL.path) else {
+            print("ℹ️ [PlaylistManager] No saved playlists found")
+            return
+        }
+        
+        do {
+            let data = try Data(contentsOf: playlistsFileURL)
+            let decoder = JSONDecoder()
+            let playlistsData = try decoder.decode(PlaylistsData.self, from: data)
+            
+            self.playlists = playlistsData.playlists
+            self.allTracks = playlistsData.allTracks
+            
+            print("✅ [PlaylistManager] Loaded \(playlists.count) playlists with \(allTracks.count) tracks")
+        } catch {
+            print("❌ [PlaylistManager] Failed to load playlists: \(error)")
+        }
+    }
+}
+
+// Helper struct for encoding/decoding
+private struct PlaylistsData: Codable {
+    let playlists: [Playlist]
+    let allTracks: [Track]
 }
