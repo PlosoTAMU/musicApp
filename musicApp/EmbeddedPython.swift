@@ -61,6 +61,11 @@ class EmbeddedPython: ObservableObject {
         print("📂 [EmbeddedPython] PYTHONHOME: \(pythonHome)")
         print("📂 [EmbeddedPython] PYTHONPATH: \(pythonPath)")
         
+        let certPath = resourcePath + "/cacert.pem"
+        setenv("SSL_CERT_FILE", certPath, 1)
+        setenv("REQUESTS_CA_BUNDLE", certPath, 1)
+
+
         let encodingsPath = libPath + "/encodings"
         guard FileManager.default.fileExists(atPath: encodingsPath) else {
             print("❌ [EmbeddedPython] encodings NOT found at: \(encodingsPath)")
@@ -418,6 +423,7 @@ class EmbeddedPython: ObservableObject {
             'socket_timeout': 20,  # Shorter timeout
             'noprogress': True,  # Disable progress bar overhead
             'no_color': True,  # Disable color codes
+            'nocheckcertificate': True,  # Skip SSL verification
         }
         
         result = {}
