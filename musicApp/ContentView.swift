@@ -1,3 +1,6 @@
+import SwiftUI
+import AVFoundation
+
 // MARK: - Full Now Playing View (iOS Music style)
 struct NowPlayingView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
