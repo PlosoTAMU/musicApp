@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import MediaPlayer
 
 // MARK: - Main ContentView
 struct ContentView: View {
@@ -176,6 +177,16 @@ struct NowPlayingView: View {
     @State private var showPlaylistPicker = false
     @State private var isHoldingRewind = false
     @State private var isHoldingFF = false
+
+    struct SystemVolumeView: UIViewRepresentable {
+        func makeUIView(context: Context) -> MPVolumeView {
+            let volumeView = MPVolumeView(frame: .zero)
+            volumeView.showsRouteButton = false  // Hide AirPlay button
+            return volumeView
+        }
+        
+        func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+    }
     
     var body: some View {
         ZStack {
@@ -322,36 +333,62 @@ struct NowPlayingView: View {
                 // Playback controls with 2x speed on hold
                 // Playback controls - reduce spacing to fit
                 HStack(spacing: 20) {
-                    // Rewind button (tap = -10s, hold = 2x backward)
-                    // Rewind
-                    Button {
-                        if !isHoldingRewind {
-                            audioPlayer.skip(seconds: -10)
-                        }
-                    } label: {
+                    // Rewind button - fixed gesture order
+                    Button {} label: {
                         Image("rewind")
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 32, height: 32)  // Slightly smaller than SF Symbol size 32
+                            .frame(width: 24, height: 24)
                             .foregroundColor(.primary)
                     }
-                    .simultaneousGesture(
+                    .buttonStyle(.plain)
+                    .gesture(
                         LongPressGesture(minimumDuration: 0.3)
-                            .onChanged { _ in
+                            .onEnded { _ in
                                 isHoldingRewind = true
                                 audioPlayer.startRewind()
                             }
-                    )
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 0)
-                            .onEnded { _ in
-                                if isHoldingRewind {
-                                    audioPlayer.resumeNormalSpeed()
-                                    isHoldingRewind = false
+                            .simultaneously(with: DragGesture(minimumDistance: 0)
+                                .onEnded { _ in
+                                    if isHoldingRewind {
+                                        audioPlayer.resumeNormalSpeed()
+                                        isHoldingRewind = false
+                                    } else {
+                                        // Only skip if we didn't hold
+                                        audioPlayer.skip(seconds: -10)
+                                    }
                                 }
-                            }
+                            )
                     )
-                    
+
+                    // Fast Forward button - fixed gesture order
+                    Button {} label: {
+                        Image("forward")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 24, height: 24)
+                            .foregroundColor(.primary)
+                    }
+                    .buttonStyle(.plain)
+                    .gesture(
+                        LongPressGesture(minimumDuration: 0.3)
+                            .onEnded { _ in
+                                isHoldingFF = true
+                                audioPlayer.startFastForward()
+                            }
+                            .simultaneously(with: DragGesture(minimumDistance: 0)
+                                .onEnded { _ in
+                                    if isHoldingFF {
+                                        audioPlayer.resumeNormalSpeed()
+                                        isHoldingFF = false
+                                    } else {
+                                        // Only skip if we didn't hold
+                                        audioPlayer.skip(seconds: 10)
+                                    }
+                                }
+                            )
+                    )
+                                        
                     // Previous
                     Button {
                         audioPlayer.previous()
@@ -384,46 +421,16 @@ struct NowPlayingView: View {
                     }
                     
 
-                    // Fast Forward (same pattern)
-                    Button {
-                        if !isHoldingFF {
-                            audioPlayer.skip(seconds: 10)
-                        }
-                    } label: {
-                        Image("forward")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 32, height: 32)  // Slightly smaller than SF Symbol size 32
-                            .foregroundColor(.primary)
-                    }
-                    .simultaneousGesture(
-                        LongPressGesture(minimumDuration: 0.3)
-                            .onChanged { _ in
-                                isHoldingFF = true
-                                audioPlayer.startFastForward()
-                            }
-                    )
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 0)
-                            .onEnded { _ in
-                                if isHoldingFF {
-                                    audioPlayer.resumeNormalSpeed()
-                                    isHoldingFF = false
-                                }
-                            }
-                    )
-                }
-                .padding(.horizontal, 16) // Add horizontal padding
-                .padding(.bottom, 20)
+                    
                 
-                // Volume control
+                // Volume control - use system volume
                 HStack(spacing: 12) {
                     Image(systemName: "speaker.fill")
                         .foregroundColor(.secondary)
                         .font(.caption)
                     
-                    Slider(value: $audioPlayer.volume, in: 0...1)
-                        .accentColor(.white)
+                    SystemVolumeView()
+                        .frame(height: 20)
                     
                     Image(systemName: "speaker.wave.3.fill")
                         .foregroundColor(.secondary)

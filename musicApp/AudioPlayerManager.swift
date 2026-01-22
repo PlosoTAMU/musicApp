@@ -8,11 +8,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var currentIndex: Int = 0
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
-    @Published var volume: Double = 0.5 {
-        didSet {
-            avPlayer?.volume = Float(volume)
-        }
-    }
     
     private var avPlayer: AVPlayer?
     private var playerObserver: Any?
@@ -64,7 +59,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             let playerItem = AVPlayerItem(url: trackURL)
             avPlayer = AVPlayer(playerItem: playerItem)
-            avPlayer?.volume = Float(volume)
             avPlayer?.play()
             
             isPlaying = true
