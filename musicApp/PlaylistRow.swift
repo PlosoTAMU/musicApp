@@ -64,7 +64,16 @@ struct PlaylistRow: View {
                     ForEach(playlist.tracks) { track in
                         HStack {
                             Button {
-                                audioPlayer.play(track)
+                                // Toggle play/pause if already playing this track, otherwise play it
+                                if audioPlayer.currentTrack?.id == track.id {
+                                    if audioPlayer.isPlaying {
+                                        audioPlayer.pause()
+                                    } else {
+                                        audioPlayer.resume()
+                                    }
+                                } else {
+                                    audioPlayer.play(track)
+                                }
                             } label: {
                                 HStack {
                                     Image(systemName: "music.note")

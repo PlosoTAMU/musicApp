@@ -8,6 +8,8 @@ struct ContentView: View {
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
+    @State private var isHoldingRewind = false
+    @State private var isHoldingFF = false
     
     var body: some View {
         NavigationView {
@@ -304,23 +306,30 @@ struct NowPlayingView: View {
                 // Playback controls - reduce spacing to fit
                 HStack(spacing: 20) {
                     // Rewind button (tap = -10s, hold = 2x backward)
+                    // Rewind
                     Button {
-                        audioPlayer.skip(seconds: -10)
+                        if !isHoldingRewind {
+                            audioPlayer.skip(seconds: -10)
+                        }
                     } label: {
-                        Image(systemName: "gobackward.10")
-                            .font(.system(size: 28))
+                        Image(systemName: "rewind")
+                            .font(.system(size: 32))
                             .foregroundColor(.primary)
                     }
                     .simultaneousGesture(
                         LongPressGesture(minimumDuration: 0.3)
-                            .onEnded { _ in
+                            .onChanged { _ in
+                                isHoldingRewind = true
                                 audioPlayer.startRewind()
                             }
                     )
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 0)
                             .onEnded { _ in
-                                audioPlayer.resumeNormalSpeed()
+                                if isHoldingRewind {
+                                    audioPlayer.resumeNormalSpeed()
+                                    isHoldingRewind = false
+                                }
                             }
                     )
                     
@@ -355,24 +364,31 @@ struct NowPlayingView: View {
                             .foregroundColor(.primary)
                     }
                     
-                    // Fast Forward button (tap = +10s, hold = 2x forward)
+
+                    // Fast Forward (same pattern)
                     Button {
-                        audioPlayer.skip(seconds: 10)
+                        if !isHoldingFF {
+                            audioPlayer.skip(seconds: 10)
+                        }
                     } label: {
-                        Image(systemName: "goforward.10")
-                            .font(.system(size: 28))
+                        Image(systemName: "forward")
+                            .font(.system(size: 32))
                             .foregroundColor(.primary)
                     }
                     .simultaneousGesture(
                         LongPressGesture(minimumDuration: 0.3)
-                            .onEnded { _ in
+                            .onChanged { _ in
+                                isHoldingFF = true
                                 audioPlayer.startFastForward()
                             }
                     )
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 0)
                             .onEnded { _ in
-                                audioPlayer.resumeNormalSpeed()
+                                if isHoldingFF {
+                                    audioPlayer.resumeNormalSpeed()
+                                    isHoldingFF = false
+                                }
                             }
                     )
                 }
