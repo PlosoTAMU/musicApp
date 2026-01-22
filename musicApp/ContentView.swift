@@ -167,7 +167,18 @@ struct MiniPlayerBar: View {
     }
 }
 
-// MARK: - Full Now Playing View (iOS Music style)
+// MARK: - System Volume View Helper
+struct SystemVolumeView: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let volumeView = MPVolumeView(frame: .zero)
+        volumeView.showsRouteButton = false
+        return volumeView
+    }
+    
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+}
+
+// MARK: - Full Now Playing View
 struct NowPlayingView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var isPresented: Bool
@@ -177,20 +188,9 @@ struct NowPlayingView: View {
     @State private var showPlaylistPicker = false
     @State private var isHoldingRewind = false
     @State private var isHoldingFF = false
-
-    struct SystemVolumeView: UIViewRepresentable {
-        func makeUIView(context: Context) -> MPVolumeView {
-            let volumeView = MPVolumeView(frame: .zero)
-            volumeView.showsRouteButton = false  // Hide AirPlay button
-            return volumeView
-        }
-        
-        func updateUIView(_ uiView: MPVolumeView, context: Context) {}
-    }
     
     var body: some View {
         ZStack {
-            // Dynamic background gradient based on thumbnail
             LinearGradient(
                 colors: dominantColors,
                 startPoint: .topLeading,
@@ -229,6 +229,7 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
+                // Album artwork - tappable
                 Button {
                     if audioPlayer.isPlaying {
                         audioPlayer.pause()
@@ -270,7 +271,7 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Track info
+                // Track info - tappable
                 Button {
                     if audioPlayer.isPlaying {
                         audioPlayer.pause()
@@ -330,65 +331,14 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Playback controls with 2x speed on hold
-                // Playback controls - reduce spacing to fit
+                // Playback controls
                 HStack(spacing: 20) {
-                    // Rewind button - fixed gesture order
-                    Button {} label: {
-                        Image("rewind")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 24, height: 24)
-                            .foregroundColor(.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .gesture(
-                        LongPressGesture(minimumDuration: 0.3)
-                            .onEnded { _ in
-                                isHoldingRewind = true
-                                audioPlayer.startRewind()
-                            }
-                            .simultaneously(with: DragGesture(minimumDistance: 0)
-                                .onEnded { _ in
-                                    if isHoldingRewind {
-                                        audioPlayer.resumeNormalSpeed()
-                                        isHoldingRewind = false
-                                    } else {
-                                        // Only skip if we didn't hold
-                                        audioPlayer.skip(seconds: -10)
-                                    }
-                                }
-                            )
+                    // Rewind
+                    RewindButton(
+                        audioPlayer: audioPlayer,
+                        isHolding: $isHoldingRewind
                     )
-
-                    // Fast Forward button - fixed gesture order
-                    Button {} label: {
-                        Image("forward")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 24, height: 24)
-                            .foregroundColor(.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .gesture(
-                        LongPressGesture(minimumDuration: 0.3)
-                            .onEnded { _ in
-                                isHoldingFF = true
-                                audioPlayer.startFastForward()
-                            }
-                            .simultaneously(with: DragGesture(minimumDistance: 0)
-                                .onEnded { _ in
-                                    if isHoldingFF {
-                                        audioPlayer.resumeNormalSpeed()
-                                        isHoldingFF = false
-                                    } else {
-                                        // Only skip if we didn't hold
-                                        audioPlayer.skip(seconds: 10)
-                                    }
-                                }
-                            )
-                    )
-                                        
+                    
                     // Previous
                     Button {
                         audioPlayer.previous()
@@ -420,10 +370,16 @@ struct NowPlayingView: View {
                             .foregroundColor(.primary)
                     }
                     
-
-                    
+                    // Fast Forward
+                    FastForwardButton(
+                        audioPlayer: audioPlayer,
+                        isHolding: $isHoldingFF
+                    )
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 20)
                 
-                // Volume control - use system volume
+                // Volume control
                 HStack(spacing: 12) {
                     Image(systemName: "speaker.fill")
                         .foregroundColor(.secondary)
@@ -495,5 +451,166 @@ struct NowPlayingView: View {
                 ]
             }
         }
+    }
+}
+
+// MARK: - Mini Player Bar
+struct MiniPlayerBar: View {
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    @Binding var showNowPlaying: Bool
+    
+    var body: some View {
+        Button {
+            showNowPlaying = true
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
+                        Image(uiImage: thumbnailPath)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 48, height: 48)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 48, height: 48)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .foregroundColor(.gray)
+                            )
+                    }
+                }
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                        .foregroundColor(.primary)
+                    
+                    Text(audioPlayer.currentTrack?.folderName ?? "")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                Button {
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
+                    } else {
+                        audioPlayer.resume()
+                    }
+                } label: {
+                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title2)
+                        .foregroundColor(.primary)
+                }
+                .buttonStyle(.plain)
+                
+                Button {
+                    audioPlayer.next()
+                } label: {
+                    Image(systemName: "forward.fill")
+                        .font(.title3)
+                        .foregroundColor(.primary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .background(.ultraThinMaterial)
+        .overlay(
+            Rectangle()
+                .fill(Color.gray.opacity(0.3))
+                .frame(height: 0.5),
+            alignment: .top
+        )
+    }
+    
+    private func getThumbnailImage(for track: Track?) -> UIImage? {
+        guard let track = track,
+              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
+            return nil
+        }
+        return image
+    }
+}
+
+// MARK: - System Volume View
+struct SystemVolumeView: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let volumeView = MPVolumeView(frame: .zero)
+        volumeView.showsRouteButton = false
+        return volumeView
+    }
+    
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+}
+
+// MARK: - Rewind Button Component
+struct RewindButton: View {
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    @Binding var isHolding: Bool
+    
+    var body: some View {
+        Image("rewind")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 24, height: 24)
+            .foregroundColor(.primary)
+            .gesture(
+                LongPressGesture(minimumDuration: 0.3)
+                    .onEnded { _ in
+                        isHolding = true
+                        audioPlayer.startRewind()
+                    }
+                    .simultaneously(with: DragGesture(minimumDistance: 0)
+                        .onEnded { _ in
+                            if isHolding {
+                                audioPlayer.resumeNormalSpeed()
+                                isHolding = false
+                            } else {
+                                audioPlayer.skip(seconds: -10)
+                            }
+                        }
+                    )
+            )
+    }
+}
+
+// MARK: - Fast Forward Button Component
+struct FastForwardButton: View {
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    @Binding var isHolding: Bool
+    
+    var body: some View {
+        Image("forward")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 24, height: 24)
+            .foregroundColor(.primary)
+            .gesture(
+                LongPressGesture(minimumDuration: 0.3)
+                    .onEnded { _ in
+                        isHolding = true
+                        audioPlayer.startFastForward()
+                    }
+                    .simultaneously(with: DragGesture(minimumDistance: 0)
+                        .onEnded { _ in
+                            if isHolding {
+                                audioPlayer.resumeNormalSpeed()
+                                isHolding = false
+                            } else {
+                                audioPlayer.skip(seconds: 10)
+                            }
+                        }
+                    )
+            )
     }
 }
