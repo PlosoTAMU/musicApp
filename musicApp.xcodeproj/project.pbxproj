@@ -85,9 +85,22 @@
 		BFFDD60B2F1C478D0032409D /* musicAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = musicAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		BF5A35C32F218F4E0044F80A /* Exceptions for "musicApp" folder in "musicApp" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = BFFDD5EE2F1C47850032409D /* musicApp */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		BFFDD5F12F1C47850032409D /* musicApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BF5A35C32F218F4E0044F80A /* Exceptions for "musicApp" folder in "musicApp" target */,
+			);
 			path = musicApp;
 			sourceTree = "<group>";
 		};
@@ -502,6 +515,7 @@
 				DEVELOPMENT_TEAM = 74JNGCVVMG;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = musicApp/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -535,6 +549,7 @@
 				DEVELOPMENT_TEAM = 74JNGCVVMG;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = musicApp/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
