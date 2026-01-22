@@ -312,7 +312,7 @@ struct NowPlayingView: View {
                             audioPlayer.skip(seconds: -10)
                         }
                     } label: {
-                        Image(systemName: "rewind")
+                        Image("rewind")
                             .font(.system(size: 32))
                             .foregroundColor(.primary)
                     }
@@ -371,7 +371,7 @@ struct NowPlayingView: View {
                             audioPlayer.skip(seconds: 10)
                         }
                     } label: {
-                        Image(systemName: "forward")
+                        Image("forward")
                             .font(.system(size: 32))
                             .foregroundColor(.primary)
                     }
