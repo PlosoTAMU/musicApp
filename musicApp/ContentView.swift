@@ -8,8 +8,6 @@ struct ContentView: View {
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
-    @State private var isHoldingRewind = false
-    @State private var isHoldingFF = false
     
     var body: some View {
         NavigationView {
@@ -176,6 +174,8 @@ struct NowPlayingView: View {
     @State private var seekValue: Double = 0
     @State private var dominantColors: [Color] = [Color.blue.opacity(0.3), Color.purple.opacity(0.3)]
     @State private var showPlaylistPicker = false
+    @State private var isHoldingRewind = false
+    @State private var isHoldingFF = false
     
     var body: some View {
         ZStack {
