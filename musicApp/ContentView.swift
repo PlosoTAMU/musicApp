@@ -313,7 +313,9 @@ struct NowPlayingView: View {
                         }
                     } label: {
                         Image("rewind")
-                            .font(.system(size: 32))
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 28, height: 28)  // Slightly smaller than SF Symbol size 32
                             .foregroundColor(.primary)
                     }
                     .simultaneousGesture(
@@ -372,7 +374,9 @@ struct NowPlayingView: View {
                         }
                     } label: {
                         Image("forward")
-                            .font(.system(size: 32))
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 28, height: 28)  // Slightly smaller than SF Symbol size 32
                             .foregroundColor(.primary)
                     }
                     .simultaneousGesture(
