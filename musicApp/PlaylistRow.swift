@@ -1,6 +1,4 @@
 import SwiftUI
-// Add this as a property at the top
-@EnvironmentObject var playlistManager: PlaylistManager
 
 struct PlaylistRow: View {
     let playlist: Playlist
