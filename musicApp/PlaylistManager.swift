@@ -102,6 +102,22 @@ class PlaylistManager: ObservableObject {
             print("❌ [PlaylistManager] Failed to load playlists: \(error)")
         }
     }
+    func deleteTrack(_ track: Track, from playlist: Playlist) {
+        // Remove from all tracks
+        allTracks.removeAll { $0.id == track.id }
+        
+        // Remove from specific playlist
+        if let playlistIndex = playlists.firstIndex(where: { $0.id == playlist.id }) {
+            playlists[playlistIndex].tracks.removeAll { $0.id == track.id }
+            
+            // If playlist is now empty and not YouTube Downloads, remove it
+            if playlists[playlistIndex].tracks.isEmpty && playlists[playlistIndex].name != "YouTube Downloads" {
+                playlists.remove(at: playlistIndex)
+            }
+        }
+        
+        savePlaylists()
+    }
 }
 
 // Helper struct for encoding/decoding

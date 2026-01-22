@@ -1,8 +1,11 @@
 import SwiftUI
+// Add this as a property at the top
+@EnvironmentObject var playlistManager: PlaylistManager
 
 struct PlaylistRow: View {
     let playlist: Playlist
     @ObservedObject var audioPlayer: AudioPlayerManager
+    @ObservedObject var playlistManager: PlaylistManager
     @State private var showTracks = false
     
     var body: some View {
@@ -62,17 +65,35 @@ struct PlaylistRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(playlist.tracks) { track in
                         HStack {
-                            Image(systemName: "music.note")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                            Text(track.name)
-                                .font(.caption)
-                            Spacer()
-                            if audioPlayer.currentTrack?.id == track.id {
-                                Image(systemName: audioPlayer.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
-                                    .font(.caption)
-                                    .foregroundColor(.blue)
+                            Button {
+                                audioPlayer.play(track)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "music.note")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                    Text(track.name)
+                                        .font(.caption)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    if audioPlayer.currentTrack?.id == track.id {
+                                        Image(systemName: audioPlayer.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
+                                            .font(.caption)
+                                            .foregroundColor(.blue)
+                                    }
+                                }
                             }
+                            .buttonStyle(.plain)
+                            
+                            // Delete button
+                            Button {
+                                deleteTrack(track)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(.plain)
                         }
                         .padding(.vertical, 4)
                         .padding(.leading, 8)
@@ -82,5 +103,12 @@ struct PlaylistRow: View {
             }
         }
         .padding(.vertical, 8)
+    }
+    
+    private func deleteTrack(_ track: Track) {
+        if track.folderName == "YouTube Downloads" {
+            try? FileManager.default.removeItem(at: track.url)
+        }
+        playlistManager.deleteTrack(track, from: playlist)
     }
 }

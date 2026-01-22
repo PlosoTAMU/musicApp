@@ -43,7 +43,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func play(_ track: Track) {
-        // Stop previous track
         if isPlaying {
             avPlayer?.pause()
             isPlaying = false
@@ -55,9 +54,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
         do {
             try AVAudioSession.sharedInstance().setActive(true)
             
-            _ = track.url.startAccessingSecurityScopedResource()
+            // Use resolved URL
+            guard let trackURL = track.resolvedURL() else {
+                print("❌ Could not resolve track URL")
+                return
+            }
             
-            let playerItem = AVPlayerItem(url: track.url)
+            _ = trackURL.startAccessingSecurityScopedResource()
+            
+            let playerItem = AVPlayerItem(url: trackURL)
             avPlayer = AVPlayer(playerItem: playerItem)
             avPlayer?.volume = Float(volume)
             avPlayer?.play()
@@ -69,14 +74,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 currentIndex = index
             }
             
-            // Get duration
             Task { @MainActor in
                 if let duration = try? await playerItem.asset.load(.duration) {
                     self.duration = CMTimeGetSeconds(duration)
                 }
             }
             
-            // Observe when track finishes
             setupPlayerObserver()
             startTimeUpdates()
             

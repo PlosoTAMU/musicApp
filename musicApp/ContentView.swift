@@ -16,13 +16,15 @@ struct ContentView: View {
                     List {
                         PlaylistRow(
                             playlist: playlistManager.everythingPlaylist,
-                            audioPlayer: audioPlayer
+                            audioPlayer: audioPlayer,
+                            playlistManager: playlistManager
                         )
                         
                         ForEach(playlistManager.playlists) { playlist in
                             PlaylistRow(
                                 playlist: playlist,
-                                audioPlayer: audioPlayer
+                                audioPlayer: audioPlayer,
+                                playlistManager: playlistManager
                             )
                         }
                         .onDelete(perform: deletePlaylists)
@@ -299,13 +301,14 @@ struct NowPlayingView: View {
                 Spacer()
                 
                 // Playback controls with 2x speed on hold
-                HStack(spacing: 30) {
+                // Playback controls - reduce spacing to fit
+                HStack(spacing: 20) {
                     // Rewind button (tap = -10s, hold = 2x backward)
                     Button {
                         audioPlayer.skip(seconds: -10)
                     } label: {
                         Image(systemName: "gobackward.10")
-                            .font(.system(size: 32))
+                            .font(.system(size: 28))
                             .foregroundColor(.primary)
                     }
                     .simultaneousGesture(
@@ -314,7 +317,7 @@ struct NowPlayingView: View {
                                 audioPlayer.startRewind()
                             }
                     )
-                    .highPriorityGesture(
+                    .simultaneousGesture(
                         DragGesture(minimumDistance: 0)
                             .onEnded { _ in
                                 audioPlayer.resumeNormalSpeed()
@@ -326,7 +329,7 @@ struct NowPlayingView: View {
                         audioPlayer.previous()
                     } label: {
                         Image(systemName: "backward.fill")
-                            .font(.system(size: 36))
+                            .font(.system(size: 32))
                             .foregroundColor(.primary)
                     }
                     
@@ -339,7 +342,7 @@ struct NowPlayingView: View {
                         }
                     } label: {
                         Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 72))
+                            .font(.system(size: 64))
                             .foregroundColor(.primary)
                     }
                     
@@ -348,7 +351,7 @@ struct NowPlayingView: View {
                         audioPlayer.next()
                     } label: {
                         Image(systemName: "forward.fill")
-                            .font(.system(size: 36))
+                            .font(.system(size: 32))
                             .foregroundColor(.primary)
                     }
                     
@@ -357,7 +360,7 @@ struct NowPlayingView: View {
                         audioPlayer.skip(seconds: 10)
                     } label: {
                         Image(systemName: "goforward.10")
-                            .font(.system(size: 32))
+                            .font(.system(size: 28))
                             .foregroundColor(.primary)
                     }
                     .simultaneousGesture(
@@ -366,13 +369,14 @@ struct NowPlayingView: View {
                                 audioPlayer.startFastForward()
                             }
                     )
-                    .highPriorityGesture(
+                    .simultaneousGesture(
                         DragGesture(minimumDistance: 0)
                             .onEnded { _ in
                                 audioPlayer.resumeNormalSpeed()
                             }
                     )
                 }
+                .padding(.horizontal, 16) // Add horizontal padding
                 .padding(.bottom, 20)
                 
                 // Volume control
