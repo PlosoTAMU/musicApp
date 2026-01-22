@@ -366,6 +366,8 @@ class EmbeddedPython: ObservableObject {
         if let thumb = thumbnailURL {
             print("🖼️ [runYtdlp] Thumbnail URL: \(thumb)")
         }
+        print("✅ [runYtdlp] Audio saved to: \(audioURL.path)")
+        print("✅ [runYtdlp] File exists: \(FileManager.default.fileExists(atPath: audioURL.path))")
         return (audioURL, title, thumbnailURL)
     }
     

@@ -98,6 +98,13 @@ class PlaylistManager: ObservableObject {
             self.allTracks = playlistsData.allTracks
             
             print("✅ [PlaylistManager] Loaded \(playlists.count) playlists with \(allTracks.count) tracks")
+            
+            // Debug: Check if files actually exist
+            for track in allTracks {
+                let exists = FileManager.default.fileExists(atPath: track.url.path)
+                print("📂 [PlaylistManager] Track '\(track.name)': exists=\(exists), path=\(track.url.path)")
+            }
+            
         } catch {
             print("❌ [PlaylistManager] Failed to load playlists: \(error)")
         }

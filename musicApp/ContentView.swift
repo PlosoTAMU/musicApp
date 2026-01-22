@@ -218,52 +218,69 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Album artwork
-                ZStack {
-                    if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                        Image(uiImage: thumbnailImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 320, height: 320)
-                            .clipShape(RoundedRectangle(cornerRadius: 20))
-                            .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
-                            .onAppear {
-                                extractDominantColors(from: thumbnailImage)
-                            }
+                Button {
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
                     } else {
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
+                        audioPlayer.resume()
+                    }
+                } label: {
+                    ZStack {
+                        if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
+                            Image(uiImage: thumbnailImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 320, height: 320)
+                                .clipShape(RoundedRectangle(cornerRadius: 20))
+                                .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
+                                .onAppear {
+                                    extractDominantColors(from: thumbnailImage)
+                                }
+                        } else {
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
                                 )
-                            )
-                            .frame(width: 320, height: 320)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .font(.system(size: 80))
-                                    .foregroundColor(.white.opacity(0.5))
-                            )
-                            .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+                                .frame(width: 320, height: 320)
+                                .overlay(
+                                    Image(systemName: "music.note")
+                                        .font(.system(size: 80))
+                                        .foregroundColor(.white.opacity(0.5))
+                                )
+                                .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+                        }
                     }
                 }
+                .buttonStyle(.plain)
                 
                 Spacer()
                 
                 // Track info
-                VStack(spacing: 8) {
-                    Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .lineLimit(1)
-                    
-                    Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                Button {
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
+                    } else {
+                        audioPlayer.resume()
+                    }
+                } label: {
+                    VStack(spacing: 8) {
+                        Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                            .lineLimit(1)
+                        
+                        Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal)
                 }
-                .padding(.horizontal)
+                .buttonStyle(.plain)
                 
                 Spacer()
                 
@@ -315,7 +332,7 @@ struct NowPlayingView: View {
                         Image("rewind")
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 28, height: 28)  // Slightly smaller than SF Symbol size 32
+                            .frame(width: 32, height: 32)  // Slightly smaller than SF Symbol size 32
                             .foregroundColor(.primary)
                     }
                     .simultaneousGesture(
@@ -376,7 +393,7 @@ struct NowPlayingView: View {
                         Image("forward")
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 28, height: 28)  // Slightly smaller than SF Symbol size 32
+                            .frame(width: 32, height: 32)  // Slightly smaller than SF Symbol size 32
                             .foregroundColor(.primary)
                     }
                     .simultaneousGesture(
