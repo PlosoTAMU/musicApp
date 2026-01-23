@@ -152,7 +152,7 @@ struct SystemVolumeView: UIViewRepresentable {
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
 
-// MARK: - Rewind Button Component
+// MARK: - Rewind Button
 struct RewindButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var isHolding: Bool
@@ -183,7 +183,7 @@ struct RewindButton: View {
     }
 }
 
-// MARK: - Fast Forward Button Component
+// MARK: - Fast Forward Button
 struct FastForwardButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var isHolding: Bool
@@ -476,166 +476,5 @@ struct NowPlayingView: View {
                 ]
             }
         }
-    }
-}
-
-// MARK: - Mini Player Bar (keep from old file)
-struct MiniPlayerBar: View {
-    @ObservedObject var audioPlayer: AudioPlayerManager
-    @Binding var showNowPlaying: Bool
-    
-    var body: some View {
-        Button {
-            showNowPlaying = true
-        } label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
-                        Image(uiImage: thumbnailPath)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 48, height: 48)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .foregroundColor(.gray)
-                            )
-                    }
-                }
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                        .foregroundColor(.primary)
-                    
-                    Text(audioPlayer.currentTrack?.folderName ?? "")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                
-                Spacer()
-                
-                Button {
-                    if audioPlayer.isPlaying {
-                        audioPlayer.pause()
-                    } else {
-                        audioPlayer.resume()
-                    }
-                } label: {
-                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                        .foregroundColor(.primary)
-                }
-                .buttonStyle(.plain)
-                
-                Button {
-                    audioPlayer.next()
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.title3)
-                        .foregroundColor(.primary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
-        .buttonStyle(.plain)
-        .background(.ultraThinMaterial)
-        .overlay(
-            Rectangle()
-                .fill(Color.gray.opacity(0.3))
-                .frame(height: 0.5),
-            alignment: .top
-        )
-    }
-    
-    private func getThumbnailImage(for track: Track?) -> UIImage? {
-        guard let track = track,
-              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
-              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
-            return nil
-        }
-        return image
-    }
-}
-
-// MARK: - System Volume View
-struct SystemVolumeView: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView {
-        let volumeView = MPVolumeView(frame: .zero)
-        volumeView.showsRouteButton = false
-        return volumeView
-    }
-    
-    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
-}
-
-// MARK: - Rewind Button
-struct RewindButton: View {
-    @ObservedObject var audioPlayer: AudioPlayerManager
-    @Binding var isHolding: Bool
-    
-    var body: some View {
-        Image("rewind")
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: 24, height: 24)
-            .foregroundColor(.primary)
-            .gesture(
-                LongPressGesture(minimumDuration: 0.3)
-                    .onEnded { _ in
-                        isHolding = true
-                        audioPlayer.startRewind()
-                    }
-                    .simultaneously(with: DragGesture(minimumDistance: 0)
-                        .onEnded { _ in
-                            if isHolding {
-                                audioPlayer.resumeNormalSpeed()
-                                isHolding = false
-                            } else {
-                                audioPlayer.skip(seconds: -10)
-                            }
-                        }
-                    )
-            )
-    }
-}
-
-// MARK: - Fast Forward Button
-struct FastForwardButton: View {
-    @ObservedObject var audioPlayer: AudioPlayerManager
-    @Binding var isHolding: Bool
-    
-    var body: some View {
-        Image("forward")
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: 24, height: 24)
-            .foregroundColor(.primary)
-            .gesture(
-                LongPressGesture(minimumDuration: 0.3)
-                    .onEnded { _ in
-                        isHolding = true
-                        audioPlayer.startFastForward()
-                    }
-                    .simultaneously(with: DragGesture(minimumDistance: 0)
-                        .onEnded { _ in
-                            if isHolding {
-                                audioPlayer.resumeNormalSpeed()
-                                isHolding = false
-                            } else {
-                                audioPlayer.skip(seconds: 10)
-                            }
-                        }
-                    )
-            )
     }
 }
