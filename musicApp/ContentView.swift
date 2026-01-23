@@ -12,37 +12,31 @@ struct ContentView: View {
     @State private var showNowPlaying = false
     
     var body: some View {
-        ZStack(alignment: .bottom) {
-            TabView {
-                DownloadsView(
-                    downloadManager: downloadManager,
-                    playlistManager: playlistManager,
-                    audioPlayer: audioPlayer,
-                    showFolderPicker: $showFolderPicker,
-                    showYouTubeDownload: $showYouTubeDownload
-                )
-                .tabItem {
-                    Label("Downloads", systemImage: "arrow.down.circle")
-                }
-                
-                PlaylistsView(
-                    playlistManager: playlistManager,
-                    downloadManager: downloadManager,
-                    audioPlayer: audioPlayer
-                )
-                .tabItem {
-                    Label("Playlists", systemImage: "music.note.list")
-                }
+        TabView {
+            DownloadsView(
+                downloadManager: downloadManager,
+                playlistManager: playlistManager,
+                audioPlayer: audioPlayer,
+                showFolderPicker: $showFolderPicker,
+                showYouTubeDownload: $showYouTubeDownload
+            )
+            .tabItem {
+                Label("Downloads", systemImage: "arrow.down.circle")
             }
             
-            // Mini player overlays the tab bar
+            PlaylistsView(
+                playlistManager: playlistManager,
+                downloadManager: downloadManager,
+                audioPlayer: audioPlayer
+            )
+            .tabItem {
+                Label("Playlists", systemImage: "music.note.list")
+            }
+        }
+        .overlay(alignment: .bottom) {
             if audioPlayer.currentTrack != nil {
-                VStack {
-                    Spacer()
-                    MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
-                }
-                .ignoresSafeArea(edges: .bottom)  // Extend below safe area to cover tab bar
-                .transition(.move(edge: .bottom))
+                MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
+                    .transition(.move(edge: .bottom))
             }
         }
         .fullScreenCover(isPresented: $showNowPlaying) {
@@ -148,9 +142,9 @@ struct MiniPlayerBar: View {
 // MARK: - System Volume View
 struct SystemVolumeView: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
-        let volumeView = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 200, height: 20))
+        let volumeView = MPVolumeView(frame: .zero)
         volumeView.showsRouteButton = false
-        volumeView.setVolumeThumbImage(UIImage(), for: .normal)  // Use default thumb
+        volumeView.tintColor = .white
         return volumeView
     }
     
@@ -409,18 +403,21 @@ struct NowPlayingView: View {
                 .padding(.bottom, 20)
                 
                 // Volume control
-                HStack(spacing: 12) {
-                    Image(systemName: "speaker.fill")
-                        .foregroundColor(.secondary)
-                        .font(.system(size: 12))
+                VStack(spacing: 8) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "speaker.fill")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                        
+                        Spacer()
+                        
+                        Image(systemName: "speaker.wave.3.fill")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                    }
                     
                     SystemVolumeView()
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 20)
-                    
-                    Image(systemName: "speaker.wave.3.fill")
-                        .foregroundColor(.secondary)
-                        .font(.system(size: 12))
+                        .frame(height: 2)
                 }
                 .padding(.horizontal, 40)
                 .padding(.bottom, 40)

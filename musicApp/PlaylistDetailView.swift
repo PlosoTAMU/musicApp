@@ -5,7 +5,6 @@ struct PlaylistDetailView: View {
     @ObservedObject var playlistManager: PlaylistManager
     @ObservedObject var downloadManager: DownloadManager
     @ObservedObject var audioPlayer: AudioPlayerManager
-    @Environment(\.editMode) var editMode
     
     var tracks: [Download] {
         playlistManager.getTracks(for: playlist, from: downloadManager)
@@ -13,7 +12,7 @@ struct PlaylistDetailView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Play/Shuffle buttons at top
+            // Play/Shuffle buttons
             HStack(spacing: 16) {
                 Button {
                     let tracks = self.tracks.map { download in
@@ -52,14 +51,20 @@ struct PlaylistDetailView: View {
                 }
             }
             .padding()
+            
+            // Song list with swipe actions and reordering
             List {
                 ForEach(tracks) { download in
                     HStack(spacing: 12) {
+                        // Reorder handle (always visible)
+                        Image(systemName: "line.3.horizontal")
+                            .foregroundColor(.gray)
+                            .font(.title3)
                         
                         // Thumbnail
                         ZStack {
                             if let thumbPath = download.thumbnailPath,
-                            let image = UIImage(contentsOfFile: thumbPath) {
+                               let image = UIImage(contentsOfFile: thumbPath) {
                                 Image(uiImage: image)
                                     .resizable()
                                     .aspectRatio(contentMode: .fill)
@@ -76,14 +81,12 @@ struct PlaylistDetailView: View {
                             }
                         }
                         
-                        // Name
                         Text(download.name)
                             .font(.body)
                             .lineLimit(1)
                         
                         Spacer()
                         
-                        // Playing indicator
                         if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
                             Image(systemName: "speaker.wave.2.fill")
                                 .foregroundColor(.blue)
@@ -95,23 +98,19 @@ struct PlaylistDetailView: View {
                         audioPlayer.play(track)
                     }
                 }
+                .onMove { source, destination in
+                    playlistManager.moveTrack(in: playlist.id, from: source, to: destination)
+                }
                 .onDelete { offsets in
                     for index in offsets {
                         let download = tracks[index]
                         playlistManager.removeFromPlaylist(playlist.id, downloadID: download.id)
                     }
                 }
-                .onMove { source, destination in
-                    playlistManager.moveTrack(in: playlist.id, from: source, to: destination)
-                }
             }
-            .navigationTitle(playlist.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-            }
+            .environment(\.editMode, .constant(.active))  // Always in edit mode for reordering
         }
+        .navigationTitle(playlist.name)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

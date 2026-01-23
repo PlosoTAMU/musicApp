@@ -25,14 +25,23 @@ struct YouTubeDownloadView: View {
                         ProgressView("Downloading...")
                         
                         // Console output
+                        // In YouTubeDownloadView
                         ScrollView {
-                            Text(consoleOutput)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(.green)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(8)
+                            ScrollViewReader { proxy in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(consoleOutput)
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundColor(.green)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .id("bottom")
+                                }
+                                .onChange(of: consoleOutput) { _ in
+                                    proxy.scrollTo("bottom", anchor: .bottom)
+                                }
+                            }
+                            .padding(8)
                         }
-                        .frame(height: 200)
+                        .frame(height: 250)
                         .background(Color.black)
                         .cornerRadius(8)
                         .padding(.horizontal)

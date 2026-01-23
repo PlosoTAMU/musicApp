@@ -7,6 +7,15 @@ struct DownloadsView: View {
     @Binding var showFolderPicker: Bool
     @Binding var showYouTubeDownload: Bool
     @State private var showAddToPlaylist: Download?
+
+
+    private func downloadFromSpotify() {
+        // Get clipboard content
+        if let clipboardString = UIPasteboard.general.string {
+            print("📋 Clipboard: \(clipboardString)")
+            // TODO: Add Spotify download logic here
+        }
+    }
     
     var body: some View {
         NavigationView {
@@ -27,8 +36,19 @@ struct DownloadsView: View {
             .navigationTitle("Downloads")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        showYouTubeDownload = true
+                    Menu {
+                        Button {
+                            showYouTubeDownload = true
+                        } label: {
+                            Label("YouTube", systemImage: "play.rectangle")
+                        }
+                        
+                        Button {
+                            // TODO: Spotify functionality
+                            downloadFromSpotify()
+                        } label: {
+                            Label("Spotify", systemImage: "s.circle.fill")
+                        }
                     } label: {
                         Image(systemName: "link.badge.plus")
                     }
@@ -53,6 +73,8 @@ struct DownloadsView: View {
     }
 }
 
+
+
 struct DownloadRow: View {
     let download: Download
     @ObservedObject var audioPlayer: AudioPlayerManager
@@ -61,7 +83,7 @@ struct DownloadRow: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Play button / thumbnail
+            // Thumbnail + Title as one button
             Button {
                 if audioPlayer.currentTrack?.id == download.id {
                     if audioPlayer.isPlaying {
@@ -89,13 +111,14 @@ struct DownloadRow: View {
                                 .frame(width: 48, height: 48)
                                 .overlay(
                                     Image(systemName: "music.note")
+                                        .font(.caption)
                                         .foregroundColor(.gray)
                                 )
                         }
                         
                         if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.black.opacity(0.3))
+                                .fill(Color.black.opacity(0.4))
                             Image(systemName: "pause.fill")
                                 .foregroundColor(.white)
                                 .font(.system(size: 14))
@@ -109,9 +132,9 @@ struct DownloadRow: View {
                 }
             }
             .buttonStyle(.plain)
-
+            
             Spacer()
-
+            
             Button {
                 onAddToPlaylist()
             } label: {
@@ -130,6 +153,5 @@ struct DownloadRow: View {
             }
             .buttonStyle(.plain)
         }
-        .contentShape(Rectangle())
     }
 }
