@@ -12,14 +12,49 @@ struct PlaylistDetailView: View {
     }
     
     var body: some View {
+    VStack(spacing: 0) {
+        // Play/Shuffle buttons at top
+        HStack(spacing: 16) {
+            Button {
+                let tracks = self.tracks.map { download in
+                    Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+                }
+                audioPlayer.loadPlaylist(tracks, shuffle: false)
+            } label: {
+                HStack {
+                    Image(systemName: "play.fill")
+                    Text("Play All")
+                }
+                .font(.subheadline)
+                .foregroundColor(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color.blue)
+                .cornerRadius(8)
+            }
+            
+            Button {
+                let tracks = self.tracks.map { download in
+                    Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+                }
+                audioPlayer.loadPlaylist(tracks, shuffle: true)
+            } label: {
+                HStack {
+                    Image(systemName: "shuffle")
+                    Text("Shuffle")
+                }
+                .font(.subheadline)
+                .foregroundColor(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color.green)
+                .cornerRadius(8)
+            }
+        }
+        .padding()
         List {
             ForEach(tracks) { download in
                 HStack(spacing: 12) {
-                    // Reorder handle (only in edit mode)
-                    if editMode?.wrappedValue == .active {
-                        Image(systemName: "line.3.horizontal")
-                            .foregroundColor(.gray)
-                    }
                     
                     // Thumbnail
                     ZStack {

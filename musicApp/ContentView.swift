@@ -34,6 +34,8 @@ struct ContentView: View {
                     Label("Playlists", systemImage: "music.note.list")
                 }
             }
+            // Add padding to TabView so mini player doesn't cover tabs
+            .padding(.bottom, audioPlayer.currentTrack != nil ? 64 : 0)
             
             // Mini player
             if audioPlayer.currentTrack != nil {
@@ -405,22 +407,34 @@ struct NowPlayingView: View {
                 .padding(.bottom, 20)
                 
                 // Volume control
-                HStack(spacing: 12) {
+                HStack(spacing: 16) {
                     Image(systemName: "speaker.fill")
                         .foregroundColor(.secondary)
-                        .font(.caption)
+                        .font(.system(size: 14))
+                        .frame(width: 20)
                     
                     SystemVolumeView()
-                        .frame(height: 20)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 30)
                     
                     Image(systemName: "speaker.wave.3.fill")
                         .foregroundColor(.secondary)
-                        .font(.caption)
+                        .font(.system(size: 14))
+                        .frame(width: 20)
                 }
                 .padding(.horizontal, 32)
                 .padding(.bottom, 40)
             }
         }
+        .gesture(
+            DragGesture()
+                .onEnded { value in
+                    // If swiped down more than 100 points, dismiss
+                    if value.translation.height > 100 {
+                        isPresented = false
+                    }
+                }
+        )
         .sheet(isPresented: $showPlaylistPicker) {
             Text("Playlist picker coming soon")
                 .padding()
