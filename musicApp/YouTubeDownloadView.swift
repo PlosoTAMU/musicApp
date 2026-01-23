@@ -6,6 +6,10 @@ struct YouTubeDownloadView: View {
     @State private var isDownloading = false
     @State private var errorMessage: String?
     @State private var consoleOutput: String = ""
+    @State private var showRenameAlert = false
+    @State private var downloadedFileURL: URL?
+    @State private var downloadedTitle: String = ""
+    @State private var newTitle: String = ""
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
@@ -14,18 +18,11 @@ struct YouTubeDownloadView: View {
                 Text("Download from YouTube")
                     .font(.headline)
                 
-                TextField("Paste YouTube URL", text: $youtubeURL)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
-                    .padding(.horizontal)
-                
                 if isDownloading {
                     VStack(spacing: 12) {
                         ProgressView("Downloading...")
                         
-                        // Console output
-                        // In YouTubeDownloadView
+                        // Console output with auto-scroll
                         ScrollView {
                             ScrollViewReader { proxy in
                                 VStack(alignment: .leading, spacing: 2) {
@@ -36,7 +33,9 @@ struct YouTubeDownloadView: View {
                                         .id("bottom")
                                 }
                                 .onChange(of: consoleOutput) { _ in
-                                    proxy.scrollTo("bottom", anchor: .bottom)
+                                    withAnimation {
+                                        proxy.scrollTo("bottom", anchor: .bottom)
+                                    }
                                 }
                             }
                             .padding(8)
@@ -46,6 +45,13 @@ struct YouTubeDownloadView: View {
                         .cornerRadius(8)
                         .padding(.horizontal)
                     }
+                } else {
+                    Text("Paste a YouTube or Spotify URL")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 20)
+                    
+                    Spacer()
                 }
                 
                 if let error = errorMessage {
@@ -55,21 +61,9 @@ struct YouTubeDownloadView: View {
                         .padding(.horizontal)
                 }
                 
-                Button {
-                    startDownload()
-                } label: {
-                    Text("Download Audio")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(youtubeURL.isEmpty || isDownloading ? Color.gray : Color.blue)
-                        .cornerRadius(10)
+                if !isDownloading {
+                    Spacer()
                 }
-                .disabled(youtubeURL.isEmpty || isDownloading)
-                .padding(.horizontal)
-                
-                Spacer()
             }
             .padding(.top, 20)
             .navigationTitle("YouTube Download")
@@ -79,12 +73,52 @@ struct YouTubeDownloadView: View {
                     Button("Close") {
                         dismiss()
                     }
+                    .disabled(isDownloading)
                 }
+            }
+            .onAppear {
+                // Auto-paste from clipboard and start download
+                if let clipboardString = UIPasteboard.general.string,
+                   !clipboardString.isEmpty,
+                   (clipboardString.contains("youtube.com") || 
+                    clipboardString.contains("youtu.be") || 
+                    clipboardString.contains("spotify.com")) {
+                    youtubeURL = clipboardString
+                    // Small delay to let the view appear
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        startDownload()
+                    }
+                }
+            }
+            .alert("Rename Song", isPresented: $showRenameAlert) {
+                TextField("Song Title", text: $newTitle)
+                    .autocapitalization(.words)
+                
+                Button("Cancel", role: .cancel) {
+                    finishDownload(keepOriginalName: true)
+                }
+                
+                Button("Save") {
+                    finishDownload(keepOriginalName: false)
+                }
+            } message: {
+                Text("Enter a new title for this song")
             }
         }
     }
     
     private func startDownload() {
+        // Check if already downloaded
+        if let existingDownload = downloadManager.downloads.first(where: { download in
+            // Check if this URL has already been downloaded by comparing video IDs
+            let videoID = extractVideoID(from: youtubeURL)
+            let existingVideoID = download.url.lastPathComponent.components(separatedBy: ".").first
+            return videoID == existingVideoID && videoID != nil
+        }) {
+            errorMessage = "Already downloaded: \(existingDownload.name)"
+            return
+        }
+        
         isDownloading = true
         errorMessage = nil
         consoleOutput = ""
@@ -95,10 +129,12 @@ struct YouTubeDownloadView: View {
         // Clear old log
         try? "".write(toFile: logPath, atomically: true, encoding: .utf8)
         
-        // Poll log file for updates
-        let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+        // Poll log file for updates more frequently for complete output
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             if let logContent = try? String(contentsOfFile: logPath, encoding: .utf8) {
-                consoleOutput = logContent
+                DispatchQueue.main.async {
+                    consoleOutput = logContent
+                }
             }
         }
         
@@ -108,18 +144,24 @@ struct YouTubeDownloadView: View {
                 
                 timer.invalidate()
                 
+                // Final log read to make sure we got everything
+                if let finalLog = try? String(contentsOfFile: logPath, encoding: .utf8) {
+                    await MainActor.run {
+                        consoleOutput = finalLog
+                    }
+                }
+                
                 let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                 
-                let download = Download(
-                    name: title,
-                    url: fileURL,
-                    thumbnailPath: thumbnailPath?.path
-                )
-                
                 await MainActor.run {
-                    downloadManager.addDownload(download)
+                    downloadedFileURL = fileURL
+                    downloadedTitle = title
+                    newTitle = title
                     youtubeURL = ""
                     isDownloading = false
+                    
+                    // Show rename dialog
+                    showRenameAlert = true
                 }
                 
             } catch {
@@ -130,5 +172,78 @@ struct YouTubeDownloadView: View {
                 }
             }
         }
+    }
+    
+    private func finishDownload(keepOriginalName: Bool) {
+        guard let fileURL = downloadedFileURL else { return }
+        
+        let finalTitle = keepOriginalName ? downloadedTitle : newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+        
+        // If renamed, update the metadata
+        if !keepOriginalName && finalTitle != downloadedTitle {
+            // Update the stored metadata with new title
+            updateMetadata(for: fileURL, newTitle: finalTitle)
+        }
+        
+        let download = Download(
+            name: finalTitle.isEmpty ? downloadedTitle : finalTitle,
+            url: fileURL,
+            thumbnailPath: thumbnailPath?.path
+        )
+        
+        downloadManager.addDownload(download)
+        
+        // Reset state
+        downloadedFileURL = nil
+        downloadedTitle = ""
+        newTitle = ""
+    }
+    
+    private func updateMetadata(for fileURL: URL, newTitle: String) {
+        let metadataURL = getMetadataFileURL()
+        var metadata = loadMetadata()
+        
+        let filename = fileURL.lastPathComponent
+        if var trackMetadata = metadata[filename] {
+            trackMetadata["title"] = newTitle
+            metadata[filename] = trackMetadata
+            
+            do {
+                let data = try JSONEncoder().encode(metadata)
+                try data.write(to: metadataURL)
+                print("✅ [Metadata] Updated title for: \(filename)")
+            } catch {
+                print("❌ [Metadata] Failed to update: \(error)")
+            }
+        }
+    }
+    
+    private func loadMetadata() -> [String: [String: String]] {
+        let metadataURL = getMetadataFileURL()
+        guard let data = try? Data(contentsOf: metadataURL),
+              let metadata = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
+            return [:]
+        }
+        return metadata
+    }
+    
+    private func getMetadataFileURL() -> URL {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsPath.appendingPathComponent("audio_metadata.json")
+    }
+    
+    private func extractVideoID(from urlString: String) -> String? {
+        // Extract YouTube video ID from various URL formats
+        if let url = URL(string: urlString) {
+            if url.host?.contains("youtu.be") == true {
+                return url.lastPathComponent
+            } else if url.host?.contains("youtube.com") == true {
+                if let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems {
+                    return queryItems.first(where: { $0.name == "v" })?.value
+                }
+            }
+        }
+        return nil
     }
 }

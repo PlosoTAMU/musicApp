@@ -12,28 +12,29 @@ struct ContentView: View {
     @State private var showNowPlaying = false
     
     var body: some View {
-        TabView {
-            DownloadsView(
-                downloadManager: downloadManager,
-                playlistManager: playlistManager,
-                audioPlayer: audioPlayer,
-                showFolderPicker: $showFolderPicker,
-                showYouTubeDownload: $showYouTubeDownload
-            )
-            .tabItem {
-                Label("Downloads", systemImage: "arrow.down.circle")
+        ZStack(alignment: .bottom) {
+            TabView {
+                DownloadsView(
+                    downloadManager: downloadManager,
+                    playlistManager: playlistManager,
+                    audioPlayer: audioPlayer,
+                    showFolderPicker: $showFolderPicker,
+                    showYouTubeDownload: $showYouTubeDownload
+                )
+                .tabItem {
+                    Label("Downloads", systemImage: "arrow.down.circle")
+                }
+                
+                PlaylistsView(
+                    playlistManager: playlistManager,
+                    downloadManager: downloadManager,
+                    audioPlayer: audioPlayer
+                )
+                .tabItem {
+                    Label("Playlists", systemImage: "music.note.list")
+                }
             }
             
-            PlaylistsView(
-                playlistManager: playlistManager,
-                downloadManager: downloadManager,
-                audioPlayer: audioPlayer
-            )
-            .tabItem {
-                Label("Playlists", systemImage: "music.note.list")
-            }
-        }
-        .overlay(alignment: .bottom) {
             if audioPlayer.currentTrack != nil {
                 MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
                     .transition(.move(edge: .bottom))
@@ -127,6 +128,7 @@ struct MiniPlayerBar: View {
                 .frame(height: 0.5),
             alignment: .top
         )
+        .padding(.bottom, 49)  // Add padding to sit above tab bar
     }
     
     private func getThumbnailImage(for track: Track?) -> UIImage? {
@@ -150,6 +152,7 @@ struct SystemVolumeView: UIViewRepresentable {
     
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
+
 // MARK: - Rewind Button
 struct RewindButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager

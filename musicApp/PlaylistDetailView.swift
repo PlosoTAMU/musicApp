@@ -5,6 +5,7 @@ struct PlaylistDetailView: View {
     @ObservedObject var playlistManager: PlaylistManager
     @ObservedObject var downloadManager: DownloadManager
     @ObservedObject var audioPlayer: AudioPlayerManager
+    @State private var showAddSongs = false
     
     var tracks: [Download] {
         playlistManager.getTracks(for: playlist, from: downloadManager)
@@ -52,15 +53,10 @@ struct PlaylistDetailView: View {
             }
             .padding()
             
-            // Song list with swipe actions and reordering
+            // Song list with swipe to delete
             List {
                 ForEach(tracks) { download in
                     HStack(spacing: 12) {
-                        // Reorder handle (always visible)
-                        Image(systemName: "line.3.horizontal")
-                            .foregroundColor(.gray)
-                            .font(.title3)
-                        
                         // Thumbnail
                         ZStack {
                             if let thumbPath = download.thumbnailPath,
@@ -112,5 +108,21 @@ struct PlaylistDetailView: View {
         }
         .navigationTitle(playlist.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showAddSongs = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
+        }
+        .sheet(isPresented: $showAddSongs) {
+            AddToPlaylistSheet(
+                playlistManager: playlistManager,
+                downloadManager: downloadManager,
+                playlistID: playlist.id
+            )
+        }
     }
 }
