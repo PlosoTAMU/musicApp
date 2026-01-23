@@ -4,6 +4,8 @@ struct DownloadsView: View {
     @ObservedObject var downloadManager: DownloadManager
     @ObservedObject var playlistManager: PlaylistManager
     @ObservedObject var audioPlayer: AudioPlayerManager
+    @Binding var showFolderPicker: Bool
+    @Binding var showYouTubeDownload: Bool
     @State private var showAddToPlaylist: Download?
     
     var body: some View {
@@ -23,6 +25,23 @@ struct DownloadsView: View {
                 }
             }
             .navigationTitle("Downloads")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showYouTubeDownload = true
+                    } label: {
+                        Image(systemName: "link.badge.plus")
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showFolderPicker = true
+                    } label: {
+                        Image(systemName: "folder.badge.plus")
+                    }
+                }
+            }
         }
         .sheet(item: $showAddToPlaylist) { download in
             AddToPlaylistSheet(
@@ -51,7 +70,6 @@ struct DownloadRow: View {
                         audioPlayer.resume()
                     }
                 } else {
-                    // Convert Download to Track for playback
                     let track = Track(id: download.id, name: download.name, url: download.url, folderName: "Downloads")
                     audioPlayer.play(track)
                 }
@@ -84,14 +102,12 @@ struct DownloadRow: View {
             }
             .buttonStyle(.plain)
             
-            // Name
             Text(download.name)
                 .font(.body)
                 .lineLimit(1)
             
             Spacer()
             
-            // Add to playlist button
             Button {
                 onAddToPlaylist()
             } label: {
@@ -101,7 +117,6 @@ struct DownloadRow: View {
             }
             .buttonStyle(.plain)
             
-            // Delete button
             Button {
                 onDelete()
             } label: {

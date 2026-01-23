@@ -2,134 +2,52 @@ import SwiftUI
 
 struct YouTubeDownloadView: View {
     @ObservedObject var downloadManager: DownloadManager
-    @StateObject private var downloader = YouTubeDownloader()
     @State private var youtubeURL = ""
+    @State private var isDownloading = false
+    @State private var errorMessage: String?
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 24) {
+            VStack(spacing: 20) {
+                Text("Download from YouTube")
+                    .font(.headline)
                 
-                // Status bar - shows Python/yt-dlp status
-                HStack {
-                    HStack(spacing: 4) {
-                        Image(systemName: embeddedPython.isInitialized ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundColor(embeddedPython.isInitialized ? .green : .red)
-                        Text(embeddedPython.isInitialized ? "yt-dlp ready" : "yt-dlp not ready")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Spacer()
-                }
-                .padding(.horizontal)
+                TextField("Paste YouTube URL", text: $youtubeURL)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .padding(.horizontal)
                 
-                // Auto-detected URL section
-                if let detected = detectedURL, !showManualEntry {
-                    VStack(spacing: 16) {
-                        Image(systemName: "link.circle.fill")
-                            .font(.system(size: 60))
-                            .foregroundColor(.blue)
-                        
-                        Text("YouTube Link Detected!")
-                            .font(.headline)
-                        
-                        Text(detected)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                        
-                        if downloader.isDownloading {
-                            VStack(spacing: 8) {
-                                ProgressView(value: downloader.downloadProgress)
-                                    .progressViewStyle(LinearProgressViewStyle())
-                                    .padding(.horizontal, 40)
-                                Text(downloader.statusMessage.isEmpty ? "Downloading..." : downloader.statusMessage)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding()
-                        } else {
-                            // One-tap download button
-                            Button {
-                                youtubeURL = detected
-                                startDownload()
-                            } label: {
-                                Label("Download Audio", systemImage: "arrow.down.circle.fill")
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                                    .background(Color.blue)
-                                    .cornerRadius(12)
-                            }
-                            .padding(.horizontal, 40)
-                        }
-                        
-                        Button("Enter URL manually") {
-                            showManualEntry = true
-                        }
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    }
-                } else {
-                    // Manual entry section
-                    VStack(spacing: 16) {
-                        Text("Download from YouTube")
-                            .font(.headline)
-                        
-                        HStack {
-                            TextField("Paste YouTube URL", text: $youtubeURL)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .autocapitalization(.none)
-                                .disableAutocorrection(true)
-                                .keyboardType(.URL)
-                                .textContentType(.URL)
-                            
-                            Button(action: pasteFromClipboard) {
-                                Image(systemName: "doc.on.clipboard")
-                                    .foregroundColor(.blue)
-                                    .padding(8)
-                            }
-                        }
-                        .padding(.horizontal)
-                        
-                        if downloader.isDownloading {
-                            VStack(spacing: 8) {
-                                ProgressView(value: downloader.downloadProgress)
-                                    .progressViewStyle(LinearProgressViewStyle())
-                                Text(downloader.statusMessage.isEmpty ? "Downloading..." : downloader.statusMessage)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding()
-                        }
-                        
-                        downloadButton
-                        
-                        if detectedURL != nil {
-                            Button("Use detected link") {
-                                showManualEntry = false
-                            }
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                        }
-                    }
+                if isDownloading {
+                    ProgressView("Downloading...")
+                        .padding()
                 }
                 
-                if let error = downloader.errorMessage {
+                if let error = errorMessage {
                     Text(error)
                         .foregroundColor(.red)
                         .font(.caption)
-                        .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }
                 
+                Button {
+                    startDownload()
+                } label: {
+                    Text("Download Audio")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(youtubeURL.isEmpty || isDownloading ? Color.gray : Color.blue)
+                        .cornerRadius(10)
+                }
+                .disabled(youtubeURL.isEmpty || isDownloading)
+                .padding(.horizontal)
+                
                 Spacer()
             }
-            .padding(.top, 30)
+            .padding(.top, 20)
             .navigationTitle("YouTube Download")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -139,71 +57,38 @@ struct YouTubeDownloadView: View {
                     }
                 }
             }
-            .onAppear {
-                checkClipboardForYouTubeLink()
-            }
         }
-    }
-    
-    private var downloadButton: some View {
-        let isDisabled = youtubeURL.isEmpty || downloader.isDownloading
-        let backgroundColor = isDisabled ? Color.gray : Color.blue
-        
-        return Button {
-            startDownload()
-        } label: {
-            Text("Download Audio")
-                .font(.headline)
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(backgroundColor)
-                .cornerRadius(10)
-        }
-        .disabled(isDisabled)
-        .padding(.horizontal)
     }
     
     private func startDownload() {
-        downloader.downloadAudio(from: youtubeURL) { track in
-            if let track = track {
+        isDownloading = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                let (fileURL, title) = try await EmbeddedPython.shared.downloadAudio(url: youtubeURL)
+                
+                // Get thumbnail path if available
+                let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+                
                 let download = Download(
-                    id: track.id,
-                    name: track.name,
-                    url: track.url,
-                    thumbnailPath: EmbeddedPython.shared.getThumbnailPath(for: track.url)?.path
+                    name: title,
+                    url: fileURL,
+                    thumbnailPath: thumbnailPath?.path
                 )
-                downloadManager.addDownload(download)
-                youtubeURL = ""
-                detectedURL = nil
-                dismiss()
-            }
-        }
-    }
-    
-    private func pasteFromClipboard() {
-        if let clipboardString = UIPasteboard.general.string {
-            youtubeURL = clipboardString
-        }
-    }
-    
-    private func checkClipboardForYouTubeLink() {
-        guard let clipboardString = UIPasteboard.general.string else { return }
-        
-        // Check if it looks like a YouTube URL
-        let youtubePatterns = [
-            "youtube.com/watch",
-            "youtu.be/",
-            "youtube.com/shorts/",
-            "youtube.com/embed/",
-            "music.youtube.com/"
-        ]
-        
-        for pattern in youtubePatterns {
-            if clipboardString.contains(pattern) {
-                detectedURL = clipboardString
-                print("🔗 [YouTubeDownload] Detected YouTube URL in clipboard")
-                return
+                
+                await MainActor.run {
+                    downloadManager.addDownload(download)
+                    youtubeURL = ""
+                    isDownloading = false
+                    dismiss()
+                }
+                
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    isDownloading = false
+                }
             }
         }
     }
