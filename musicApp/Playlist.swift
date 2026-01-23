@@ -2,12 +2,12 @@ import Foundation
 
 struct Playlist: Identifiable, Codable {
     let id: UUID
-    let name: String
-    var tracks: [Track]
+    var name: String
+    var trackIDs: [UUID]  // Store IDs instead of full tracks
     
-    init(id: UUID = UUID(), name: String, tracks: [Track]) {
+    init(id: UUID = UUID(), name: String, trackIDs: [UUID] = []) {
         self.id = id
         self.name = name
-        self.tracks = tracks
+        self.trackIDs = trackIDs
     }
 }

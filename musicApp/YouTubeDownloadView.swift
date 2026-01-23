@@ -1,12 +1,9 @@
 import SwiftUI
 
 struct YouTubeDownloadView: View {
-    @ObservedObject var playlistManager: PlaylistManager
+    @ObservedObject var downloadManager: DownloadManager
     @StateObject private var downloader = YouTubeDownloader()
-    @ObservedObject var embeddedPython = EmbeddedPython.shared
     @State private var youtubeURL = ""
-    @State private var detectedURL: String? = nil
-    @State private var showManualEntry = false
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
@@ -170,7 +167,13 @@ struct YouTubeDownloadView: View {
     private func startDownload() {
         downloader.downloadAudio(from: youtubeURL) { track in
             if let track = track {
-                playlistManager.addYouTubeTrack(track)
+                let download = Download(
+                    id: track.id,
+                    name: track.name,
+                    url: track.url,
+                    thumbnailPath: EmbeddedPython.shared.getThumbnailPath(for: track.url)?.path
+                )
+                downloadManager.addDownload(download)
                 youtubeURL = ""
                 detectedURL = nil
                 dismiss()

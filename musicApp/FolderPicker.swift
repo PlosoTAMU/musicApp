@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct FolderPicker: UIViewControllerRepresentable {
-    @ObservedObject var playlistManager: PlaylistManager
+    @ObservedObject var downloadManager: DownloadManager
     @Environment(\.dismiss) var dismiss
     
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
@@ -26,9 +26,20 @@ struct FolderPicker: UIViewControllerRepresentable {
         }
         
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            if let folderURL = urls.first {
-                parent.playlistManager.addFolder(url: folderURL)
+            guard let folderURL = urls.first else { return }
+            guard folderURL.startAccessingSecurityScopedResource() else { return }
+            defer { folderURL.stopAccessingSecurityScopedResource() }
+            
+            if let enumerator = FileManager.default.enumerator(at: folderURL, includingPropertiesForKeys: [.isRegularFileKey]) {
+                for case let fileURL as URL in enumerator {
+                    if fileURL.pathExtension.lowercased() == "mp3" || fileURL.pathExtension.lowercased() == "m4a" {
+                        let name = fileURL.deletingPathExtension().lastPathComponent
+                        let download = Download(name: name, url: fileURL)
+                        parent.downloadManager.addDownload(download)
+                    }
+                }
             }
+            
             parent.dismiss()
         }
         
