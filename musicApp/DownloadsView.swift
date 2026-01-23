@@ -74,40 +74,44 @@ struct DownloadRow: View {
                     audioPlayer.play(track)
                 }
             } label: {
-                ZStack {
-                    if let thumbPath = download.thumbnailPath,
-                       let image = UIImage(contentsOfFile: thumbPath) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 48, height: 48)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .foregroundColor(.gray)
-                            )
+                HStack(spacing: 12) {
+                    ZStack {
+                        if let thumbPath = download.thumbnailPath,
+                           let image = UIImage(contentsOfFile: thumbPath) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 48, height: 48)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        } else {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.gray.opacity(0.3))
+                                .frame(width: 48, height: 48)
+                                .overlay(
+                                    Image(systemName: "music.note")
+                                        .foregroundColor(.gray)
+                                )
+                        }
+                        
+                        if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.black.opacity(0.3))
+                            Image(systemName: "pause.fill")
+                                .foregroundColor(.white)
+                                .font(.system(size: 14))
+                        }
                     }
                     
-                    if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
-                        Color.black.opacity(0.3)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                        Image(systemName: "pause.fill")
-                            .foregroundColor(.white)
-                    }
+                    Text(download.name)
+                        .font(.body)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
                 }
             }
             .buttonStyle(.plain)
-            
-            Text(download.name)
-                .font(.body)
-                .lineLimit(1)
-            
+
             Spacer()
-            
+
             Button {
                 onAddToPlaylist()
             } label: {
@@ -126,6 +130,6 @@ struct DownloadRow: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.vertical, 4)
+        .contentShape(Rectangle())
     }
 }

@@ -34,13 +34,15 @@ struct ContentView: View {
                     Label("Playlists", systemImage: "music.note.list")
                 }
             }
-            // Add padding to TabView so mini player doesn't cover tabs
-            .padding(.bottom, audioPlayer.currentTrack != nil ? 64 : 0)
             
-            // Mini player
+            // Mini player overlays the tab bar
             if audioPlayer.currentTrack != nil {
-                MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
-                    .transition(.move(edge: .bottom))
+                VStack {
+                    Spacer()
+                    MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
+                }
+                .ignoresSafeArea(edges: .bottom)  // Extend below safe area to cover tab bar
+                .transition(.move(edge: .bottom))
             }
         }
         .fullScreenCover(isPresented: $showNowPlaying) {
@@ -146,14 +148,14 @@ struct MiniPlayerBar: View {
 // MARK: - System Volume View
 struct SystemVolumeView: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
-        let volumeView = MPVolumeView(frame: .zero)
+        let volumeView = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 200, height: 20))
         volumeView.showsRouteButton = false
+        volumeView.setVolumeThumbImage(UIImage(), for: .normal)  // Use default thumb
         return volumeView
     }
     
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
-
 // MARK: - Rewind Button
 struct RewindButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
@@ -407,22 +409,20 @@ struct NowPlayingView: View {
                 .padding(.bottom, 20)
                 
                 // Volume control
-                HStack(spacing: 16) {
+                HStack(spacing: 12) {
                     Image(systemName: "speaker.fill")
                         .foregroundColor(.secondary)
-                        .font(.system(size: 14))
-                        .frame(width: 20)
+                        .font(.system(size: 12))
                     
                     SystemVolumeView()
                         .frame(maxWidth: .infinity)
-                        .frame(height: 30)
+                        .frame(height: 20)
                     
                     Image(systemName: "speaker.wave.3.fill")
                         .foregroundColor(.secondary)
-                        .font(.system(size: 14))
-                        .frame(width: 20)
+                        .font(.system(size: 12))
                 }
-                .padding(.horizontal, 32)
+                .padding(.horizontal, 40)
                 .padding(.bottom, 40)
             }
         }

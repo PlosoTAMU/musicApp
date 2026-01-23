@@ -5,6 +5,7 @@ struct YouTubeDownloadView: View {
     @State private var youtubeURL = ""
     @State private var isDownloading = false
     @State private var errorMessage: String?
+    @State private var consoleOutput: String = ""
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
@@ -20,8 +21,22 @@ struct YouTubeDownloadView: View {
                     .padding(.horizontal)
                 
                 if isDownloading {
-                    ProgressView("Downloading...")
-                        .padding()
+                    VStack(spacing: 12) {
+                        ProgressView("Downloading...")
+                        
+                        // Console output
+                        ScrollView {
+                            Text(consoleOutput)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.green)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                        }
+                        .frame(height: 200)
+                        .background(Color.black)
+                        .cornerRadius(8)
+                        .padding(.horizontal)
+                    }
                 }
                 
                 if let error = errorMessage {
@@ -63,12 +78,27 @@ struct YouTubeDownloadView: View {
     private func startDownload() {
         isDownloading = true
         errorMessage = nil
+        consoleOutput = ""
+        
+        // Start monitoring log file
+        let logPath = NSTemporaryDirectory() + "ytdlp_debug.log"
+        
+        // Clear old log
+        try? "".write(toFile: logPath, atomically: true, encoding: .utf8)
+        
+        // Poll log file for updates
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            if let logContent = try? String(contentsOfFile: logPath, encoding: .utf8) {
+                consoleOutput = logContent
+            }
+        }
         
         Task {
             do {
                 let (fileURL, title) = try await EmbeddedPython.shared.downloadAudio(url: youtubeURL)
                 
-                // Get thumbnail path if available
+                timer.invalidate()
+                
                 let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                 
                 let download = Download(
@@ -81,10 +111,10 @@ struct YouTubeDownloadView: View {
                     downloadManager.addDownload(download)
                     youtubeURL = ""
                     isDownloading = false
-                    dismiss()
                 }
                 
             } catch {
+                timer.invalidate()
                 await MainActor.run {
                     errorMessage = error.localizedDescription
                     isDownloading = false
