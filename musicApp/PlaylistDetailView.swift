@@ -118,11 +118,77 @@ struct PlaylistDetailView: View {
             }
         }
         .sheet(isPresented: $showAddSongs) {
-            AddToPlaylistSheet(
+            SelectSongsSheet(
+                playlistID: playlist.id,
                 playlistManager: playlistManager,
-                downloadManager: downloadManager,
-                playlistID: playlist.id
+                downloadManager: downloadManager
             )
+        }
+    }
+}
+
+// MARK: - Select Songs Sheet for adding to playlist
+struct SelectSongsSheet: View {
+    let playlistID: UUID
+    @ObservedObject var playlistManager: PlaylistManager
+    @ObservedObject var downloadManager: DownloadManager
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        NavigationView {
+            List {
+                ForEach(downloadManager.sortedDownloads) { download in
+                    Button {
+                        playlistManager.addToPlaylist(playlistID, downloadID: download.id)
+                    } label: {
+                        HStack(spacing: 12) {
+                            // Thumbnail
+                            ZStack {
+                                if let thumbPath = download.thumbnailPath,
+                                   let image = UIImage(contentsOfFile: thumbPath) {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 48, height: 48)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                } else {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.gray.opacity(0.3))
+                                        .frame(width: 48, height: 48)
+                                        .overlay(
+                                            Image(systemName: "music.note")
+                                                .foregroundColor(.gray)
+                                        )
+                                }
+                            }
+                            
+                            Text(download.name)
+                                .font(.body)
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            
+                            Spacer()
+                            
+                            // Show checkmark if already in playlist
+                            if let playlist = playlistManager.playlists.first(where: { $0.id == playlistID }),
+                               playlist.trackIDs.contains(download.id) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle("Add Songs")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }
