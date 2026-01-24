@@ -12,31 +12,26 @@ class YouTubeDownloader: ObservableObject {
         downloadProgress = 0.0
         statusMessage = "Starting download..."
         
-        Task {
+        Task { @MainActor in
             do {
                 print("[YouTubeDownloader] Using yt-dlp...")
-                updateStatus("Downloading with yt-dlp...")
+                self.statusMessage = "Downloading with yt-dlp..."
                 
-                // Access the shared instance directly in the async context
-                let python = await MainActor.run { PythonBridge.shared }
-                let (fileURL, title) = try await python.downloadAudio(url: youtubeURL)
+                // Direct access with MainActor
+                let (fileURL, title) = try await EmbeddedPython.shared.downloadAudio(url: youtubeURL)
                 let track = Track(name: title, url: fileURL, folderName: "YouTube Downloads")
                 
-                DispatchQueue.main.async {
-                    self.isDownloading = false
-                    self.downloadProgress = 1.0
-                    self.statusMessage = "Download complete!"
-                    completion(track)
-                }
+                self.isDownloading = false
+                self.downloadProgress = 1.0
+                self.statusMessage = "Download complete!"
+                completion(track)
             } catch {
                 print("[YouTubeDownloader] Error: \(error.localizedDescription)")
                 
-                DispatchQueue.main.async {
-                    self.errorMessage = "Download failed: \(error.localizedDescription)"
-                    self.isDownloading = false
-                    self.statusMessage = "Download failed"
-                    completion(nil)
-                }
+                self.errorMessage = "Download failed: \(error.localizedDescription)"
+                self.isDownloading = false
+                self.statusMessage = "Download failed"
+                completion(nil)
             }
         }
     }
@@ -45,20 +40,5 @@ class YouTubeDownloader: ObservableObject {
         DispatchQueue.main.async {
             self.statusMessage = message
         }
-    }
-}
-
-// Bridge to access EmbeddedPython
-@MainActor
-class PythonBridge {
-    static let shared = PythonBridge()
-    private let python = EmbeddedPython.shared
-    
-    func downloadAudio(url: String) async throws -> (URL, String) {
-        return try await python.downloadAudio(url: url)
-    }
-    
-    func getThumbnailPath(for fileURL: URL) -> URL? {
-        return python.getThumbnailPath(for: fileURL)
     }
 }
