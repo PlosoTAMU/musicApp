@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AVFoundation
 
 class PlaylistManager: ObservableObject {
     @Published var playlists: [Playlist] = []
