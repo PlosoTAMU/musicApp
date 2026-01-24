@@ -5,6 +5,7 @@ struct PlaylistsView: View {
     @ObservedObject var downloadManager: DownloadManager
     @ObservedObject var audioPlayer: AudioPlayerManager
     @State private var showCreatePlaylist = false
+    @State private var refreshID = UUID()
     
     var body: some View {
         NavigationView {
@@ -26,7 +27,11 @@ struct PlaylistsView: View {
                             VStack(alignment: .leading) {
                                 Text(playlist.name)
                                     .font(.headline)
-                                Text("\(playlist.trackIDs.count) songs")
+                                
+                                let trackCount = playlistManager.getTracks(for: playlist, from: downloadManager).count
+                                let duration = playlistManager.getTotalDuration(for: playlist, from: downloadManager)
+                                
+                                Text("\(trackCount) songs • \(formatDuration(duration))")
                                     .font(.caption)
                                     .foregroundColor(.gray)
                             }
@@ -35,6 +40,7 @@ struct PlaylistsView: View {
                 }
                 .onDelete(perform: deletePlaylists)
             }
+            .id(refreshID)
             .navigationTitle("Playlists")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -45,12 +51,19 @@ struct PlaylistsView: View {
                     }
                 }
             }
+            .onAppear {
+                // Force refresh
+                refreshID = UUID()
+            }
         }
         .sheet(isPresented: $showCreatePlaylist) {
             CreatePlaylistSheet(
                 playlistManager: playlistManager,
                 downloadManager: downloadManager,
-                onDismiss: { showCreatePlaylist = false }
+                onDismiss: { 
+                    showCreatePlaylist = false
+                    refreshID = UUID()
+                }
             )
         }
     }
@@ -59,5 +72,13 @@ struct PlaylistsView: View {
         for index in offsets {
             playlistManager.deletePlaylist(playlistManager.playlists[index])
         }
+        refreshID = UUID()
+    }
+    
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let hours = Int(duration) / 3600
+        let minutes = (Int(duration) % 3600) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
     }
 }

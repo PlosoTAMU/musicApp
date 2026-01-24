@@ -9,6 +9,7 @@ struct PlaylistDetailView: View {
     @State private var showAddSongs = false
     @State private var editMode: EditMode = .active
     @State private var totalDuration: TimeInterval = 0
+    @State private var refreshID = UUID()
     
     var tracks: [Download] {
         playlistManager.getTracks(for: playlist, from: downloadManager)
@@ -113,8 +114,10 @@ struct PlaylistDetailView: View {
                         playlistManager.removeFromPlaylist(playlist.id, downloadID: download.id)
                     }
                     updateTotalDuration()
+                    refreshID = UUID()
                 }
             }
+            .id(refreshID)
             .environment(\.editMode, $editMode)
         }
         .navigationTitle(playlist.name)
@@ -132,17 +135,16 @@ struct PlaylistDetailView: View {
             SelectSongsSheet(
                 playlistID: playlist.id,
                 playlistManager: playlistManager,
-                downloadManager: downloadManager
+                downloadManager: downloadManager,
+                onDismiss: {
+                    updateTotalDuration()
+                    refreshID = UUID()
+                }
             )
         }
         .onAppear {
             updateTotalDuration()
-        }
-        .onChange(of: tracks.count) { _ in
-            updateTotalDuration()
-        }
-        .onChange(of: playlist.trackIDs) { _ in
-            updateTotalDuration()
+            refreshID = UUID()
         }
     }
     
@@ -163,12 +165,8 @@ struct PlaylistDetailView: View {
     private func formatDuration(_ duration: TimeInterval) -> String {
         let hours = Int(duration) / 3600
         let minutes = (Int(duration) % 3600) / 60
-        
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        } else {
-            return "\(minutes)m"
-        }
+        let seconds = Int(duration) % 60
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
     }
 }
 
@@ -177,6 +175,7 @@ struct SelectSongsSheet: View {
     let playlistID: UUID
     @ObservedObject var playlistManager: PlaylistManager
     @ObservedObject var downloadManager: DownloadManager
+    let onDismiss: () -> Void
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
@@ -229,6 +228,7 @@ struct SelectSongsSheet: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         dismiss()
+                        onDismiss()
                     }
                 }
             }

@@ -7,11 +7,22 @@ struct DownloadsView: View {
     @Binding var showFolderPicker: Bool
     @Binding var showYouTubeDownload: Bool
     @State private var showAddToPlaylist: Download?
+    @State private var searchText = ""
 
+    var filteredDownloads: [Download] {
+        if searchText.isEmpty {
+            return downloadManager.sortedDownloads
+        } else {
+            return downloadManager.sortedDownloads.filter { 
+                $0.name.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+    }
+    
     var body: some View {
         NavigationView {
             List {
-                ForEach(downloadManager.sortedDownloads) { download in
+                ForEach(filteredDownloads) { download in
                     DownloadRow(
                         download: download,
                         audioPlayer: audioPlayer,
@@ -42,6 +53,7 @@ struct DownloadsView: View {
                     )
                 }
             }
+            .searchable(text: $searchText, prompt: "Search downloads")
             .navigationTitle("Downloads")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
