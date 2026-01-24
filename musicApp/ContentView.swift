@@ -132,25 +132,12 @@ struct MiniPlayerBar: View {
     }
     
     private func getThumbnailImage(for track: Track?) -> UIImage? {
-        guard let track = track else { return nil }
-        
-        // Use Task to bridge to MainActor
-        var thumbnailPath: URL?
-        let semaphore = DispatchSemaphore(value: 0)
-        
-        Task {
-            let python = await PythonBridge.shared
-            thumbnailPath = await python.getThumbnailPath(for: track.url)
-            semaphore.signal()
+        guard let track = track,
+              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
+            return nil
         }
-        
-        semaphore.wait()
-        
-        if let path = thumbnailPath,
-        let image = UIImage(contentsOfFile: path.path) {
-            return image
-        }
-        return nil
+        return image
     }
 }
 
