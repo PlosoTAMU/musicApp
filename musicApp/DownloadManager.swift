@@ -71,17 +71,17 @@ class DownloadManager: ObservableObject {
     }
     
     func getDownload(byID id: UUID) -> Download? {
-        downloads.first { $0.id == id }
+        downloads.first { $0.id == id && !$0.pendingDeletion }
     }
     
     func hasVideoID(_ videoID: String) -> Bool {
-        return downloads.contains { $0.videoID == videoID }
+        return downloads.contains { $0.videoID == videoID && !$0.pendingDeletion }
     }
     
     func hasDuplicate(videoID: String?, url: URL) -> Download? {
         // Check by video ID first
         if let videoID = videoID {
-            if let existing = downloads.first(where: { $0.videoID == videoID }) {
+            if let existing = downloads.first(where: { $0.videoID == videoID && !$0.pendingDeletion }) {
                 return existing
             }
         }
@@ -89,7 +89,7 @@ class DownloadManager: ObservableObject {
         // Check by filename (without extension)
         let newFileName = url.deletingPathExtension().lastPathComponent
         if let existing = downloads.first(where: {
-            $0.url.deletingPathExtension().lastPathComponent == newFileName
+            $0.url.deletingPathExtension().lastPathComponent == newFileName && !$0.pendingDeletion
         }) {
             return existing
         }
@@ -100,9 +100,11 @@ class DownloadManager: ObservableObject {
     private func saveDownloads() {
         do {
             let encoder = JSONEncoder()
-            let data = try encoder.encode(downloads)
+            // Only save downloads that aren't pending deletion
+            let downloadsToSave = downloads.filter { !$0.pendingDeletion }
+            let data = try encoder.encode(downloadsToSave)
             try data.write(to: downloadsFileURL)
-            print("✅ [DownloadManager] Saved \(downloads.count) downloads")
+            print("✅ [DownloadManager] Saved \(downloadsToSave.count) downloads")
         } catch {
             print("❌ [DownloadManager] Failed to save: \(error)")
         }
@@ -117,7 +119,14 @@ class DownloadManager: ObservableObject {
         do {
             let data = try Data(contentsOf: downloadsFileURL)
             let decoder = JSONDecoder()
-            downloads = try decoder.decode([Download].self, from: data)
+            var loadedDownloads = try decoder.decode([Download].self, from: data)
+            
+            // Ensure all loaded downloads have pendingDeletion = false
+            for i in 0..<loadedDownloads.count {
+                loadedDownloads[i].pendingDeletion = false
+            }
+            
+            downloads = loadedDownloads
             
             // Validate thumbnails exist, regenerate if missing
             validateThumbnails()
@@ -125,6 +134,8 @@ class DownloadManager: ObservableObject {
             print("✅ [DownloadManager] Loaded \(downloads.count) downloads")
         } catch {
             print("❌ [DownloadManager] Failed to load: \(error)")
+            // Try to recover by loading as empty array
+            downloads = []
         }
     }
     
@@ -133,11 +144,7 @@ class DownloadManager: ObservableObject {
             if let thumbPath = download.thumbnailPath {
                 if !FileManager.default.fileExists(atPath: thumbPath) {
                     print("⚠️ [DownloadManager] Missing thumbnail for: \(download.name)")
-                    // Thumbnail is missing, try to regenerate
-                    if let videoID = download.videoID {
-                        downloads[index].thumbnailPath = nil
-                        // TODO: Could trigger thumbnail re-download here
-                    }
+                    downloads[index].thumbnailPath = nil
                 }
             }
         }

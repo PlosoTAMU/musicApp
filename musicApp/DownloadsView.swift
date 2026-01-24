@@ -8,13 +8,6 @@ struct DownloadsView: View {
     @Binding var showYouTubeDownload: Bool
     @State private var showAddToPlaylist: Download?
 
-    private func downloadFromSpotify() {
-        if let clipboardString = UIPasteboard.general.string {
-            print("📋 Clipboard: \(clipboardString)")
-            showYouTubeDownload = true
-        }
-    }
-    
     var body: some View {
         NavigationView {
             List {
@@ -31,6 +24,8 @@ struct DownloadsView: View {
                                 if audioPlayer.currentTrack?.id == deletedDownload.id {
                                     audioPlayer.stop()
                                 }
+                                // Remove from all playlists
+                                playlistManager.removeFromAllPlaylists(deletedDownload.id)
                             }
                         }
                     )
@@ -50,14 +45,10 @@ struct DownloadsView: View {
             .navigationTitle("Downloads")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Menu {
-                        Button {
-                            showYouTubeDownload = true
-                        } label: {
-                            Label("Download", systemImage: "arrow.down.circle")
-                        }
+                    Button {
+                        showYouTubeDownload = true
                     } label: {
-                        Image(systemName: "link.badge.plus")
+                        Image(systemName: "arrow.down.circle")
                     }
                 }
                 

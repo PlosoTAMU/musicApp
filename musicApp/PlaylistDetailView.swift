@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct PlaylistDetailView: View {
     let playlist: Playlist
@@ -7,6 +8,7 @@ struct PlaylistDetailView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @State private var showAddSongs = false
     @State private var editMode: EditMode = .active
+    @State private var totalDuration: TimeInterval = 0
     
     var tracks: [Download] {
         playlistManager.getTracks(for: playlist, from: downloadManager)
@@ -14,43 +16,50 @@ struct PlaylistDetailView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Play/Shuffle buttons
-            HStack(spacing: 16) {
-                Button {
-                    let tracks = self.tracks.map { download in
-                        Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+            // Play/Shuffle buttons with total duration
+            VStack(spacing: 8) {
+                HStack(spacing: 16) {
+                    Button {
+                        let tracks = self.tracks.map { download in
+                            Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+                        }
+                        audioPlayer.loadPlaylist(tracks, shuffle: false)
+                    } label: {
+                        HStack {
+                            Image(systemName: "play.fill")
+                            Text("Play All")
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(Color.blue)
+                        .cornerRadius(8)
                     }
-                    audioPlayer.loadPlaylist(tracks, shuffle: false)
-                } label: {
-                    HStack {
-                        Image(systemName: "play.fill")
-                        Text("Play All")
+                    
+                    Button {
+                        let tracks = self.tracks.map { download in
+                            Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+                        }
+                        audioPlayer.loadPlaylist(tracks, shuffle: true)
+                    } label: {
+                        HStack {
+                            Image(systemName: "shuffle")
+                            Text("Shuffle")
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(Color.green)
+                        .cornerRadius(8)
                     }
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color.blue)
-                    .cornerRadius(8)
                 }
                 
-                Button {
-                    let tracks = self.tracks.map { download in
-                        Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
-                    }
-                    audioPlayer.loadPlaylist(tracks, shuffle: true)
-                } label: {
-                    HStack {
-                        Image(systemName: "shuffle")
-                        Text("Shuffle")
-                    }
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color.green)
-                    .cornerRadius(8)
-                }
+                // Total runtime
+                Text("\(tracks.count) songs • \(formatDuration(totalDuration))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             .padding()
             
@@ -103,6 +112,7 @@ struct PlaylistDetailView: View {
                         let download = tracks[index]
                         playlistManager.removeFromPlaylist(playlist.id, downloadID: download.id)
                     }
+                    updateTotalDuration()
                 }
             }
             .environment(\.editMode, $editMode)
@@ -124,6 +134,40 @@ struct PlaylistDetailView: View {
                 playlistManager: playlistManager,
                 downloadManager: downloadManager
             )
+        }
+        .onAppear {
+            updateTotalDuration()
+        }
+        .onChange(of: tracks.count) { _ in
+            updateTotalDuration()
+        }
+        .onChange(of: playlist.trackIDs) { _ in
+            updateTotalDuration()
+        }
+    }
+    
+    private func updateTotalDuration() {
+        totalDuration = 0
+        for track in tracks {
+            if let duration = getAudioDuration(url: track.url) {
+                totalDuration += duration
+            }
+        }
+    }
+    
+    private func getAudioDuration(url: URL) -> TimeInterval? {
+        let asset = AVAsset(url: url)
+        return asset.duration.seconds
+    }
+    
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let hours = Int(duration) / 3600
+        let minutes = (Int(duration) % 3600) / 60
+        
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        } else {
+            return "\(minutes)m"
         }
     }
 }

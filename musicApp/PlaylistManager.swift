@@ -25,7 +25,6 @@ class PlaylistManager: ObservableObject {
         if !playlists[index].trackIDs.contains(downloadID) {
             playlists[index].trackIDs.append(downloadID)
             savePlaylists()
-            objectWillChange.send()  // Force UI update
         }
     }
     
@@ -33,14 +32,25 @@ class PlaylistManager: ObservableObject {
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         playlists[index].trackIDs.removeAll { $0 == downloadID }
         savePlaylists()
-        objectWillChange.send()  // Force UI update
+    }
+    
+    func removeFromAllPlaylists(_ downloadID: UUID) {
+        var changed = false
+        for i in 0..<playlists.count {
+            if playlists[i].trackIDs.contains(downloadID) {
+                playlists[i].trackIDs.removeAll { $0 == downloadID }
+                changed = true
+            }
+        }
+        if changed {
+            savePlaylists()
+        }
     }
     
     func moveTrack(in playlistID: UUID, from source: IndexSet, to destination: Int) {
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         playlists[index].trackIDs.move(fromOffsets: source, toOffset: destination)
         savePlaylists()
-        objectWillChange.send()  // Force UI update
     }
     
     func deletePlaylist(_ playlist: Playlist) {
@@ -52,12 +62,31 @@ class PlaylistManager: ObservableObject {
         playlist.trackIDs.compactMap { downloadManager.getDownload(byID: $0) }
     }
     
+    func getTotalDuration(for playlist: Playlist, from downloadManager: DownloadManager) -> TimeInterval {
+        let tracks = getTracks(for: playlist, from: downloadManager)
+        var totalDuration: TimeInterval = 0
+        
+        for track in tracks {
+            if let duration = getAudioDuration(url: track.url) {
+                totalDuration += duration
+            }
+        }
+        
+        return totalDuration
+    }
+    
+    private func getAudioDuration(url: URL) -> TimeInterval? {
+        let asset = AVAsset(url: url)
+        return asset.duration.seconds
+    }
+    
     private func savePlaylists() {
         do {
             let encoder = JSONEncoder()
             let data = try encoder.encode(playlists)
             try data.write(to: playlistsFileURL)
             print("✅ [PlaylistManager] Saved \(playlists.count) playlists")
+            objectWillChange.send()
         } catch {
             print("❌ [PlaylistManager] Failed to save: \(error)")
         }

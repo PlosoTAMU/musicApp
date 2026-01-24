@@ -419,15 +419,13 @@ struct NowPlayingView: View {
                             .foregroundColor(.secondary)
                             .font(.caption)
                         
-                        Spacer()
+                        VolumeSlider()
+                            .frame(height: 20)
                         
                         Image(systemName: "speaker.wave.3.fill")
                             .foregroundColor(.secondary)
                             .font(.caption)
                     }
-                    
-                    SystemVolumeView()
-                        .frame(height: 2)
                 }
                 .padding(.horizontal, 40)
                 .padding(.bottom, 40)
@@ -498,4 +496,20 @@ struct NowPlayingView: View {
             }
         }
     }
+}
+struct VolumeSlider: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let volumeView = MPVolumeView(frame: .zero)
+        volumeView.showsRouteButton = false
+        
+        // Style the slider
+        if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
+            slider.minimumTrackTintColor = .white
+            slider.maximumTrackTintColor = .white.withAlphaComponent(0.3)
+        }
+        
+        return volumeView
+    }
+    
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }

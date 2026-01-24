@@ -79,23 +79,26 @@ struct YouTubeDownloadView: View {
                 }
             }
             .onAppear {
-                // Auto-paste from clipboard and start download
-                if let clipboardString = UIPasteboard.general.string,
-                   !clipboardString.isEmpty,
-                   (clipboardString.contains("youtube.com") || 
-                    clipboardString.contains("youtu.be") || 
-                    clipboardString.contains("spotify.com")) {
-                    youtubeURL = clipboardString
-                    
-                    // Detect source
-                    if clipboardString.contains("spotify.com") {
-                        detectedSource = .spotify
-                    } else {
-                        detectedSource = .youtube
-                    }
-                    
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        startDownload()
+                // Check if pasteboard has URLs without triggering permission
+                if UIPasteboard.general.hasURLs || UIPasteboard.general.hasStrings {
+                    // Now access it (this MAY trigger permission on first use)
+                    if let clipboardString = UIPasteboard.general.string,
+                    !clipboardString.isEmpty,
+                    (clipboardString.contains("youtube.com") || 
+                        clipboardString.contains("youtu.be") || 
+                        clipboardString.contains("spotify.com")) {
+                        youtubeURL = clipboardString
+                        
+                        // Detect source
+                        if clipboardString.contains("spotify.com") {
+                            detectedSource = .spotify
+                        } else {
+                            detectedSource = .youtube
+                        }
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            startDownload()
+                        }
                     }
                 }
             }
