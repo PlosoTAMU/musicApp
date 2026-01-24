@@ -25,6 +25,7 @@ class PlaylistManager: ObservableObject {
         if !playlists[index].trackIDs.contains(downloadID) {
             playlists[index].trackIDs.append(downloadID)
             savePlaylists()
+            objectWillChange.send()  // Force UI update
         }
     }
     
@@ -32,12 +33,14 @@ class PlaylistManager: ObservableObject {
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         playlists[index].trackIDs.removeAll { $0 == downloadID }
         savePlaylists()
+        objectWillChange.send()  // Force UI update
     }
     
     func moveTrack(in playlistID: UUID, from source: IndexSet, to destination: Int) {
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         playlists[index].trackIDs.move(fromOffsets: source, toOffset: destination)
         savePlaylists()
+        objectWillChange.send()  // Force UI update
     }
     
     func deletePlaylist(_ playlist: Playlist) {

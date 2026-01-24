@@ -233,6 +233,13 @@ struct NowPlayingView: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
+            .overlay(
+                LinearGradient(
+                    colors: [Color.black.opacity(0.3), Color.clear],
+                    startPoint: .top,
+                    endPoint: .center
+                )
+            )
             .ignoresSafeArea()
             .animation(.easeInOut(duration: 0.5), value: dominantColors)
             
@@ -461,23 +468,23 @@ struct NowPlayingView: View {
             guard let inputImage = CIImage(image: image) else { return }
             
             let extentVector = CIVector(x: inputImage.extent.origin.x,
-                                       y: inputImage.extent.origin.y,
-                                       z: inputImage.extent.size.width,
-                                       w: inputImage.extent.size.height)
+                                    y: inputImage.extent.origin.y,
+                                    z: inputImage.extent.size.width,
+                                    w: inputImage.extent.size.height)
             
             guard let filter = CIFilter(name: "CIAreaAverage",
-                                       parameters: [kCIInputImageKey: inputImage,
-                                                   kCIInputExtentKey: extentVector]) else { return }
+                                    parameters: [kCIInputImageKey: inputImage,
+                                                kCIInputExtentKey: extentVector]) else { return }
             guard let outputImage = filter.outputImage else { return }
             
             var bitmap = [UInt8](repeating: 0, count: 4)
             let context = CIContext(options: [.workingColorSpace: kCFNull as Any])
             context.render(outputImage,
-                          toBitmap: &bitmap,
-                          rowBytes: 4,
-                          bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
-                          format: .RGBA8,
-                          colorSpace: nil)
+                        toBitmap: &bitmap,
+                        rowBytes: 4,
+                        bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                        format: .RGBA8,
+                        colorSpace: nil)
             
             let color = Color(red: Double(bitmap[0]) / 255.0,
                             green: Double(bitmap[1]) / 255.0,
@@ -485,8 +492,8 @@ struct NowPlayingView: View {
             
             DispatchQueue.main.async {
                 self.dominantColors = [
-                    color.opacity(0.6),
-                    color.opacity(0.3)
+                    color.opacity(0.8),  // More vibrant top color
+                    color.opacity(0.4)   // Darker bottom color for better contrast
                 ]
             }
         }

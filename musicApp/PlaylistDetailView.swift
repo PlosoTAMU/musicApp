@@ -53,7 +53,7 @@ struct PlaylistDetailView: View {
             }
             .padding()
             
-            // Song list with swipe to delete
+            // Song list with swipe to delete and drag to reorder
             List {
                 ForEach(tracks) { download in
                     HStack(spacing: 12) {
@@ -105,6 +105,7 @@ struct PlaylistDetailView: View {
                 }
             }
             .environment(\.editMode, .constant(.active))  // Always in edit mode for reordering
+            .id(playlist.trackIDs)  // Force refresh when tracks change
         }
         .navigationTitle(playlist.name)
         .navigationBarTitleDisplayMode(.inline)

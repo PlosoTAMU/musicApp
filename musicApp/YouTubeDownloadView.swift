@@ -1,4 +1,5 @@
 import SwiftUI
+import CryptoKit
 
 struct YouTubeDownloadView: View {
     @ObservedObject var downloadManager: DownloadManager
@@ -109,14 +110,19 @@ struct YouTubeDownloadView: View {
     }
     
     private func startDownload() {
-        // Check if already downloaded
+        // Check if already downloaded using video ID
+        let videoID = extractVideoID(from: youtubeURL)
+        
         if let existingDownload = downloadManager.downloads.first(where: { download in
-            // Check if this URL has already been downloaded by comparing video IDs
-            let videoID = extractVideoID(from: youtubeURL)
             let existingVideoID = download.url.lastPathComponent.components(separatedBy: ".").first
             return videoID == existingVideoID && videoID != nil
         }) {
             errorMessage = "Already downloaded: \(existingDownload.name)"
+            
+            // Auto-close after 2 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                dismiss()
+            }
             return
         }
         
@@ -152,6 +158,23 @@ struct YouTubeDownloadView: View {
                     }
                 }
                 
+                // Check if file with same hash already exists
+                if let existingDownload = findDuplicateByHash(fileURL: fileURL) {
+                    // Delete the newly downloaded file
+                    try? FileManager.default.removeItem(at: fileURL)
+                    
+                    await MainActor.run {
+                        errorMessage = "Duplicate detected: \(existingDownload.name)"
+                        isDownloading = false
+                        
+                        // Auto-close after 2 seconds
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            dismiss()
+                        }
+                    }
+                    return
+                }
+                
                 let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
                 
                 await MainActor.run {
@@ -183,7 +206,6 @@ struct YouTubeDownloadView: View {
         
         // If renamed, update the metadata
         if !keepOriginalName && finalTitle != downloadedTitle {
-            // Update the stored metadata with new title
             updateMetadata(for: fileURL, newTitle: finalTitle)
         }
         
@@ -199,6 +221,27 @@ struct YouTubeDownloadView: View {
         downloadedFileURL = nil
         downloadedTitle = ""
         newTitle = ""
+        
+        // Auto-close after successful download
+        dismiss()
+    }
+    
+    private func findDuplicateByHash(fileURL: URL) -> Download? {
+        guard let newFileHash = hashFile(at: fileURL) else { return nil }
+        
+        for download in downloadManager.downloads {
+            if let existingHash = hashFile(at: download.url),
+               existingHash == newFileHash {
+                return download
+            }
+        }
+        return nil
+    }
+    
+    private func hashFile(at url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let hash = SHA256.hash(data: data)
+        return hash.compactMap { String(format: "%02x", $0) }.joined()
     }
     
     private func updateMetadata(for fileURL: URL, newTitle: String) {
@@ -235,7 +278,6 @@ struct YouTubeDownloadView: View {
     }
     
     private func extractVideoID(from urlString: String) -> String? {
-        // Extract YouTube video ID from various URL formats
         if let url = URL(string: urlString) {
             if url.host?.contains("youtu.be") == true {
                 return url.lastPathComponent
