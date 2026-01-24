@@ -2,7 +2,6 @@ import SwiftUI
 
 struct YouTubeDownloadView: View {
     @ObservedObject var downloadManager: DownloadManager
-    @StateObject private var embeddedPython = EmbeddedPython.shared
     @State private var youtubeURL = ""
     @State private var isDownloading = false
     @State private var errorMessage: String?
@@ -141,7 +140,8 @@ struct YouTubeDownloadView: View {
         
         Task {
             do {
-                let (fileURL, title) = try await embeddedPython.downloadAudio(url: youtubeURL)
+                let python = await PythonBridge.shared
+                let (fileURL, title) = try await python.downloadAudio(url: youtubeURL)
                 
                 timer.invalidate()
                 
@@ -152,7 +152,7 @@ struct YouTubeDownloadView: View {
                     }
                 }
                 
-                let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
+                let thumbnailPath = await python.getThumbnailPath(for: fileURL)
                 
                 await MainActor.run {
                     downloadedFileURL = fileURL
@@ -178,27 +178,32 @@ struct YouTubeDownloadView: View {
     private func finishDownload(keepOriginalName: Bool) {
         guard let fileURL = downloadedFileURL else { return }
         
-        let finalTitle = keepOriginalName ? downloadedTitle : newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
-        
-        // If renamed, update the metadata
-        if !keepOriginalName && finalTitle != downloadedTitle {
-            // Update the stored metadata with new title
-            updateMetadata(for: fileURL, newTitle: finalTitle)
+        Task {
+            let python = await PythonBridge.shared
+            let finalTitle = keepOriginalName ? downloadedTitle : newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            let thumbnailPath = await python.getThumbnailPath(for: fileURL)
+            
+            // If renamed, update the metadata
+            if !keepOriginalName && finalTitle != downloadedTitle {
+                // Update the stored metadata with new title
+                updateMetadata(for: fileURL, newTitle: finalTitle)
+            }
+            
+            let download = Download(
+                name: finalTitle.isEmpty ? downloadedTitle : finalTitle,
+                url: fileURL,
+                thumbnailPath: thumbnailPath?.path
+            )
+            
+            await MainActor.run {
+                downloadManager.addDownload(download)
+                
+                // Reset state
+                downloadedFileURL = nil
+                downloadedTitle = ""
+                newTitle = ""
+            }
         }
-        
-        let download = Download(
-            name: finalTitle.isEmpty ? downloadedTitle : finalTitle,
-            url: fileURL,
-            thumbnailPath: thumbnailPath?.path
-        )
-        
-        downloadManager.addDownload(download)
-        
-        // Reset state
-        downloadedFileURL = nil
-        downloadedTitle = ""
-        newTitle = ""
     }
     
     private func updateMetadata(for fileURL: URL, newTitle: String) {

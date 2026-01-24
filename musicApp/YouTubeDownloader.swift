@@ -6,30 +6,20 @@ class YouTubeDownloader: ObservableObject {
     @Published var errorMessage: String?
     @Published var statusMessage: String = ""
     
-    private let embeddedPython = EmbeddedPython.shared
-    
     func downloadAudio(from youtubeURL: String, completion: @escaping (Track?) -> Void) {
         isDownloading = true
         errorMessage = nil
         downloadProgress = 0.0
         statusMessage = "Starting download..."
         
-        guard embeddedPython.isInitialized else {
-            DispatchQueue.main.async {
-                self.errorMessage = "Python not initialized. Please set up yt-dlp first."
-                self.isDownloading = false
-                self.statusMessage = "Setup required"
-                completion(nil)
-            }
-            return
-        }
-        
         Task {
             do {
                 print("[YouTubeDownloader] Using yt-dlp...")
                 updateStatus("Downloading with yt-dlp...")
                 
-                let (fileURL, title) = try await embeddedPython.downloadAudio(url: youtubeURL)
+                // Access the shared instance directly in the async context
+                let python = await MainActor.run { PythonBridge.shared }
+                let (fileURL, title) = try await python.downloadAudio(url: youtubeURL)
                 let track = Track(name: title, url: fileURL, folderName: "YouTube Downloads")
                 
                 DispatchQueue.main.async {
@@ -55,5 +45,20 @@ class YouTubeDownloader: ObservableObject {
         DispatchQueue.main.async {
             self.statusMessage = message
         }
+    }
+}
+
+// Bridge to access EmbeddedPython
+@MainActor
+class PythonBridge {
+    static let shared = PythonBridge()
+    private let python = EmbeddedPython.shared
+    
+    func downloadAudio(url: String) async throws -> (URL, String) {
+        return try await python.downloadAudio(url: url)
+    }
+    
+    func getThumbnailPath(for fileURL: URL) -> URL? {
+        return python.getThumbnailPath(for: fileURL)
     }
 }
