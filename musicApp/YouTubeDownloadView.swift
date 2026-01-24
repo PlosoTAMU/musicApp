@@ -12,6 +12,7 @@ struct YouTubeDownloadView: View {
     @State private var downloadedFileURL: URL?
     @State private var downloadedTitle: String = ""
     @State private var newTitle: String = ""
+    @FocusState private var isRenameFocused: Bool
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
@@ -86,7 +87,6 @@ struct YouTubeDownloadView: View {
                     clipboardString.contains("youtu.be") || 
                     clipboardString.contains("spotify.com")) {
                     youtubeURL = clipboardString
-                    // Small delay to let the view appear
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         startDownload()
                     }
@@ -110,18 +110,22 @@ struct YouTubeDownloadView: View {
     }
     
     private func startDownload() {
-        // Check if already downloaded using video ID
-        let videoID = extractVideoID(from: youtubeURL)
-        
-        if let existingDownload = downloadManager.downloads.first(where: { download in
-            let existingVideoID = download.url.lastPathComponent.components(separatedBy: ".").first
-            return videoID == existingVideoID && videoID != nil
-        }) {
-            errorMessage = "Already downloaded: \(existingDownload.name)"
-            
-            // Auto-close after 2 seconds
+        // Extract video ID BEFORE downloading
+        guard let videoID = extractVideoID(from: youtubeURL) else {
+            errorMessage = "Invalid URL"
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 dismiss()
+            }
+            return
+        }
+        
+        // Check if already downloaded by video ID
+        if downloadManager.hasVideoID(videoID) {
+            if let existing = downloadManager.downloads.first(where: { $0.videoID == videoID }) {
+                errorMessage = "Already downloaded: \(existing.name)"
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    dismiss()
+                }
             }
             return
         }
@@ -132,11 +136,8 @@ struct YouTubeDownloadView: View {
         
         // Start monitoring log file
         let logPath = NSTemporaryDirectory() + "ytdlp_debug.log"
-        
-        // Clear old log
         try? "".write(toFile: logPath, atomically: true, encoding: .utf8)
         
-        // Poll log file for updates more frequently for complete output
         let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             if let logContent = try? String(contentsOfFile: logPath, encoding: .utf8) {
                 DispatchQueue.main.async {
@@ -151,28 +152,10 @@ struct YouTubeDownloadView: View {
                 
                 timer.invalidate()
                 
-                // Final log read to make sure we got everything
                 if let finalLog = try? String(contentsOfFile: logPath, encoding: .utf8) {
                     await MainActor.run {
                         consoleOutput = finalLog
                     }
-                }
-                
-                // Check if file with same hash already exists
-                if let existingDownload = findDuplicateByHash(fileURL: fileURL) {
-                    // Delete the newly downloaded file
-                    try? FileManager.default.removeItem(at: fileURL)
-                    
-                    await MainActor.run {
-                        errorMessage = "Duplicate detected: \(existingDownload.name)"
-                        isDownloading = false
-                        
-                        // Auto-close after 2 seconds
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                            dismiss()
-                        }
-                    }
-                    return
                 }
                 
                 let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
@@ -203,8 +186,8 @@ struct YouTubeDownloadView: View {
         
         let finalTitle = keepOriginalName ? downloadedTitle : newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
+        let videoID = extractVideoID(from: youtubeURL)
         
-        // If renamed, update the metadata
         if !keepOriginalName && finalTitle != downloadedTitle {
             updateMetadata(for: fileURL, newTitle: finalTitle)
         }
@@ -212,36 +195,18 @@ struct YouTubeDownloadView: View {
         let download = Download(
             name: finalTitle.isEmpty ? downloadedTitle : finalTitle,
             url: fileURL,
-            thumbnailPath: thumbnailPath?.path
+            thumbnailPath: thumbnailPath?.path,
+            videoID: videoID
         )
         
         downloadManager.addDownload(download)
         
-        // Reset state
         downloadedFileURL = nil
         downloadedTitle = ""
         newTitle = ""
         
-        // Auto-close after successful download
+        // Auto-close
         dismiss()
-    }
-    
-    private func findDuplicateByHash(fileURL: URL) -> Download? {
-        guard let newFileHash = hashFile(at: fileURL) else { return nil }
-        
-        for download in downloadManager.downloads {
-            if let existingHash = hashFile(at: download.url),
-               existingHash == newFileHash {
-                return download
-            }
-        }
-        return nil
-    }
-    
-    private func hashFile(at url: URL) -> String? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        let hash = SHA256.hash(data: data)
-        return hash.compactMap { String(format: "%02x", $0) }.joined()
     }
     
     private func updateMetadata(for fileURL: URL, newTitle: String) {

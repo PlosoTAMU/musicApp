@@ -5,8 +5,9 @@ struct CreatePlaylistSheet: View {
     @ObservedObject var downloadManager: DownloadManager
     let onDismiss: () -> Void
     
-    @State private var playlistName = ""
+    @State private var playlistName = "New Playlist"
     @State private var selectedDownloadIDs: Set<UUID> = []
+    @FocusState private var isTextFieldFocused: Bool
     
     var body: some View {
         NavigationView {
@@ -15,6 +16,16 @@ struct CreatePlaylistSheet: View {
                 TextField("Playlist Name", text: $playlistName)
                     .textFieldStyle(.roundedBorder)
                     .padding()
+                    .focused($isTextFieldFocused)
+                    .onAppear {
+                        isTextFieldFocused = true
+                        // Select all text after a slight delay
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            if let textField = UIApplication.shared.windows.first?.firstResponder as? UITextField {
+                                textField.selectedTextRange = textField.textRange(from: textField.beginningOfDocument, to: textField.endOfDocument)
+                            }
+                        }
+                    }
                 
                 Divider()
                 
@@ -79,7 +90,6 @@ struct CreatePlaylistSheet: View {
                     Button("Create") {
                         createPlaylist()
                     }
-                    .disabled(playlistName.isEmpty)
                 }
             }
         }

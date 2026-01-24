@@ -3,6 +3,7 @@ import SwiftUI
 
 class DownloadManager: ObservableObject {
     @Published var downloads: [Download] = []
+    private var deletionTimers: [UUID: Timer] = [:]
     
     private let downloadsFileURL: URL
     
@@ -21,7 +22,37 @@ class DownloadManager: ObservableObject {
         saveDownloads()
     }
     
-    func deleteDownload(_ download: Download) {
+    func markForDeletion(_ download: Download) {
+        guard let index = downloads.firstIndex(where: { $0.id == download.id }) else { return }
+        
+        // If already pending, cancel it
+        if downloads[index].pendingDeletion {
+            cancelDeletion(download)
+            return
+        }
+        
+        // Mark as pending deletion
+        downloads[index].pendingDeletion = true
+        objectWillChange.send()
+        
+        // Set timer for actual deletion
+        let timer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
+            self?.confirmDeletion(download)
+        }
+        
+        deletionTimers[download.id] = timer
+    }
+    
+    func cancelDeletion(_ download: Download) {
+        guard let index = downloads.firstIndex(where: { $0.id == download.id }) else { return }
+        
+        downloads[index].pendingDeletion = false
+        deletionTimers[download.id]?.invalidate()
+        deletionTimers.removeValue(forKey: download.id)
+        objectWillChange.send()
+    }
+    
+    private func confirmDeletion(_ download: Download) {
         // Delete the actual file
         try? FileManager.default.removeItem(at: download.url)
         
@@ -32,11 +63,16 @@ class DownloadManager: ObservableObject {
         
         // Remove from list
         downloads.removeAll { $0.id == download.id }
+        deletionTimers.removeValue(forKey: download.id)
         saveDownloads()
     }
     
     func getDownload(byID id: UUID) -> Download? {
         downloads.first { $0.id == id }
+    }
+    
+    func hasVideoID(_ videoID: String) -> Bool {
+        downloads.contains { $0.videoID == videoID }
     }
     
     private func saveDownloads() {

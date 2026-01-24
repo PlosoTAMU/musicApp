@@ -8,9 +8,7 @@ struct DownloadsView: View {
     @Binding var showYouTubeDownload: Bool
     @State private var showAddToPlaylist: Download?
 
-
     private func downloadFromSpotify() {
-        // Get clipboard content
         if let clipboardString = UIPasteboard.general.string {
             print("📋 Clipboard: \(clipboardString)")
             // TODO: Add Spotify download logic here
@@ -28,8 +26,19 @@ struct DownloadsView: View {
                             showAddToPlaylist = download
                         },
                         onDelete: {
-                            downloadManager.deleteDownload(download)
+                            downloadManager.markForDeletion(download)
                         }
+                    )
+                    .opacity(download.pendingDeletion ? 0.5 : 1.0)
+                    .overlay(
+                        download.pendingDeletion ?
+                        HStack {
+                            Spacer()
+                            Text("Tap trash to undo")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                                .padding(.trailing, 8)
+                        } : nil
                     )
                 }
             }
@@ -44,7 +53,6 @@ struct DownloadsView: View {
                         }
                         
                         Button {
-                            // TODO: Spotify functionality
                             downloadFromSpotify()
                         } label: {
                             Label("Spotify", systemImage: "s.circle.fill")
@@ -73,8 +81,6 @@ struct DownloadsView: View {
     }
 }
 
-
-
 struct DownloadRow: View {
     let download: Download
     @ObservedObject var audioPlayer: AudioPlayerManager
@@ -83,7 +89,6 @@ struct DownloadRow: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Thumbnail + Title as one button
             Button {
                 if audioPlayer.currentTrack?.id == download.id {
                     if audioPlayer.isPlaying {
@@ -105,6 +110,7 @@ struct DownloadRow: View {
                                 .aspectRatio(contentMode: .fill)
                                 .frame(width: 48, height: 48)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .grayscale(download.pendingDeletion ? 1.0 : 0.0)
                         } else {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(Color.gray.opacity(0.3))
@@ -127,29 +133,32 @@ struct DownloadRow: View {
                     
                     Text(download.name)
                         .font(.body)
-                        .foregroundColor(.primary)
+                        .foregroundColor(download.pendingDeletion ? .gray : .primary)
                         .lineLimit(1)
                 }
             }
             .buttonStyle(.plain)
+            .disabled(download.pendingDeletion)
             
             Spacer()
             
-            Button {
-                onAddToPlaylist()
-            } label: {
-                Image(systemName: "plus.circle")
-                    .font(.title3)
-                    .foregroundColor(.blue)
+            if !download.pendingDeletion {
+                Button {
+                    onAddToPlaylist()
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .font(.title3)
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             
             Button {
                 onDelete()
             } label: {
-                Image(systemName: "trash")
+                Image(systemName: download.pendingDeletion ? "arrow.uturn.backward.circle.fill" : "trash")
                     .font(.body)
-                    .foregroundColor(.red)
+                    .foregroundColor(download.pendingDeletion ? .orange : .red)
             }
             .buttonStyle(.plain)
         }

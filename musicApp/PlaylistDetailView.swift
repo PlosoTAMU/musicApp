@@ -6,6 +6,7 @@ struct PlaylistDetailView: View {
     @ObservedObject var downloadManager: DownloadManager
     @ObservedObject var audioPlayer: AudioPlayerManager
     @State private var showAddSongs = false
+    @State private var editMode: EditMode = .active
     
     var tracks: [Download] {
         playlistManager.getTracks(for: playlist, from: downloadManager)
@@ -53,7 +54,7 @@ struct PlaylistDetailView: View {
             }
             .padding()
             
-            // Song list with swipe to delete and drag to reorder
+            // Song list with drag to reorder
             List {
                 ForEach(tracks) { download in
                     HStack(spacing: 12) {
@@ -104,8 +105,7 @@ struct PlaylistDetailView: View {
                     }
                 }
             }
-            .environment(\.editMode, .constant(.active))  // Always in edit mode for reordering
-            .id(playlist.trackIDs)  // Force refresh when tracks change
+            .environment(\.editMode, $editMode)
         }
         .navigationTitle(playlist.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -143,7 +143,6 @@ struct SelectSongsSheet: View {
                         playlistManager.addToPlaylist(playlistID, downloadID: download.id)
                     } label: {
                         HStack(spacing: 12) {
-                            // Thumbnail
                             ZStack {
                                 if let thumbPath = download.thumbnailPath,
                                    let image = UIImage(contentsOfFile: thumbPath) {
@@ -170,7 +169,6 @@ struct SelectSongsSheet: View {
                             
                             Spacer()
                             
-                            // Show checkmark if already in playlist
                             if let playlist = playlistManager.playlists.first(where: { $0.id == playlistID }),
                                playlist.trackIDs.contains(download.id) {
                                 Image(systemName: "checkmark.circle.fill")
