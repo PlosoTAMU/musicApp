@@ -2,6 +2,7 @@ import SwiftUI
 
 struct YouTubeDownloadView: View {
     @ObservedObject var downloadManager: DownloadManager
+    @StateObject private var embeddedPython = EmbeddedPython.shared
     @State private var youtubeURL = ""
     @State private var isDownloading = false
     @State private var errorMessage: String?
@@ -140,7 +141,7 @@ struct YouTubeDownloadView: View {
         
         Task {
             do {
-                let (fileURL, title) = try await EmbeddedPython.shared.downloadAudio(url: youtubeURL)
+                let (fileURL, title) = try await embeddedPython.downloadAudio(url: youtubeURL)
                 
                 timer.invalidate()
                 
@@ -151,7 +152,7 @@ struct YouTubeDownloadView: View {
                     }
                 }
                 
-                let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+                let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
                 
                 await MainActor.run {
                     downloadedFileURL = fileURL
@@ -178,7 +179,7 @@ struct YouTubeDownloadView: View {
         guard let fileURL = downloadedFileURL else { return }
         
         let finalTitle = keepOriginalName ? downloadedTitle : newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+        let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
         
         // If renamed, update the metadata
         if !keepOriginalName && finalTitle != downloadedTitle {
