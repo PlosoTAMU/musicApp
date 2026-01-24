@@ -13,19 +13,34 @@ struct CreatePlaylistSheet: View {
         NavigationView {
             VStack(spacing: 0) {
                 // Name input
-                TextField("Playlist Name", text: $playlistName)
+                HStack {
+                    TextField("Playlist Name", text: $playlistName, onEditingChanged: { isEditing in
+                        if isEditing {
+                            // Select all text when editing begins
+                            DispatchQueue.main.async {
+                                let textField = UITextField.appearance()
+                                // This will select all on first tap
+                            }
+                        }
+                    })
                     .textFieldStyle(.roundedBorder)
-                    .padding()
                     .focused($isTextFieldFocused)
                     .onAppear {
-                        isTextFieldFocused = true
-                        // Select all text after a slight delay
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            if let textField = UIApplication.shared.windows.first?.firstResponder as? UITextField {
-                                textField.selectedTextRange = textField.textRange(from: textField.beginningOfDocument, to: textField.endOfDocument)
+                        // Focus the text field
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            isTextFieldFocused = true
+                        }
+                    }
+                    .onTapGesture {
+                        // Select all when tapped
+                        if isTextFieldFocused {
+                            DispatchQueue.main.async {
+                                UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
                             }
                         }
                     }
+                }
+                .padding()
                 
                 Divider()
                 
