@@ -11,7 +11,7 @@ struct DownloadsView: View {
     private func downloadFromSpotify() {
         if let clipboardString = UIPasteboard.general.string {
             print("📋 Clipboard: \(clipboardString)")
-            // TODO: Add Spotify download logic here
+            showYouTubeDownload = true
         }
     }
     
@@ -26,7 +26,12 @@ struct DownloadsView: View {
                             showAddToPlaylist = download
                         },
                         onDelete: {
-                            downloadManager.markForDeletion(download)
+                            downloadManager.markForDeletion(download) { deletedDownload in
+                                // Stop playback if this song is playing
+                                if audioPlayer.currentTrack?.id == deletedDownload.id {
+                                    audioPlayer.stop()
+                                }
+                            }
                         }
                     )
                     .opacity(download.pendingDeletion ? 0.5 : 1.0)
@@ -34,7 +39,7 @@ struct DownloadsView: View {
                         download.pendingDeletion ?
                         HStack {
                             Spacer()
-                            Text("Tap trash to undo")
+                            Text("Tap trash to undo (5s)")
                                 .font(.caption)
                                 .foregroundColor(.orange)
                                 .padding(.trailing, 8)
@@ -49,13 +54,7 @@ struct DownloadsView: View {
                         Button {
                             showYouTubeDownload = true
                         } label: {
-                            Label("YouTube", systemImage: "play.rectangle")
-                        }
-                        
-                        Button {
-                            downloadFromSpotify()
-                        } label: {
-                            Label("Spotify", systemImage: "s.circle.fill")
+                            Label("Download", systemImage: "arrow.down.circle")
                         }
                     } label: {
                         Image(systemName: "link.badge.plus")
@@ -131,10 +130,22 @@ struct DownloadRow: View {
                         }
                     }
                     
-                    Text(download.name)
-                        .font(.body)
-                        .foregroundColor(download.pendingDeletion ? .gray : .primary)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(download.name)
+                            .font(.body)
+                            .foregroundColor(download.pendingDeletion ? .gray : .primary)
+                            .lineLimit(1)
+                        
+                        // Show source badge
+                        HStack(spacing: 4) {
+                            Image(systemName: download.source == .youtube ? "play.rectangle.fill" : 
+                                  download.source == .spotify ? "music.note" : "folder.fill")
+                                .font(.system(size: 8))
+                            Text(download.source.rawValue.capitalized)
+                                .font(.system(size: 10))
+                        }
+                        .foregroundColor(.secondary)
+                    }
                 }
             }
             .buttonStyle(.plain)

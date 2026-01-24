@@ -1,5 +1,4 @@
 import SwiftUI
-import CryptoKit
 
 struct YouTubeDownloadView: View {
     @ObservedObject var downloadManager: DownloadManager
@@ -12,13 +11,13 @@ struct YouTubeDownloadView: View {
     @State private var downloadedFileURL: URL?
     @State private var downloadedTitle: String = ""
     @State private var newTitle: String = ""
-    @FocusState private var isRenameFocused: Bool
+    @State private var detectedSource: DownloadSource = .youtube
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
-                Text("Download from YouTube")
+                Text("Download from \(detectedSource == .youtube ? "YouTube" : "Spotify")")
                     .font(.headline)
                 
                 if isDownloading {
@@ -69,7 +68,7 @@ struct YouTubeDownloadView: View {
                 }
             }
             .padding(.top, 20)
-            .navigationTitle("YouTube Download")
+            .navigationTitle("Download")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -87,26 +86,34 @@ struct YouTubeDownloadView: View {
                     clipboardString.contains("youtu.be") || 
                     clipboardString.contains("spotify.com")) {
                     youtubeURL = clipboardString
+                    
+                    // Detect source
+                    if clipboardString.contains("spotify.com") {
+                        detectedSource = .spotify
+                    } else {
+                        detectedSource = .youtube
+                    }
+                    
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         startDownload()
                     }
                 }
             }
-            .alert("Rename Song", isPresented: $showRenameAlert) {
-                TextField("Song Title", text: $newTitle)
-                    .autocapitalization(.words)
-                
-                Button("Cancel", role: .cancel) {
-                    finishDownload(keepOriginalName: true)
-                }
-                
-                Button("Save") {
-                    finishDownload(keepOriginalName: false)
-                }
-            } message: {
-                Text("Enter a new title for this song")
-            }
         }
+        .alert("Rename Song", isPresented: $showRenameAlert, actions: {
+            TextField("Song Title", text: $newTitle)
+                .autocapitalization(.words)
+            
+            Button("Cancel", role: .cancel) {
+                finishDownload(keepOriginalName: true)
+            }
+            
+            Button("Save") {
+                finishDownload(keepOriginalName: false)
+            }
+        }, message: {
+            Text("Enter a new title for this song")
+        })
     }
     
     private func startDownload() {
@@ -119,13 +126,11 @@ struct YouTubeDownloadView: View {
             return
         }
         
-        // Check if already downloaded by video ID
-        if downloadManager.hasVideoID(videoID) {
-            if let existing = downloadManager.downloads.first(where: { $0.videoID == videoID }) {
-                errorMessage = "Already downloaded: \(existing.name)"
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    dismiss()
-                }
+        // Check for duplicates more thoroughly
+        if let existing = downloadManager.hasDuplicate(videoID: videoID, url: URL(fileURLWithPath: videoID)) {
+            errorMessage = "Already downloaded: \(existing.name)"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                dismiss()
             }
             return
         }
@@ -158,6 +163,22 @@ struct YouTubeDownloadView: View {
                     }
                 }
                 
+                // Check again for duplicates after download (by file)
+                if let existing = downloadManager.hasDuplicate(videoID: videoID, url: fileURL) {
+                    // Delete the newly downloaded file
+                    try? FileManager.default.removeItem(at: fileURL)
+                    
+                    await MainActor.run {
+                        errorMessage = "Duplicate detected: \(existing.name)"
+                        isDownloading = false
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            dismiss()
+                        }
+                    }
+                    return
+                }
+                
                 let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
                 
                 await MainActor.run {
@@ -167,8 +188,10 @@ struct YouTubeDownloadView: View {
                     youtubeURL = ""
                     isDownloading = false
                     
-                    // Show rename dialog
-                    showRenameAlert = true
+                    // Show rename dialog with pre-selected text
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showRenameAlert = true
+                    }
                 }
                 
             } catch {
@@ -188,7 +211,7 @@ struct YouTubeDownloadView: View {
         let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
         let videoID = extractVideoID(from: youtubeURL)
         
-        if !keepOriginalName && finalTitle != downloadedTitle {
+        if !keepOriginalName && finalTitle != downloadedTitle && !finalTitle.isEmpty {
             updateMetadata(for: fileURL, newTitle: finalTitle)
         }
         
@@ -196,7 +219,8 @@ struct YouTubeDownloadView: View {
             name: finalTitle.isEmpty ? downloadedTitle : finalTitle,
             url: fileURL,
             thumbnailPath: thumbnailPath?.path,
-            videoID: videoID
+            videoID: videoID,
+            source: detectedSource
         )
         
         downloadManager.addDownload(download)
@@ -244,11 +268,19 @@ struct YouTubeDownloadView: View {
     
     private func extractVideoID(from urlString: String) -> String? {
         if let url = URL(string: urlString) {
+            // YouTube
             if url.host?.contains("youtu.be") == true {
                 return url.lastPathComponent
             } else if url.host?.contains("youtube.com") == true {
                 if let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems {
                     return queryItems.first(where: { $0.name == "v" })?.value
+                }
+            }
+            // Spotify
+            else if url.host?.contains("spotify.com") == true {
+                let components = url.pathComponents
+                if let trackIndex = components.firstIndex(of: "track"), trackIndex + 1 < components.count {
+                    return components[trackIndex + 1]
                 }
             }
         }

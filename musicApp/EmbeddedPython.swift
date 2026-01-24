@@ -501,6 +501,19 @@ class EmbeddedPython: ObservableObject {
             self.downloadProgress = progress
         }
     }
+
+    func ensureThumbnail(for fileURL: URL, videoID: String) {
+        let thumbnailPath = getThumbnailPath(for: fileURL)
+        
+        // If thumbnail doesn't exist, try to re-download it
+        if thumbnailPath == nil, !videoID.isEmpty {
+            let thumbnailURL = "https://img.youtube.com/vi/\(videoID)/maxresdefault.jpg"
+            let filename = fileURL.lastPathComponent
+            downloadThumbnail(url: thumbnailURL, for: filename)
+        }
+    }
+
+
     
     private func initializePythonRuntime() -> Bool {
         _Py_NoSiteFlag = 1
