@@ -1,5 +1,6 @@
 import Foundation
 import ffmpegkit
+import UIKit
 
 /// Manages an embedded Python interpreter for running yt-dlp on iOS
 class EmbeddedPython: ObservableObject {
