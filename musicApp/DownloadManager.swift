@@ -3,6 +3,7 @@ import SwiftUI
 
 class DownloadManager: ObservableObject {
     @Published var downloads: [Download] = []
+    @Published var activeDownloads: [ActiveDownload] = []
     private var deletionTimers: [UUID: Timer] = [:]
     
     private let downloadsFileURL: URL
@@ -11,14 +12,11 @@ class DownloadManager: ObservableObject {
     init() {
         let fileManager = FileManager.default
         
-        // Get the app's Documents directory
         let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         
-        // Create a Music folder
         musicDirectory = documentsPath.appendingPathComponent("Music", isDirectory: true)
         try? fileManager.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
         
-        // Make it accessible in Files app
         var resourceValues = URLResourceValues()
         resourceValues.isExcludedFromBackup = false
         var musicDirURL = musicDirectory
@@ -39,16 +37,45 @@ class DownloadManager: ObservableObject {
         return musicDirectory
     }
     
+    func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String = "Unknown") {
+        let activeDownload = ActiveDownload(id: UUID(), videoID: videoID, title: title, progress: 0.0)
+        activeDownloads.append(activeDownload)
+        
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
+            
+            do {
+                let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: url)
+                let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+                
+                let download = Download(
+                    name: downloadedTitle,
+                    url: fileURL,
+                    thumbnailPath: thumbnailPath?.path,
+                    videoID: videoID,
+                    source: source
+                )
+                
+                await MainActor.run {
+                    self.activeDownloads.removeAll { $0.videoID == videoID }
+                    self.addDownload(download)
+                }
+            } catch {
+                print("❌ [DownloadManager] Background download failed: \(error)")
+                await MainActor.run {
+                    self.activeDownloads.removeAll { $0.videoID == videoID }
+                }
+            }
+        }
+    }
+    
     func addDownload(_ download: Download) {
-        // Ensure the file is in the Music directory
         let targetURL = musicDirectory.appendingPathComponent(download.url.lastPathComponent)
         
         var finalDownload = download
         
-        // Move file if not already in Music directory
         if download.url.path != targetURL.path {
             do {
-                // If target exists, remove it first
                 if FileManager.default.fileExists(atPath: targetURL.path) {
                     try FileManager.default.removeItem(at: targetURL)
                 }
@@ -56,7 +83,6 @@ class DownloadManager: ObservableObject {
                 try FileManager.default.moveItem(at: download.url, to: targetURL)
                 print("✅ [DownloadManager] Moved file to Music directory: \(targetURL.lastPathComponent)")
                 
-                // Create updated download with new URL
                 finalDownload = Download(
                     id: download.id,
                     name: download.name,
@@ -105,7 +131,6 @@ class DownloadManager: ObservableObject {
     private func confirmDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
         onDelete(download)
         
-        // Delete the audio file
         do {
             if FileManager.default.fileExists(atPath: download.url.path) {
                 try FileManager.default.removeItem(at: download.url)
@@ -115,7 +140,6 @@ class DownloadManager: ObservableObject {
             print("❌ [DownloadManager] Failed to delete audio file: \(error)")
         }
         
-        // Delete thumbnail
         if let thumbPath = download.thumbnailPath {
             do {
                 if FileManager.default.fileExists(atPath: thumbPath) {
@@ -127,7 +151,6 @@ class DownloadManager: ObservableObject {
             }
         }
         
-        // Delete metadata entry
         let metadataURL = getMetadataFileURL()
         var metadata = loadMetadata()
         let filename = download.url.lastPathComponent
@@ -153,10 +176,10 @@ class DownloadManager: ObservableObject {
     }
     
     func findDuplicateByVideoID(videoID: String, source: DownloadSource) -> Download? {
-        if let existing = downloads.first(where: { 
-            $0.videoID == videoID && 
-            $0.source == source && 
-            !$0.pendingDeletion 
+        if let existing = downloads.first(where: {
+            $0.videoID == videoID &&
+            $0.source == source &&
+            !$0.pendingDeletion
         }) {
             print("🔍 [Duplicate] Found exact match by videoID: \(existing.name)")
             return existing
@@ -166,7 +189,7 @@ class DownloadManager: ObservableObject {
             let cleanVideoID = videoID.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
             
             if let existing = downloads.first(where: { download in
-                guard download.source == .youtube, 
+                guard download.source == .youtube,
                       !download.pendingDeletion,
                       let storedID = download.videoID else { return false }
                 
@@ -226,14 +249,12 @@ class DownloadManager: ObservableObject {
             let decoder = JSONDecoder()
             var loadedDownloads = try decoder.decode([Download].self, from: data)
             
-            // Fix file paths - resolve to current Documents directory
             let currentMusicDir = musicDirectory
             
             for i in 0..<loadedDownloads.count {
                 let filename = loadedDownloads[i].url.lastPathComponent
                 let correctPath = currentMusicDir.appendingPathComponent(filename)
                 
-                // Update the URL to the correct path
                 loadedDownloads[i] = Download(
                     id: loadedDownloads[i].id,
                     name: loadedDownloads[i].name,
@@ -245,7 +266,6 @@ class DownloadManager: ObservableObject {
                 
                 loadedDownloads[i].pendingDeletion = false
                 
-                // Verify file exists
                 if !FileManager.default.fileExists(atPath: correctPath.path) {
                     print("⚠️ [DownloadManager] Missing file: \(filename) at \(correctPath.path)")
                 } else {
@@ -253,7 +273,6 @@ class DownloadManager: ObservableObject {
                 }
             }
             
-            // Only keep downloads where files exist
             loadedDownloads = loadedDownloads.filter { download in
                 FileManager.default.fileExists(atPath: download.url.path)
             }
@@ -294,9 +313,3 @@ class DownloadManager: ObservableObject {
     }
 }
 
-extension Bundle {
-    var displayName: String? {
-        return object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ??
-               object(forInfoDictionaryKey: "CFBundleName") as? String
-    }
-}

@@ -219,103 +219,15 @@ struct YouTubeDownloadView: View {
     }
     
     private func startDownload(videoID: String) {
-        isDownloading = true
-        errorMessage = nil
-        consoleOutput = ""
-        
-        // Start monitoring log file
-        let logPath = NSTemporaryDirectory() + "ytdlp_debug.log"
-        try? "".write(toFile: logPath, atomically: true, encoding: .utf8)
-        
-        let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-            if let logContent = try? String(contentsOfFile: logPath, encoding: .utf8) {
-                DispatchQueue.main.async {
-                    consoleOutput = logContent
-                }
-            }
-        }
-        
-        Task {
-            do {
-                let (fileURL, title) = try await embeddedPython.downloadAudio(url: youtubeURL)
-                
-                timer.invalidate()
-                
-                if let finalLog = try? String(contentsOfFile: logPath, encoding: .utf8) {
-                    await MainActor.run {
-                        consoleOutput = finalLog
-                    }
-                }
-                
-                // Final duplicate check after download (in case of race condition)
-                if let existing = downloadManager.findDuplicateByVideoID(videoID: videoID, source: detectedSource) {
-                    // Delete the newly downloaded file
-                    try? FileManager.default.removeItem(at: fileURL)
-                    
-                    await MainActor.run {
-                        errorMessage = "Duplicate detected: \(existing.name)"
-                        isDownloading = false
-                        
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                            dismiss()
-                        }
-                    }
-                    return
-                }
-                
-                let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
-                
-                await MainActor.run {
-                    downloadedFileURL = fileURL
-                    downloadedTitle = title
-                    newTitle = title
-                    youtubeURL = ""
-                    isDownloading = false
-                    
-                    // Show rename dialog with pre-selected text
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        showRenameAlert = true
-                    }
-                }
-                
-            } catch {
-                timer.invalidate()
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    isDownloading = false
-                }
-            }
-        }
-    }
-    
-    private func finishDownload(keepOriginalName: Bool) {
-        guard let fileURL = downloadedFileURL else { return }
-        
-        let finalTitle = keepOriginalName ? downloadedTitle : newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
-        
-        // Extract video ID for storage
-        let videoID = extractVideoID(from: youtubeURL)
-        
-        if !keepOriginalName && finalTitle != downloadedTitle && !finalTitle.isEmpty {
-            updateMetadata(for: fileURL, newTitle: finalTitle)
-        }
-        
-        let download = Download(
-            name: finalTitle.isEmpty ? downloadedTitle : finalTitle,
-            url: fileURL,
-            thumbnailPath: thumbnailPath?.path,
+        // Start background download immediately
+        downloadManager.startBackgroundDownload(
+            url: youtubeURL,
             videoID: videoID,
-            source: detectedSource
+            source: detectedSource,
+            title: "New Song"
         )
         
-        downloadManager.addDownload(download)
-        
-        downloadedFileURL = nil
-        downloadedTitle = ""
-        newTitle = ""
-        
-        // Auto-close
+        // Close the download view immediately
         dismiss()
     }
     

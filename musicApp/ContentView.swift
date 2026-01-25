@@ -559,18 +559,19 @@ struct VolumeSlider: UIViewRepresentable {
 }
 
 struct DownloadBanner: View {
-    @ObservedObject var downloadManager: DownloadManager
+    let activeDownloads: [ActiveDownload]
     
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(downloadManager.activeDownloads.keys), id: \.self) { videoID in
+        VStack(spacing: 8) {
+            ForEach(activeDownloads) { download in
                 HStack(spacing: 12) {
                     ProgressView()
                         .scaleEffect(0.8)
                     
-                    Text("Downloading...")
+                    Text("Downloading \(download.title)...")
                         .font(.subheadline)
                         .foregroundColor(.primary)
+                        .lineLimit(1)
                     
                     Spacer()
                 }
@@ -578,10 +579,9 @@ struct DownloadBanner: View {
                 .padding(.vertical, 12)
                 .background(.ultraThinMaterial)
                 .cornerRadius(12)
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
             }
         }
-        .padding(.top, 50) // Below status bar
+        .padding(.horizontal, 16)
+        .padding(.top, 50)
     }
 }

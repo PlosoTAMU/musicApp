@@ -25,3 +25,17 @@ struct Download: Identifiable, Codable {
         self.pendingDeletion = false
     }
 }
+
+struct ActiveDownload: Identifiable {
+    let id: UUID
+    let videoID: String
+    let title: String
+    var progress: Double
+}
+
+extension Bundle {
+    var displayName: String? {
+        return object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ??
+               object(forInfoDictionaryKey: "CFBundleName") as? String
+    }
+}
