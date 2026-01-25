@@ -102,9 +102,9 @@ class EmbeddedPython: ObservableObject {
         updateStatus("Starting download...")
         updateProgress(0.0)
         
-        // Use the Music directory from DownloadManager
+        // Save to Music directory (visible in Files app)
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let outputDir = documentsPath.appendingPathComponent("Music/YouTube Downloads", isDirectory: true)
+        let outputDir = documentsPath.appendingPathComponent("Music", isDirectory: true)
         try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
         
         return try await withCheckedThrowingContinuation { continuation in
@@ -136,6 +136,8 @@ class EmbeddedPython: ObservableObject {
                     
                     self?.updateStatus("Complete!")
                     self?.updateProgress(1.0)
+                    
+                    print("✅ [downloadAudio] File saved to Music directory: \(compressedURL.path)")
                     
                     continuation.resume(returning: (compressedURL, title))
                 } catch {

@@ -9,24 +9,26 @@ class DownloadManager: ObservableObject {
     private let musicDirectory: URL
     
     init() {
-        // Store in Files app accessible location
         let fileManager = FileManager.default
         
-        // Get the app's Documents directory (visible in Files app)
+        // Get the app's Documents directory (visible in Files app under "On My iPhone/iPad")
         let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         
-        // Create a Music folder
+        // Create a Music folder that will be visible in Files app
         musicDirectory = documentsPath.appendingPathComponent("Music", isDirectory: true)
         try? fileManager.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
         
-        // Make it visible in Files app
+        // Make it accessible in Files app by NOT excluding it from backup
         var resourceValues = URLResourceValues()
         resourceValues.isExcludedFromBackup = false
-        try? (musicDirectory as NSURL).setResourceValues(resourceValues)
+        var musicDirURL = musicDirectory
+        try? musicDirURL.setResourceValues(resourceValues)
         
         downloadsFileURL = documentsPath.appendingPathComponent("downloads.json")
         
         print("📁 Music directory: \(musicDirectory.path)")
+        print("📁 Will be visible in Files app under: On My iPhone > \(Bundle.main.displayName ?? "App") > Music")
+        
         loadDownloads()
     }
     
@@ -42,25 +44,36 @@ class DownloadManager: ObservableObject {
         // Ensure the file is in the Music directory
         let targetURL = musicDirectory.appendingPathComponent(download.url.lastPathComponent)
         
-        // Move file if not already there
-        if download.url != targetURL {
-            try? FileManager.default.moveItem(at: download.url, to: targetURL)
-            
-            // Update download with new URL
-            var updatedDownload = download
-            updatedDownload = Download(
-                id: download.id,
-                name: download.name,
-                url: targetURL,
-                thumbnailPath: download.thumbnailPath,
-                videoID: download.videoID,
-                source: download.source
-            )
-            downloads.append(updatedDownload)
-        } else {
-            downloads.append(download)
+        var finalDownload = download
+        
+        // Move file if not already in Music directory
+        if download.url.path != targetURL.path {
+            do {
+                // If target exists, remove it first
+                if FileManager.default.fileExists(atPath: targetURL.path) {
+                    try FileManager.default.removeItem(at: targetURL)
+                }
+                
+                try FileManager.default.moveItem(at: download.url, to: targetURL)
+                print("✅ [DownloadManager] Moved file to Music directory: \(targetURL.lastPathComponent)")
+                
+                // Create updated download with new URL
+                finalDownload = Download(
+                    id: download.id,
+                    name: download.name,
+                    url: targetURL,
+                    thumbnailPath: download.thumbnailPath,
+                    videoID: download.videoID,
+                    source: download.source
+                )
+            } catch {
+                print("❌ [DownloadManager] Failed to move file: \(error)")
+                // If move fails, use original
+                finalDownload = download
+            }
         }
         
+        downloads.append(finalDownload)
         saveDownloads()
     }
     
@@ -187,7 +200,7 @@ class DownloadManager: ObservableObject {
             loadedDownloads = loadedDownloads.filter { download in
                 let exists = FileManager.default.fileExists(atPath: download.url.path)
                 if !exists {
-                    print("⚠️ [DownloadManager] Missing file: \(download.name)")
+                    print("⚠️ [DownloadManager] Missing file: \(download.name) at \(download.url.path)")
                 }
                 return exists
             }
@@ -215,5 +228,12 @@ class DownloadManager: ObservableObject {
                 }
             }
         }
+    }
+}
+
+extension Bundle {
+    var displayName: String? {
+        return object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ??
+               object(forInfoDictionaryKey: "CFBundleName") as? String
     }
 }
