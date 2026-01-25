@@ -6,10 +6,27 @@ class DownloadManager: ObservableObject {
     private var deletionTimers: [UUID: Timer] = [:]
     
     private let downloadsFileURL: URL
+    private let musicDirectory: URL
     
     init() {
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        // Store in Files app accessible location
+        let fileManager = FileManager.default
+        
+        // Get the app's Documents directory (visible in Files app)
+        let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        
+        // Create a Music folder
+        musicDirectory = documentsPath.appendingPathComponent("Music", isDirectory: true)
+        try? fileManager.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
+        
+        // Make it visible in Files app
+        var resourceValues = URLResourceValues()
+        resourceValues.isExcludedFromBackup = false
+        try? (musicDirectory as NSURL).setResourceValues(resourceValues)
+        
         downloadsFileURL = documentsPath.appendingPathComponent("downloads.json")
+        
+        print("📁 Music directory: \(musicDirectory.path)")
         loadDownloads()
     }
     
@@ -17,25 +34,47 @@ class DownloadManager: ObservableObject {
         downloads.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     
+    func getMusicDirectory() -> URL {
+        return musicDirectory
+    }
+    
     func addDownload(_ download: Download) {
-        downloads.append(download)
+        // Ensure the file is in the Music directory
+        let targetURL = musicDirectory.appendingPathComponent(download.url.lastPathComponent)
+        
+        // Move file if not already there
+        if download.url != targetURL {
+            try? FileManager.default.moveItem(at: download.url, to: targetURL)
+            
+            // Update download with new URL
+            var updatedDownload = download
+            updatedDownload = Download(
+                id: download.id,
+                name: download.name,
+                url: targetURL,
+                thumbnailPath: download.thumbnailPath,
+                videoID: download.videoID,
+                source: download.source
+            )
+            downloads.append(updatedDownload)
+        } else {
+            downloads.append(download)
+        }
+        
         saveDownloads()
     }
     
     func markForDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
         guard let index = downloads.firstIndex(where: { $0.id == download.id }) else { return }
         
-        // If already pending, cancel it
         if downloads[index].pendingDeletion {
             cancelDeletion(download)
             return
         }
         
-        // Mark as pending deletion
         downloads[index].pendingDeletion = true
         objectWillChange.send()
         
-        // Set timer for actual deletion (5 seconds)
         let timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
             self?.confirmDeletion(download, onDelete: onDelete)
         }
@@ -53,18 +92,14 @@ class DownloadManager: ObservableObject {
     }
     
     private func confirmDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
-        // Notify audio player to stop if this is playing
         onDelete(download)
         
-        // Delete the actual file
         try? FileManager.default.removeItem(at: download.url)
         
-        // Delete thumbnail if exists
         if let thumbPath = download.thumbnailPath {
             try? FileManager.default.removeItem(atPath: thumbPath)
         }
         
-        // Remove from memory and storage
         downloads.removeAll { $0.id == download.id }
         deletionTimers.removeValue(forKey: download.id)
         saveDownloads()
@@ -74,12 +109,7 @@ class DownloadManager: ObservableObject {
         downloads.first { $0.id == id && !$0.pendingDeletion }
     }
     
-    func hasVideoID(_ videoID: String) -> Bool {
-        return downloads.contains { $0.videoID == videoID && !$0.pendingDeletion }
-    }
-    
     func findDuplicateByVideoID(videoID: String, source: DownloadSource) -> Download? {
-        // First check by exact videoID match
         if let existing = downloads.first(where: { 
             $0.videoID == videoID && 
             $0.source == source && 
@@ -89,15 +119,13 @@ class DownloadManager: ObservableObject {
             return existing
         }
         
-        // For YouTube, also check common video ID variations
         if source == .youtube {
-            // Remove common suffixes/prefixes that might be in stored IDs
             let cleanVideoID = videoID.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
             
             if let existing = downloads.first(where: { download in
                 guard download.source == .youtube, 
-                    !download.pendingDeletion,
-                    let storedID = download.videoID else { return false }
+                      !download.pendingDeletion,
+                      let storedID = download.videoID else { return false }
                 
                 let cleanStoredID = storedID.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
                 return cleanStoredID == cleanVideoID
@@ -106,7 +134,6 @@ class DownloadManager: ObservableObject {
                 return existing
             }
             
-            // Also check if the video ID is in the filename
             if let existing = downloads.first(where: { download in
                 guard download.source == .youtube, !download.pendingDeletion else { return false }
                 let filename = download.url.lastPathComponent
@@ -117,12 +144,11 @@ class DownloadManager: ObservableObject {
             }
         }
         
-        // For Spotify, check track ID
         if source == .spotify {
             if let existing = downloads.first(where: { download in
                 guard download.source == .spotify,
-                    !download.pendingDeletion,
-                    let storedID = download.videoID else { return false }
+                      !download.pendingDeletion,
+                      let storedID = download.videoID else { return false }
                 return storedID == videoID
             }) {
                 print("🔍 [Duplicate] Found Spotify match: \(existing.name)")
@@ -137,7 +163,6 @@ class DownloadManager: ObservableObject {
     private func saveDownloads() {
         do {
             let encoder = JSONEncoder()
-            // Only save downloads that aren't pending deletion
             let downloadsToSave = downloads.filter { !$0.pendingDeletion }
             let data = try encoder.encode(downloadsToSave)
             try data.write(to: downloadsFileURL)
@@ -158,20 +183,25 @@ class DownloadManager: ObservableObject {
             let decoder = JSONDecoder()
             var loadedDownloads = try decoder.decode([Download].self, from: data)
             
-            // Ensure all loaded downloads have pendingDeletion = false
+            // Verify files still exist
+            loadedDownloads = loadedDownloads.filter { download in
+                let exists = FileManager.default.fileExists(atPath: download.url.path)
+                if !exists {
+                    print("⚠️ [DownloadManager] Missing file: \(download.name)")
+                }
+                return exists
+            }
+            
             for i in 0..<loadedDownloads.count {
                 loadedDownloads[i].pendingDeletion = false
             }
             
             downloads = loadedDownloads
-            
-            // Validate thumbnails exist, regenerate if missing
             validateThumbnails()
             
-            print("✅ [DownloadManager] Loaded \(downloads.count) downloads")
+            print("✅ [DownloadManager] Loaded \(downloads.count) downloads from Music folder")
         } catch {
             print("❌ [DownloadManager] Failed to load: \(error)")
-            // Try to recover by loading as empty array
             downloads = []
         }
     }

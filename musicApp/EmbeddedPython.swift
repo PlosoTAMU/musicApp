@@ -102,8 +102,9 @@ class EmbeddedPython: ObservableObject {
         updateStatus("Starting download...")
         updateProgress(0.0)
         
+        // Use the Music directory from DownloadManager
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let outputDir = documentsPath.appendingPathComponent("YouTube Downloads", isDirectory: true)
+        let outputDir = documentsPath.appendingPathComponent("Music/YouTube Downloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
         
         return try await withCheckedThrowingContinuation { continuation in

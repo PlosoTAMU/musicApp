@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import MediaPlayer
 
 class AudioPlayerManager: NSObject, ObservableObject {
     @Published var isPlaying = false
@@ -12,21 +13,134 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var avPlayer: AVPlayer?
     private var playerObserver: Any?
     private var displayLink: CADisplayLink?
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     
     override init() {
         super.init()
         setupAudioSession()
+        setupRemoteControls()
+        setupInterruptionHandling()
         startTimeUpdates()
     }
     
     private func setupAudioSession() {
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
-            try AVAudioSession.sharedInstance().setActive(true)
-            print("✅ Audio session configured")
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try audioSession.setActive(true)
+            
+            // Enable background audio
+            UIApplication.shared.beginReceivingRemoteControlEvents()
+            
+            print("✅ Audio session configured with background playback")
         } catch {
             print("❌ Failed to setup audio session: \(error)")
         }
+    }
+    
+    private func setupRemoteControls() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+        
+        commandCenter.playCommand.addTarget { [weak self] _ in
+            self?.resume()
+            return .success
+        }
+        
+        commandCenter.pauseCommand.addTarget { [weak self] _ in
+            self?.pause()
+            return .success
+        }
+        
+        commandCenter.nextTrackCommand.addTarget { [weak self] _ in
+            self?.next()
+            return .success
+        }
+        
+        commandCenter.previousTrackCommand.addTarget { [weak self] _ in
+            self?.previous()
+            return .success
+        }
+        
+        commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
+            if let event = event as? MPChangePlaybackPositionCommandEvent {
+                self?.seek(to: event.positionTime)
+                return .success
+            }
+            return .commandFailed
+        }
+    }
+    
+    private func setupInterruptionHandling() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange),
+            name: AVAudioSession.routeChangeNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleInterruption(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+        
+        switch type {
+        case .began:
+            pause()
+        case .ended:
+            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+            if options.contains(.shouldResume) {
+                resume()
+            }
+        @unknown default:
+            break
+        }
+    }
+    
+    @objc private func handleRouteChange(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+            return
+        }
+        
+        switch reason {
+        case .oldDeviceUnavailable:
+            // Headphones unplugged - pause playback
+            pause()
+        default:
+            break
+        }
+    }
+    
+    private func updateNowPlayingInfo() {
+        guard let track = currentTrack else { return }
+        
+        var nowPlayingInfo = [String: Any]()
+        nowPlayingInfo[MPMediaItemPropertyTitle] = track.name
+        nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = track.folderName
+        nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
+        nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        
+        // Add artwork if available
+        if let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+           let image = UIImage(contentsOfFile: thumbnailPath.path) {
+            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
+        }
+        
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
     
     func loadPlaylist(_ tracks: [Track], shuffle: Bool = false) {
@@ -46,10 +160,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         stopTimeUpdates()
         removePlayerObserver()
         
+        // Start background task
+        beginBackgroundTask()
+        
         do {
             try AVAudioSession.sharedInstance().setActive(true)
             
-            // Use resolved URL
             guard let trackURL = track.resolvedURL() else {
                 print("❌ Could not resolve track URL")
                 return
@@ -71,11 +187,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
             Task { @MainActor in
                 if let duration = try? await playerItem.asset.load(.duration) {
                     self.duration = CMTimeGetSeconds(duration)
+                    self.updateNowPlayingInfo()
                 }
             }
             
             setupPlayerObserver()
             startTimeUpdates()
+            updateNowPlayingInfo()
             
             print("▶️ Now playing: \(track.name)")
             
@@ -87,11 +205,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func pause() {
         avPlayer?.pause()
         isPlaying = false
+        updateNowPlayingInfo()
+        endBackgroundTask()
     }
     
     func resume() {
         avPlayer?.play()
         isPlaying = true
+        updateNowPlayingInfo()
+        beginBackgroundTask()
     }
     
     func stop() {
@@ -103,11 +225,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
         currentTrack = nil
         currentTime = 0
         duration = 0
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        endBackgroundTask()
     }
     
     func seek(to time: Double) {
         avPlayer?.seek(to: CMTime(seconds: time, preferredTimescale: 600))
         currentTime = time
+        updateNowPlayingInfo()
     }
     
     func skip(seconds: Double) {
@@ -152,6 +277,23 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - Background Task Management
+    
+    private func beginBackgroundTask() {
+        endBackgroundTask()
+        
+        backgroundTask = UIApplication.shared.beginBackgroundTask { [weak self] in
+            self?.endBackgroundTask()
+        }
+    }
+    
+    private func endBackgroundTask() {
+        if backgroundTask != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
+    }
+    
     // MARK: - Observers
     
     private func setupPlayerObserver() {
@@ -188,11 +330,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let avPlayer = self.avPlayer else { return }
             self.currentTime = CMTimeGetSeconds(avPlayer.currentTime())
+            
+            // Update Now Playing info periodically
+            if Int(self.currentTime) % 5 == 0 {
+                self.updateNowPlayingInfo()
+            }
         }
     }
     
     deinit {
         stopTimeUpdates()
         removePlayerObserver()
+        endBackgroundTask()
+        NotificationCenter.default.removeObserver(self)
     }
 }

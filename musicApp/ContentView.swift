@@ -503,14 +503,43 @@ struct NowPlayingView: View {
     }
 }
 struct VolumeSlider: UIViewRepresentable {
+    class Coordinator: NSObject {
+        var parent: VolumeSlider
+        
+        init(_ parent: VolumeSlider) {
+            self.parent = parent
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
     func makeUIView(context: Context) -> MPVolumeView {
         let volumeView = MPVolumeView(frame: .zero)
         volumeView.showsRouteButton = false
+        volumeView.setVolumeThumbImage(UIImage(), for: .normal)
         
-        // Style the slider
-        if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
-            slider.minimumTrackTintColor = .white
-            slider.maximumTrackTintColor = .white.withAlphaComponent(0.3)
+        // Find and configure the slider
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
+                slider.minimumTrackTintColor = .white
+                slider.maximumTrackTintColor = .white.withAlphaComponent(0.3)
+                slider.isContinuous = true
+                
+                // Create custom thumb image for better visibility
+                let thumbSize: CGFloat = 14
+                let thumbImage = UIGraphicsImageRenderer(size: CGSize(width: thumbSize, height: thumbSize)).image { context in
+                    UIColor.white.setFill()
+                    let rect = CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize)
+                    context.cgContext.fillEllipse(in: rect)
+                    
+                    // Add shadow for better visibility
+                    context.cgContext.setShadow(offset: CGSize(width: 0, height: 1), blur: 2, color: UIColor.black.withAlphaComponent(0.3).cgColor)
+                }
+                slider.setThumbImage(thumbImage, for: .normal)
+                slider.setThumbImage(thumbImage, for: .highlighted)
+            }
         }
         
         return volumeView
