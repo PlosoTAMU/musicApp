@@ -300,7 +300,6 @@ class EmbeddedPython: ObservableObject {
         
         let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
         
-        // If thumbnail already exists and is valid, don't re-download
         if FileManager.default.fileExists(atPath: savePath.path),
         let _ = UIImage(contentsOfFile: savePath.path) {
             print("✅ [Thumbnail] Already exists: \(savePath.lastPathComponent)")
@@ -308,36 +307,56 @@ class EmbeddedPython: ObservableObject {
         }
         
         Task {
-            do {
-                let (data, response) = try await URLSession.shared.data(from: thumbnailURL)
-                
-                // Verify it's a valid image
-                guard let httpResponse = response as? HTTPURLResponse,
-                    httpResponse.statusCode == 200,
-                    let _ = UIImage(data: data) else {
-                    print("❌ [Thumbnail] Invalid image data")
-                    // Try fallback URL
-                    tryFallbackThumbnail(for: filename, originalURL: url)
-                    return
+            // Try up to 2 times
+            for attempt in 1...2 {
+                do {
+                    let (data, response) = try await URLSession.shared.data(from: thumbnailURL)
+                    
+                    guard let httpResponse = response as? HTTPURLResponse,
+                        httpResponse.statusCode == 200,
+                        let _ = UIImage(data: data) else {
+                        if attempt == 2 {
+                            print("❌ [Thumbnail] Invalid image data after \(attempt) attempts")
+                            tryFallbackThumbnail(for: filename, originalURL: url)
+                        } else {
+                            print("⚠️ [Thumbnail] Attempt \(attempt) failed, retrying...")
+                            try? await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second
+                            continue
+                        }
+                        return
+                    }
+                    
+                    try data.write(to: savePath, options: .atomic)
+                    
+                    if let _ = UIImage(contentsOfFile: savePath.path) {
+                        print("✅ [Thumbnail] Saved and verified on attempt \(attempt): \(savePath.lastPathComponent)")
+                        return
+                    } else {
+                        if attempt == 2 {
+                            print("⚠️ [Thumbnail] Saved but unreadable after \(attempt) attempts")
+                            try? FileManager.default.removeItem(at: savePath)
+                            tryFallbackThumbnail(for: filename, originalURL: url)
+                        } else {
+                            try? FileManager.default.removeItem(at: savePath)
+                            try? await Task.sleep(nanoseconds: 1_000_000_000)
+                            continue
+                        }
+                    }
+                } catch {
+                    if attempt == 2 {
+                        print("❌ [Thumbnail] Failed after \(attempt) attempts: \(error)")
+                        tryFallbackThumbnail(for: filename, originalURL: url)
+                    } else {
+                        print("⚠️ [Thumbnail] Attempt \(attempt) failed, retrying...")
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    }
                 }
-                
-                // Save with atomic write to prevent corruption
-                try data.write(to: savePath, options: .atomic)
-                
-                // Verify the saved file is readable
-                if let _ = UIImage(contentsOfFile: savePath.path) {
-                    print("✅ [Thumbnail] Saved and verified: \(savePath.lastPathComponent)")
-                } else {
-                    print("⚠️ [Thumbnail] Saved but unreadable, retrying...")
-                    try? FileManager.default.removeItem(at: savePath)
-                    tryFallbackThumbnail(for: filename, originalURL: url)
-                }
-            } catch {
-                print("❌ [Thumbnail] Failed to download: \(error)")
-                tryFallbackThumbnail(for: filename, originalURL: url)
             }
         }
     }
+
+
+    
     private func tryFallbackThumbnail(for filename: String, originalURL: String) {
         // Extract video ID from filename or URL
         guard let videoID = filename.components(separatedBy: ".").first else { return }

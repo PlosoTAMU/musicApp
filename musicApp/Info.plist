@@ -14,5 +14,7 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>AVInitialRouteSharingPolicy</key>
+	<string>LongFormAudio</string>
 </dict>
 </plist>

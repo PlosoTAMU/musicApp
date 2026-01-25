@@ -6,30 +6,30 @@ struct YouTubeDownloadView: View {
     @State private var youtubeURL = ""
     @State private var errorMessage: String?
     @State private var detectedSource: DownloadSource = .youtube
+    @State private var hasProcessed = false
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
-                HStack {
-                    Image(systemName: detectedSource == .youtube ? "play.rectangle.fill" : "music.note")
-                        .font(.title3)
-                        .foregroundColor(detectedSource == .youtube ? .red : .green)
-                    
-                    Text("Download from \(detectedSource == .youtube ? "YouTube" : "Spotify")")
-                        .font(.headline)
-                }
-                
-                Text("Paste a YouTube or Spotify URL")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .padding(.top, 20)
-                
                 if let error = errorMessage {
-                    Text(error)
-                        .foregroundColor(.red)
-                        .font(.caption)
-                        .padding(.horizontal)
+                    VStack(spacing: 16) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 60))
+                            .foregroundColor(.orange)
+                        
+                        Text(error)
+                            .foregroundColor(.red)
+                            .font(.body)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                    .padding(.top, 40)
+                } else {
+                    ProgressView()
+                        .padding(.top, 40)
+                    Text("Processing...")
+                        .foregroundColor(.secondary)
                 }
                 
                 Spacer()
@@ -45,7 +45,10 @@ struct YouTubeDownloadView: View {
                 }
             }
             .onAppear {
-                checkClipboardAndStart()
+                if !hasProcessed {
+                    hasProcessed = true
+                    checkClipboardAndStart()
+                }
             }
         }
     }
@@ -63,7 +66,7 @@ struct YouTubeDownloadView: View {
         }
         
         guard let (source, videoID) = detectSourceAndExtractID(from: clipboardString) else {
-            errorMessage = "Invalid URL format. Please copy a valid YouTube or Spotify link."
+            errorMessage = "Invalid URL format.\nPlease copy a valid YouTube or Spotify link."
             return
         }
         
@@ -71,16 +74,19 @@ struct YouTubeDownloadView: View {
         detectedSource = source
         
         if let existing = downloadManager.findDuplicateByVideoID(videoID: videoID, source: source) {
-            errorMessage = "Already downloaded: \(existing.name)"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                dismiss()
-            }
+            errorMessage = "Already downloaded:\n\(existing.name)"
             return
         }
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            startDownload(videoID: videoID)
-        }
+        // Start download and close immediately
+        downloadManager.startBackgroundDownload(
+            url: youtubeURL,
+            videoID: videoID,
+            source: detectedSource,
+            title: "Loading..."
+        )
+        
+        dismiss()
     }
     
     private func detectSourceAndExtractID(from urlString: String) -> (DownloadSource, String)? {
@@ -146,18 +152,5 @@ struct YouTubeDownloadView: View {
         }
         
         return nil
-    }
-    
-    private func startDownload(videoID: String) {
-        // Start background download immediately
-        downloadManager.startBackgroundDownload(
-            url: youtubeURL,
-            videoID: videoID,
-            source: detectedSource,
-            title: "Downloading..."
-        )
-        
-        // Close the download view immediately
-        dismiss()
     }
 }

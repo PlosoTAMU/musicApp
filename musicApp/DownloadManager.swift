@@ -46,6 +46,19 @@ class DownloadManager: ObservableObject {
             
             do {
                 let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: url)
+                
+                // Update the active download with actual title
+                await MainActor.run {
+                    if let index = self.activeDownloads.firstIndex(where: { $0.videoID == videoID }) {
+                        self.activeDownloads[index] = ActiveDownload(
+                            id: self.activeDownloads[index].id,
+                            videoID: videoID,
+                            title: downloadedTitle,
+                            progress: 0.9
+                        )
+                    }
+                }
+                
                 let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                 
                 let download = Download(
