@@ -1,6 +1,6 @@
 import Foundation
 
-struct Track: Identifiable, Codable {
+struct Track: Identifiable, Codable, Equatable {
     let id: UUID
     let name: String
     let url: URL
@@ -19,6 +19,11 @@ struct Track: Identifiable, Codable {
         if folderName != "YouTube Downloads" {
             self.bookmarkData = try? url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
         }
+    }
+    
+    // Equatable conformance
+    static func == (lhs: Track, rhs: Track) -> Bool {
+        lhs.id == rhs.id
     }
     
     // Get the resolved URL (handles security-scoped resources)

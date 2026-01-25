@@ -143,8 +143,15 @@ struct MiniPlayerBar: View {
     }
     
     private func getThumbnailImage(for track: Track?) -> UIImage? {
-        guard let track = track,
-              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+        guard let track = track else { return nil }
+        
+        // Get thumbnail through DownloadManager
+        let thumbnailsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Thumbnails", isDirectory: true)
+        let filename = track.url.lastPathComponent
+        let thumbnailPath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+        
+        guard FileManager.default.fileExists(atPath: thumbnailPath.path),
               let image = UIImage(contentsOfFile: thumbnailPath.path) else {
             return nil
         }
@@ -434,7 +441,7 @@ struct NowPlayingView: View {
         .onAppear {
             updateBackgroundImage()
         }
-        .onChange(of: audioPlayer.currentTrack) { _ in
+        .onChange(of: audioPlayer.currentTrack?.id) { _ in
             updateBackgroundImage()
         }
         .gesture(
@@ -452,8 +459,18 @@ struct NowPlayingView: View {
     }
     
     private func updateBackgroundImage() {
-        guard let track = audioPlayer.currentTrack,
-              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+        guard let track = audioPlayer.currentTrack else {
+            backgroundImage = nil
+            return
+        }
+        
+        // Get thumbnail path manually
+        let thumbnailsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Thumbnails", isDirectory: true)
+        let filename = track.url.lastPathComponent
+        let thumbnailPath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+        
+        guard FileManager.default.fileExists(atPath: thumbnailPath.path),
               let originalImage = UIImage(contentsOfFile: thumbnailPath.path) else {
             backgroundImage = nil
             return
