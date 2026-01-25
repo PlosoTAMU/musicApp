@@ -51,7 +51,7 @@ struct ContentView: View {
         }
         .overlay(alignment: .top) {
             if !downloadManager.activeDownloads.isEmpty {
-                DownloadBanner(downloadManager: downloadManager)
+                DownloadBanner(activeDownloads: downloadManager.activeDownloads)
                     .transition(.move(edge: .top))
             }
         }
