@@ -2,14 +2,15 @@ import SwiftUI
 import AVFoundation
 import MediaPlayer
 
-// MARK: - Main ContentView with TabView
-struct ContentView: View {
-    @StateObject private var audioPlayer = AudioPlayerManager()
-    @StateObject private var downloadManager = DownloadManager()
-    @StateObject private var playlistManager = PlaylistManager()
-    @State private var showFolderPicker = false
-    @State private var showYouTubeDownload = false
-    @State private var showNowPlaying = false
+// MARK: - Full Now Playing View
+struct NowPlayingView: View {
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    @Binding var isPresented: Bool
+    @State private var isSeeking = false
+    @State private var seekValue: Double = 0
+    @State private var showPlaylistPicker = false
+    @State private var isHoldingRewind = false
+    @State private var isHoldingFF = false
     
     var body: some View {
         GeometryReader { geometry in
@@ -236,6 +237,21 @@ struct ContentView: View {
             Text("Playlist picker coming soon")
                 .padding()
         }
+    }
+    
+    private func formatTime(_ time: Double) -> String {
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    private func getThumbnailImage(for track: Track?) -> UIImage? {
+        guard let track = track,
+              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
+            return nil
+        }
+        return image
     }
 }
 
