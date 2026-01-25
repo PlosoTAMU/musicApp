@@ -244,7 +244,7 @@ class EmbeddedPython: ObservableObject {
         
         if let thumbnailURL = thumbnailURL {
             trackMetadata["thumbnail"] = thumbnailURL
-            // Download and save thumbnail
+            // Download and save thumbnail with retry logic
             downloadThumbnail(url: thumbnailURL, for: filename)
         }
         
@@ -252,13 +252,13 @@ class EmbeddedPython: ObservableObject {
         
         do {
             let data = try JSONEncoder().encode(metadata)
-            try data.write(to: metadataURL)
+            try data.write(to: metadataURL, options: .atomic)
             print("✅ [Metadata] Saved: \(filename) -> \(title)")
         } catch {
             print("❌ [Metadata] Failed to save: \(error)")
         }
     }
-    
+        
     func getTitle(for fileURL: URL) -> String? {
         let metadata = loadMetadata()
         let filename = fileURL.lastPathComponent
@@ -270,27 +270,99 @@ class EmbeddedPython: ObservableObject {
         let thumbnailsDir = getThumbnailsDirectory()
         let thumbnailPath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
         
-        if FileManager.default.fileExists(atPath: thumbnailPath.path) {
+        // Check if file exists AND is readable
+        if FileManager.default.fileExists(atPath: thumbnailPath.path),
+        let _ = UIImage(contentsOfFile: thumbnailPath.path) {
             return thumbnailPath
         }
+        
+        // If thumbnail is missing or corrupted, try to regenerate it
+        print("⚠️ [Thumbnail] Missing or corrupted for: \(filename)")
+        let metadata = loadMetadata()
+        if let trackMeta = metadata[filename],
+        let thumbnailURL = trackMeta["thumbnail"] {
+            print("🔄 [Thumbnail] Attempting to re-download...")
+            downloadThumbnail(url: thumbnailURL, for: filename)
+        }
+        
         return nil
     }
     
     private func downloadThumbnail(url: String, for filename: String) {
         guard let thumbnailURL = URL(string: url) else { return }
         
+        let thumbnailsDir = getThumbnailsDirectory()
+        try? FileManager.default.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
+        
+        let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+        
+        // If thumbnail already exists and is valid, don't re-download
+        if FileManager.default.fileExists(atPath: savePath.path),
+        let _ = UIImage(contentsOfFile: savePath.path) {
+            print("✅ [Thumbnail] Already exists: \(savePath.lastPathComponent)")
+            return
+        }
+        
         Task {
             do {
-                let (data, _) = try await URLSession.shared.data(from: thumbnailURL)
-                let thumbnailsDir = getThumbnailsDirectory()
-                try? FileManager.default.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
+                let (data, response) = try await URLSession.shared.data(from: thumbnailURL)
                 
-                let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
-                try data.write(to: savePath)
-                print("✅ [Thumbnail] Saved: \(savePath.lastPathComponent)")
+                // Verify it's a valid image
+                guard let httpResponse = response as? HTTPURLResponse,
+                    httpResponse.statusCode == 200,
+                    let _ = UIImage(data: data) else {
+                    print("❌ [Thumbnail] Invalid image data")
+                    // Try fallback URL
+                    tryFallbackThumbnail(for: filename, originalURL: url)
+                    return
+                }
+                
+                // Save with atomic write to prevent corruption
+                try data.write(to: savePath, options: .atomic)
+                
+                // Verify the saved file is readable
+                if let _ = UIImage(contentsOfFile: savePath.path) {
+                    print("✅ [Thumbnail] Saved and verified: \(savePath.lastPathComponent)")
+                } else {
+                    print("⚠️ [Thumbnail] Saved but unreadable, retrying...")
+                    try? FileManager.default.removeItem(at: savePath)
+                    tryFallbackThumbnail(for: filename, originalURL: url)
+                }
             } catch {
                 print("❌ [Thumbnail] Failed to download: \(error)")
+                tryFallbackThumbnail(for: filename, originalURL: url)
             }
+        }
+    }
+    private func tryFallbackThumbnail(for filename: String, originalURL: String) {
+        // Extract video ID from filename or URL
+        guard let videoID = filename.components(separatedBy: ".").first else { return }
+        
+        // Try different thumbnail qualities
+        let fallbackURLs = [
+            "https://img.youtube.com/vi/\(videoID)/hqdefault.jpg",
+            "https://img.youtube.com/vi/\(videoID)/mqdefault.jpg",
+            "https://img.youtube.com/vi/\(videoID)/default.jpg"
+        ]
+        
+        Task {
+            for fallbackURL in fallbackURLs {
+                do {
+                    let url = URL(string: fallbackURL)!
+                    let (data, _) = try await URLSession.shared.data(from: url)
+                    
+                    if let _ = UIImage(data: data) {
+                        let thumbnailsDir = getThumbnailsDirectory()
+                        let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+                        try data.write(to: savePath, options: .atomic)
+                        print("✅ [Thumbnail] Saved fallback: \(savePath.lastPathComponent)")
+                        return
+                    }
+                } catch {
+                    continue
+                }
+            }
+            print("❌ [Thumbnail] All fallback attempts failed for: \(filename)")
         }
     }
     
@@ -310,7 +382,12 @@ class EmbeddedPython: ObservableObject {
     
     private func getThumbnailsDirectory() -> URL {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documentsPath.appendingPathComponent("Thumbnails", isDirectory: true)
+        let thumbnailsDir = documentsPath.appendingPathComponent("Thumbnails", isDirectory: true)
+        
+        // Ensure directory exists
+        try? FileManager.default.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
+        
+        return thumbnailsDir
     }
     
     // MARK: - Optimized Python Execution

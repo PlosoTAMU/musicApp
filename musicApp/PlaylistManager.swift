@@ -81,7 +81,7 @@ class PlaylistManager: ObservableObject {
         return asset.duration.seconds
     }
     
-    private func savePlaylists() {
+    func savePlaylists() {
         do {
             let encoder = JSONEncoder()
             let data = try encoder.encode(playlists)

@@ -58,69 +58,74 @@ struct MiniPlayerBar: View {
     @Binding var showNowPlaying: Bool
     
     var body: some View {
-        Button {
-            showNowPlaying = true
-        } label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
-                        Image(uiImage: thumbnailPath)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 48, height: 48)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .foregroundColor(.gray)
-                            )
+        HStack(spacing: 12) {
+            // Thumbnail and track info (tappable to open full view)
+            Button {
+                showNowPlaying = true
+            } label: {
+                HStack(spacing: 12) {
+                    ZStack {
+                        if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
+                            Image(uiImage: thumbnailPath)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 48, height: 48)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        } else {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.gray.opacity(0.3))
+                                .frame(width: 48, height: 48)
+                                .overlay(
+                                    Image(systemName: "music.note")
+                                        .foregroundColor(.gray)
+                                )
+                        }
                     }
-                }
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                        .foregroundColor(.primary)
                     
-                    Text(audioPlayer.currentTrack?.folderName ?? "")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                
-                Spacer()
-                
-                Button {
-                    if audioPlayer.isPlaying {
-                        audioPlayer.pause()
-                    } else {
-                        audioPlayer.resume()
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                            .foregroundColor(.primary)
+                        
+                        Text(audioPlayer.currentTrack?.folderName ?? "")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
-                } label: {
-                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                        .foregroundColor(.primary)
                 }
-                .buttonStyle(.plain)
-                
-                Button {
-                    audioPlayer.next()
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.title3)
-                        .foregroundColor(.primary)
-                }
-                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .buttonStyle(.plain)
+            
+            Spacer()
+            
+            // Play/Pause button
+            Button {
+                if audioPlayer.isPlaying {
+                    audioPlayer.pause()
+                } else {
+                    audioPlayer.resume()
+                }
+            } label: {
+                Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.title2)
+                    .foregroundColor(.primary)
+            }
+            .buttonStyle(.plain)
+            
+            // Next button
+            Button {
+                audioPlayer.next()
+            } label: {
+                Image(systemName: "forward.fill")
+                    .font(.title3)
+                    .foregroundColor(.primary)
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
         .background(.ultraThinMaterial)
         .overlay(
             Rectangle()
@@ -128,7 +133,7 @@ struct MiniPlayerBar: View {
                 .frame(height: 0.5),
             alignment: .top
         )
-        .padding(.bottom, 49)  // Add padding to sit above tab bar
+        .padding(.bottom, 49)  // Sit above tab bar
     }
     
     private func getThumbnailImage(for track: Track?) -> UIImage? {

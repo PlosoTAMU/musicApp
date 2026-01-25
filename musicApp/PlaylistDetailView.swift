@@ -7,12 +7,13 @@ struct PlaylistDetailView: View {
     @ObservedObject var downloadManager: DownloadManager
     @ObservedObject var audioPlayer: AudioPlayerManager
     @State private var showAddSongs = false
-    @State private var editMode: EditMode = .active
     @State private var totalDuration: TimeInterval = 0
-    @State private var refreshID = UUID()
     
     var tracks: [Download] {
-        playlistManager.getTracks(for: playlist, from: downloadManager)
+        // Get tracks in the order specified by trackIDs
+        playlist.trackIDs.compactMap { id in
+            downloadManager.getDownload(byID: id)
+        }
     }
     
     var body: some View {
@@ -66,7 +67,7 @@ struct PlaylistDetailView: View {
             
             // Song list with drag to reorder
             List {
-                ForEach(tracks) { download in
+                ForEach(Array(tracks.enumerated()), id: \.element.id) { index, download in
                     HStack(spacing: 12) {
                         // Thumbnail
                         ZStack {
@@ -106,7 +107,18 @@ struct PlaylistDetailView: View {
                     }
                 }
                 .onMove { source, destination in
-                    playlistManager.moveTrack(in: playlist.id, from: source, to: destination)
+                    var trackIDs = playlist.trackIDs
+                    trackIDs.move(fromOffsets: source, toOffset: destination)
+                    
+                    // Update playlist with new order
+                    if let playlistIndex = playlistManager.playlists.firstIndex(where: { $0.id == playlist.id }) {
+                        playlistManager.playlists[playlistIndex].trackIDs = trackIDs
+                        playlistManager.objectWillChange.send()
+                        // Force save
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            playlistManager.savePlaylists()
+                        }
+                    }
                 }
                 .onDelete { offsets in
                     for index in offsets {
@@ -114,11 +126,9 @@ struct PlaylistDetailView: View {
                         playlistManager.removeFromPlaylist(playlist.id, downloadID: download.id)
                     }
                     updateTotalDuration()
-                    refreshID = UUID()
                 }
             }
-            .id(refreshID)
-            .environment(\.editMode, $editMode)
+            .environment(\.editMode, .constant(.active))
         }
         .navigationTitle(playlist.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -138,13 +148,14 @@ struct PlaylistDetailView: View {
                 downloadManager: downloadManager,
                 onDismiss: {
                     updateTotalDuration()
-                    refreshID = UUID()
                 }
             )
         }
         .onAppear {
             updateTotalDuration()
-            refreshID = UUID()
+        }
+        .onChange(of: playlist.trackIDs) { _ in
+            updateTotalDuration()
         }
     }
     
