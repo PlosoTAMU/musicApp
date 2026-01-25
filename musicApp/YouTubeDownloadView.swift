@@ -2,10 +2,7 @@ import SwiftUI
 
 struct YouTubeDownloadView: View {
     @ObservedObject var downloadManager: DownloadManager
-    @ObservedObject var embeddedPython = EmbeddedPython.shared
-    @State private var youtubeURL = ""
     @State private var errorMessage: String?
-    @State private var detectedSource: DownloadSource = .youtube
     @State private var hasProcessed = false
     @Environment(\.dismiss) var dismiss
     
@@ -23,12 +20,18 @@ struct YouTubeDownloadView: View {
                             .font(.body)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
+                        
+                        Button("OK") {
+                            dismiss()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.top)
                     }
                     .padding(.top, 40)
                 } else {
                     ProgressView()
                         .padding(.top, 40)
-                    Text("Processing...")
+                    Text("Checking...")
                         .foregroundColor(.secondary)
                 }
                 
@@ -70,22 +73,21 @@ struct YouTubeDownloadView: View {
             return
         }
         
-        youtubeURL = clipboardString
-        detectedSource = source
-        
+        // Check for duplicates FIRST
         if let existing = downloadManager.findDuplicateByVideoID(videoID: videoID, source: source) {
             errorMessage = "Already downloaded:\n\(existing.name)"
-            return
+            return // Show this error in the sheet
         }
         
-        // Start download and close immediately
+        // No duplicate - start download and dismiss immediately
         downloadManager.startBackgroundDownload(
-            url: youtubeURL,
+            url: clipboardString,
             videoID: videoID,
-            source: detectedSource,
+            source: source,
             title: "Loading..."
         )
         
+        // Dismiss immediately - banner will show
         dismiss()
     }
     

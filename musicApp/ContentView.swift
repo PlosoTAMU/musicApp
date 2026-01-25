@@ -10,252 +10,51 @@ struct ContentView: View {
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
-    @State private var showPlaylistPicker = false
-    @State private var isSeeking = false
-    @State private var seekValue: Double = 0
-    @State private var isHoldingRewind = false
-    @State private var isHoldingFF = false
     
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                // Blurred background from album art
-                if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                    Image(uiImage: thumbnailImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
-                        .blur(radius: 80)
-                        .scaleEffect(1.2)
-                        .ignoresSafeArea()
-                } else {
-                    LinearGradient(
-                        colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .ignoresSafeArea()
+        ZStack(alignment: .bottom) {
+            TabView {
+                DownloadsView(
+                    downloadManager: downloadManager,
+                    playlistManager: playlistManager,
+                    audioPlayer: audioPlayer,
+                    showFolderPicker: $showFolderPicker,
+                    showYouTubeDownload: $showYouTubeDownload
+                )
+                .tabItem {
+                    Label("Downloads", systemImage: "arrow.down.circle")
                 }
                 
-                // Dark overlay for readability
-                Color.black.opacity(0.4)
-                    .ignoresSafeArea()
-                
-                VStack(spacing: 0) {
-                    // Top bar
-                    HStack {
-                        Button {
-                            showNowPlaying = false
-                        } label: {
-                            Image(systemName: "chevron.down")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-                        
-                        Spacer()
-                        
-                        Menu {
-                            Button(action: { showPlaylistPicker = true }) {
-                                Label("Add to Playlist", systemImage: "plus")
-                            }
-                            Button(action: {}) {
-                                Label("Share", systemImage: "square.and.arrow.up")
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .padding()
-                    
-                    Spacer()
-                    
-                    // Album artwork - tappable
-                    Button {
-                        if audioPlayer.isPlaying {
-                            audioPlayer.pause()
-                        } else {
-                            audioPlayer.resume()
-                        }
-                    } label: {
-                        ZStack {
-                            if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                                Image(uiImage: thumbnailImage)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 320, height: 320)
-                                    .clipShape(RoundedRectangle(cornerRadius: 20))
-                                    .shadow(color: .black.opacity(0.5), radius: 30, y: 15)
-                            } else {
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
-                                    .frame(width: 320, height: 320)
-                                    .overlay(
-                                        Image(systemName: "music.note")
-                                            .font(.system(size: 80))
-                                            .foregroundColor(.white.opacity(0.5))
-                                    )
-                                    .shadow(color: .black.opacity(0.3), radius: 30, y: 15)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Spacer()
-                    
-                    // Track info - tappable
-                    Button {
-                        if audioPlayer.isPlaying {
-                            audioPlayer.pause()
-                        } else {
-                            audioPlayer.resume()
-                        }
-                    } label: {
-                        VStack(spacing: 8) {
-                            Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                            
-                            Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
-                                .font(.body)
-                                .foregroundColor(.white.opacity(0.7))
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal)
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Spacer()
-                    
-                    // Progress bar
-                    VStack(spacing: 8) {
-                        Slider(
-                            value: isSeeking ? $seekValue : Binding(
-                                get: { audioPlayer.currentTime },
-                                set: { _ in }
-                            ),
-                            in: 0...max(audioPlayer.duration, 1),
-                            onEditingChanged: { editing in
-                                isSeeking = editing
-                                if !editing {
-                                    audioPlayer.seek(to: seekValue)
-                                } else {
-                                    seekValue = audioPlayer.currentTime
-                                }
-                            }
-                        )
-                        .accentColor(.white)
-                        
-                        HStack {
-                            Text(formatTime(isSeeking ? seekValue : audioPlayer.currentTime))
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.7))
-                            
-                            Spacer()
-                            
-                            Text(formatTime(audioPlayer.duration))
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                    }
-                    .padding(.horizontal, 32)
-                    
-                    Spacer()
-                    
-                    // Playback controls
-                    HStack(spacing: 20) {
-                        RewindButton(audioPlayer: audioPlayer, isHolding: $isHoldingRewind)
-                        
-                        Button {
-                            audioPlayer.previous()
-                        } label: {
-                            Image(systemName: "backward.fill")
-                                .font(.system(size: 32))
-                                .foregroundColor(.white)
-                        }
-                        
-                        Button {
-                            if audioPlayer.isPlaying {
-                                audioPlayer.pause()
-                            } else {
-                                audioPlayer.resume()
-                            }
-                        } label: {
-                            Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 64))
-                                .foregroundColor(.white)
-                        }
-                        
-                        Button {
-                            audioPlayer.next()
-                        } label: {
-                            Image(systemName: "forward.fill")
-                                .font(.system(size: 32))
-                                .foregroundColor(.white)
-                        }
-                        
-                        FastForwardButton(audioPlayer: audioPlayer, isHolding: $isHoldingFF)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 20)
-                    
-                    // Volume control
-                    VStack(spacing: 8) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "speaker.fill")
-                                .foregroundColor(.white.opacity(0.7))
-                                .font(.caption)
-                            
-                            VolumeSlider()
-                                .frame(height: 20)
-                            
-                            Image(systemName: "speaker.wave.3.fill")
-                                .foregroundColor(.white.opacity(0.7))
-                                .font(.caption)
-                        }
-                    }
-                    .padding(.horizontal, 40)
-                    .padding(.bottom, 40)
+                PlaylistsView(
+                    playlistManager: playlistManager,
+                    downloadManager: downloadManager,
+                    audioPlayer: audioPlayer
+                )
+                .tabItem {
+                    Label("Playlists", systemImage: "music.note.list")
                 }
             }
+            
+            if audioPlayer.currentTrack != nil {
+                MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
+                    .transition(.move(edge: .bottom))
+            }
         }
-        .gesture(
-            DragGesture()
-                .onEnded { value in
-                    if value.translation.height > 100 {
-                        showNowPlaying = false
-                    }
-                }
-        )
-        .sheet(isPresented: $showPlaylistPicker) {
-            Text("Playlist picker coming soon")
-                .padding()
+        .fullScreenCover(isPresented: $showNowPlaying) {
+            NowPlayingView(audioPlayer: audioPlayer, isPresented: $showNowPlaying)
         }
-    }
-    
-    private func formatTime(_ time: Double) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return String(format: "%d:%02d", minutes, seconds)
-    }
-    
-    private func getThumbnailImage(for track: Track?) -> UIImage? {
-        guard let track = track,
-              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
-              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
-            return nil
+        .sheet(isPresented: $showFolderPicker) {
+            FolderPicker(downloadManager: downloadManager)
         }
-        return image
+        .sheet(isPresented: $showYouTubeDownload) {
+            YouTubeDownloadView(downloadManager: downloadManager)
+        }
+        .overlay(alignment: .top) {
+            if !downloadManager.activeDownloads.isEmpty {
+                DownloadBanner(downloadManager: downloadManager)
+                    .transition(.move(edge: .top))
+            }
+        }
     }
 }
 
@@ -353,29 +152,15 @@ struct MiniPlayerBar: View {
     }
 }
 
-// MARK: - System Volume View
-struct SystemVolumeView: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView {
-        let volumeView = MPVolumeView(frame: .zero)
-        volumeView.showsRouteButton = false
-        volumeView.tintColor = .white
-        return volumeView
-    }
-    
-    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
-}
-
 // MARK: - Rewind Button
 struct RewindButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var isHolding: Bool
     
     var body: some View {
-        Image("rewind")
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: 24, height: 24)
-            .foregroundColor(.primary)
+        Image(systemName: "gobackward.10")
+            .font(.system(size: 28))
+            .foregroundColor(.white)
             .gesture(
                 LongPressGesture(minimumDuration: 0.3)
                     .onEnded { _ in
@@ -402,11 +187,9 @@ struct FastForwardButton: View {
     @Binding var isHolding: Bool
     
     var body: some View {
-        Image("forward")
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: 24, height: 24)
-            .foregroundColor(.primary)
+        Image(systemName: "goforward.10")
+            .font(.system(size: 28))
+            .foregroundColor(.white)
             .gesture(
                 LongPressGesture(minimumDuration: 0.3)
                     .onEnded { _ in
@@ -427,7 +210,6 @@ struct FastForwardButton: View {
     }
 }
 
-
 // MARK: - Full Now Playing View
 struct NowPlayingView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
@@ -437,219 +219,223 @@ struct NowPlayingView: View {
     @State private var showPlaylistPicker = false
     @State private var isHoldingRewind = false
     @State private var isHoldingFF = false
+    @State private var backgroundImage: UIImage?
     
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                // Blurred background from album art
-                if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                    Image(uiImage: thumbnailImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
-                        .blur(radius: 80)
-                        .scaleEffect(1.2)
-                        .ignoresSafeArea()
-                } else {
-                    LinearGradient(
-                        colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
+        ZStack {
+            // Cropped, blurred, and zoomed background
+            if let bgImage = backgroundImage {
+                Image(uiImage: bgImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+                    .blur(radius: 50)
+                    .scaleEffect(1.3)
                     .ignoresSafeArea()
-                }
-                
-                // Dark overlay for readability
-                Color.black.opacity(0.4)
-                    .ignoresSafeArea()
-                
-                VStack(spacing: 0) {
-                    // Top bar
-                    HStack {
-                        Button {
-                            showNowPlaying = false
-                        } label: {
-                            Image(systemName: "chevron.down")
-                                .font(.title2)
-                                .foregroundColor(.white)
+            } else {
+                LinearGradient(
+                    colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+            }
+            
+            // Dark overlay for readability
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 0) {
+                // Top bar
+                HStack {
+                    Button {
+                        isPresented = false
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.title2)
+                            .foregroundColor(.white)
+                    }
+                    
+                    Spacer()
+                    
+                    Menu {
+                        Button(action: { showPlaylistPicker = true }) {
+                            Label("Add to Playlist", systemImage: "plus")
                         }
+                        Button(action: {}) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.title2)
+                            .foregroundColor(.white)
+                    }
+                }
+                .padding()
+                
+                Spacer()
+                
+                // Album artwork - tappable
+                Button {
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
+                    } else {
+                        audioPlayer.resume()
+                    }
+                } label: {
+                    ZStack {
+                        if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
+                            Image(uiImage: thumbnailImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 320, height: 320)
+                                .clipShape(RoundedRectangle(cornerRadius: 20))
+                                .shadow(color: .black.opacity(0.5), radius: 30, y: 15)
+                        } else {
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 320, height: 320)
+                                .overlay(
+                                    Image(systemName: "music.note")
+                                        .font(.system(size: 80))
+                                        .foregroundColor(.white.opacity(0.5))
+                                )
+                                .shadow(color: .black.opacity(0.3), radius: 30, y: 15)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                
+                Spacer()
+                
+                // Track info - tappable
+                Button {
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
+                    } else {
+                        audioPlayer.resume()
+                    }
+                } label: {
+                    VStack(spacing: 8) {
+                        Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                        
+                        Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
+                            .font(.body)
+                            .foregroundColor(.white.opacity(0.7))
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal)
+                }
+                .buttonStyle(.plain)
+                
+                Spacer()
+                
+                // Progress bar
+                VStack(spacing: 8) {
+                    Slider(
+                        value: isSeeking ? $seekValue : Binding(
+                            get: { audioPlayer.currentTime },
+                            set: { _ in }
+                        ),
+                        in: 0...max(audioPlayer.duration, 1),
+                        onEditingChanged: { editing in
+                            isSeeking = editing
+                            if !editing {
+                                audioPlayer.seek(to: seekValue)
+                            } else {
+                                seekValue = audioPlayer.currentTime
+                            }
+                        }
+                    )
+                    .accentColor(.white)
+                    
+                    HStack {
+                        Text(formatTime(isSeeking ? seekValue : audioPlayer.currentTime))
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
                         
                         Spacer()
                         
-                        Menu {
-                            Button(action: { showPlaylistPicker = true }) {
-                                Label("Add to Playlist", systemImage: "plus")
-                            }
-                            Button(action: {}) {
-                                Label("Share", systemImage: "square.and.arrow.up")
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
+                        Text(formatTime(audioPlayer.duration))
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
                     }
-                    .padding()
-                    
-                    Spacer()
-                    
-                    // Album artwork - tappable
-                    Button {
-                        if audioPlayer.isPlaying {
-                            audioPlayer.pause()
-                        } else {
-                            audioPlayer.resume()
-                        }
-                    } label: {
-                        ZStack {
-                            if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                                Image(uiImage: thumbnailImage)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 320, height: 320)
-                                    .clipShape(RoundedRectangle(cornerRadius: 20))
-                                    .shadow(color: .black.opacity(0.5), radius: 30, y: 15)
-                            } else {
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
-                                    .frame(width: 320, height: 320)
-                                    .overlay(
-                                        Image(systemName: "music.note")
-                                            .font(.system(size: 80))
-                                            .foregroundColor(.white.opacity(0.5))
-                                    )
-                                    .shadow(color: .black.opacity(0.3), radius: 30, y: 15)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Spacer()
-                    
-                    // Track info - tappable
-                    Button {
-                        if audioPlayer.isPlaying {
-                            audioPlayer.pause()
-                        } else {
-                            audioPlayer.resume()
-                        }
-                    } label: {
-                        VStack(spacing: 8) {
-                            Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                            
-                            Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
-                                .font(.body)
-                                .foregroundColor(.white.opacity(0.7))
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal)
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Spacer()
-                    
-                    // Progress bar
-                    VStack(spacing: 8) {
-                        Slider(
-                            value: isSeeking ? $seekValue : Binding(
-                                get: { audioPlayer.currentTime },
-                                set: { _ in }
-                            ),
-                            in: 0...max(audioPlayer.duration, 1),
-                            onEditingChanged: { editing in
-                                isSeeking = editing
-                                if !editing {
-                                    audioPlayer.seek(to: seekValue)
-                                } else {
-                                    seekValue = audioPlayer.currentTime
-                                }
-                            }
-                        )
-                        .accentColor(.white)
-                        
-                        HStack {
-                            Text(formatTime(isSeeking ? seekValue : audioPlayer.currentTime))
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.7))
-                            
-                            Spacer()
-                            
-                            Text(formatTime(audioPlayer.duration))
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                    }
-                    .padding(.horizontal, 32)
-                    
-                    Spacer()
-                    
-                    // Playback controls
-                    HStack(spacing: 20) {
-                        RewindButton(audioPlayer: audioPlayer, isHolding: $isHoldingRewind)
-                        
-                        Button {
-                            audioPlayer.previous()
-                        } label: {
-                            Image(systemName: "backward.fill")
-                                .font(.system(size: 32))
-                                .foregroundColor(.white)
-                        }
-                        
-                        Button {
-                            if audioPlayer.isPlaying {
-                                audioPlayer.pause()
-                            } else {
-                                audioPlayer.resume()
-                            }
-                        } label: {
-                            Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 64))
-                                .foregroundColor(.white)
-                        }
-                        
-                        Button {
-                            audioPlayer.next()
-                        } label: {
-                            Image(systemName: "forward.fill")
-                                .font(.system(size: 32))
-                                .foregroundColor(.white)
-                        }
-                        
-                        FastForwardButton(audioPlayer: audioPlayer, isHolding: $isHoldingFF)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 20)
-                    
-                    // Volume control
-                    VStack(spacing: 8) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "speaker.fill")
-                                .foregroundColor(.white.opacity(0.7))
-                                .font(.caption)
-                            
-                            VolumeSlider()
-                                .frame(height: 20)
-                            
-                            Image(systemName: "speaker.wave.3.fill")
-                                .foregroundColor(.white.opacity(0.7))
-                                .font(.caption)
-                        }
-                    }
-                    .padding(.horizontal, 40)
-                    .padding(.bottom, 40)
                 }
+                .padding(.horizontal, 32)
+                
+                Spacer()
+                
+                // Playback controls
+                HStack(spacing: 40) {
+                    Button {
+                        audioPlayer.previous()
+                    } label: {
+                        Image(systemName: "backward.fill")
+                            .font(.system(size: 32))
+                            .foregroundColor(.white)
+                    }
+                    
+                    RewindButton(audioPlayer: audioPlayer, isHolding: $isHoldingRewind)
+                    
+                    Button {
+                        if audioPlayer.isPlaying {
+                            audioPlayer.pause()
+                        } else {
+                            audioPlayer.resume()
+                        }
+                    } label: {
+                        Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 64))
+                            .foregroundColor(.white)
+                    }
+                    
+                    FastForwardButton(audioPlayer: audioPlayer, isHolding: $isHoldingFF)
+                    
+                    Button {
+                        audioPlayer.next()
+                    } label: {
+                        Image(systemName: "forward.fill")
+                            .font(.system(size: 32))
+                            .foregroundColor(.white)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 20)
+                
+                // Volume control
+                VStack(spacing: 8) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "speaker.fill")
+                            .foregroundColor(.white.opacity(0.7))
+                            .font(.caption)
+                        
+                        VolumeSlider()
+                            .frame(height: 20)
+                        
+                        Image(systemName: "speaker.wave.3.fill")
+                            .foregroundColor(.white.opacity(0.7))
+                            .font(.caption)
+                    }
+                }
+                .padding(.horizontal, 40)
+                .padding(.bottom, 40)
             }
+        }
+        .onAppear {
+            updateBackgroundImage()
+        }
+        .onChange(of: audioPlayer.currentTrack) { _ in
+            updateBackgroundImage()
         }
         .gesture(
             DragGesture()
@@ -662,6 +448,38 @@ struct NowPlayingView: View {
         .sheet(isPresented: $showPlaylistPicker) {
             Text("Playlist picker coming soon")
                 .padding()
+        }
+    }
+    
+    private func updateBackgroundImage() {
+        guard let track = audioPlayer.currentTrack,
+              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+              let originalImage = UIImage(contentsOfFile: thumbnailPath.path) else {
+            backgroundImage = nil
+            return
+        }
+        
+        // Crop to screen aspect ratio
+        let screenAspect = UIScreen.main.bounds.width / UIScreen.main.bounds.height
+        let imageAspect = originalImage.size.width / originalImage.size.height
+        
+        var cropRect: CGRect
+        if imageAspect > screenAspect {
+            // Image is wider - crop sides
+            let newWidth = originalImage.size.height * screenAspect
+            let x = (originalImage.size.width - newWidth) / 2
+            cropRect = CGRect(x: x, y: 0, width: newWidth, height: originalImage.size.height)
+        } else {
+            // Image is taller - crop top/bottom
+            let newHeight = originalImage.size.width / screenAspect
+            let y = (originalImage.size.height - newHeight) / 2
+            cropRect = CGRect(x: 0, y: y, width: originalImage.size.width, height: newHeight)
+        }
+        
+        if let cgImage = originalImage.cgImage?.cropping(to: cropRect) {
+            backgroundImage = UIImage(cgImage: cgImage)
+        } else {
+            backgroundImage = originalImage
         }
     }
     
@@ -681,8 +499,6 @@ struct NowPlayingView: View {
     }
 }
 
-
-// MARK: - Custom Volume Slider
 struct VolumeSlider: UIViewRepresentable {
     class Coordinator: NSObject {
         var parent: VolumeSlider
@@ -729,18 +545,19 @@ struct VolumeSlider: UIViewRepresentable {
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
 
+// MARK: - Download Banner with animated dots
 struct DownloadBanner: View {
-    let activeDownloads: [ActiveDownload]
-    @State private var dotCount = 0
+    @ObservedObject var downloadManager: DownloadManager
+    @State private var dotCount = 1
     
     var body: some View {
-        VStack(spacing: 8) {
-            ForEach(activeDownloads) { download in
+        VStack(spacing: 0) {
+            ForEach(downloadManager.activeDownloads, id: \.id) { download in
                 HStack(spacing: 12) {
                     ProgressView()
                         .scaleEffect(0.8)
                     
-                    Text("Downloading \(download.title)\(String(repeating: ".", count: dotCount))")
+                    Text("\(download.title)\(String(repeating: ".", count: dotCount))")
                         .font(.subheadline)
                         .foregroundColor(.primary)
                         .lineLimit(1)
@@ -751,18 +568,19 @@ struct DownloadBanner: View {
                 .padding(.vertical, 12)
                 .background(.ultraThinMaterial)
                 .cornerRadius(12)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
         }
-        .padding(.horizontal, 16)
         .padding(.top, 50)
         .onAppear {
-            startAnimation()
+            startDotAnimation()
         }
     }
     
-    private func startAnimation() {
+    private func startDotAnimation() {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            dotCount = (dotCount + 1) % 4
+            dotCount = (dotCount % 3) + 1
         }
     }
 }

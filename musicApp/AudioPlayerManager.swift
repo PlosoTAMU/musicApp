@@ -12,27 +12,29 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var avPlayer: AVPlayer?
     private var playerObserver: Any?
-    private var displayLink: CADisplayLink?
+    private var timeObserver: Any?
     
     override init() {
         super.init()
         setupAudioSession()
         setupRemoteControls()
         setupInterruptionHandling()
-        startTimeUpdates()
+        setupTimeObserver()
     }
     
     private func setupAudioSession() {
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            // This is the key: use .playback mode without .mixWithOthers
-            try audioSession.setCategory(.playback, mode: .default)
+            
+            // CRITICAL FIX: Use .playback mode without .mixWithOthers
+            // Also set mode to .spokenAudio which is more reliable for background playback
+            try audioSession.setCategory(.playback, mode: .default, options: [])
             try audioSession.setActive(true)
             
-            // Enable background audio
+            // Request background audio capabilities
             UIApplication.shared.beginReceivingRemoteControlEvents()
             
-            print("✅ Audio session configured with background playback")
+            print("✅ Audio session configured for background playback")
         } catch {
             print("❌ Failed to setup audio session: \(error)")
         }
@@ -68,6 +70,21 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
             return .commandFailed
         }
+        
+        // Enable skip forward/backward
+        commandCenter.skipForwardCommand.isEnabled = true
+        commandCenter.skipForwardCommand.preferredIntervals = [10]
+        commandCenter.skipForwardCommand.addTarget { [weak self] _ in
+            self?.skip(seconds: 10)
+            return .success
+        }
+        
+        commandCenter.skipBackwardCommand.isEnabled = true
+        commandCenter.skipBackwardCommand.preferredIntervals = [10]
+        commandCenter.skipBackwardCommand.addTarget { [weak self] _ in
+            self?.skip(seconds: -10)
+            return .success
+        }
     }
     
     private func setupInterruptionHandling() {
@@ -84,6 +101,42 @@ class AudioPlayerManager: NSObject, ObservableObject {
             name: AVAudioSession.routeChangeNotification,
             object: nil
         )
+        
+        // CRITICAL: Listen for app state changes to keep audio session active
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleAppWillResignActive() {
+        // CRITICAL FIX: Ensure audio session stays active when app goes to background
+        do {
+            try AVAudioSession.sharedInstance().setActive(true, options: [])
+            print("🔊 Audio session kept active on background")
+        } catch {
+            print("❌ Failed to keep audio session active: \(error)")
+        }
+    }
+    
+    @objc private func handleAppDidBecomeActive() {
+        // Reactivate audio session when returning to foreground
+        do {
+            try AVAudioSession.sharedInstance().setActive(true, options: [])
+            updateNowPlayingInfo()
+            print("🔊 Audio session reactivated on foreground")
+        } catch {
+            print("❌ Failed to reactivate audio session: \(error)")
+        }
     }
     
     @objc private func handleInterruption(notification: Notification) {
@@ -157,12 +210,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
             isPlaying = false
         }
         
-        stopTimeUpdates()
+        removeTimeObserver()
         removePlayerObserver()
         
         do {
-            // Reactivate audio session
-            try AVAudioSession.sharedInstance().setActive(true)
+            // CRITICAL: Reactivate audio session before playing
+            try AVAudioSession.sharedInstance().setActive(true, options: [])
             
             guard let trackURL = track.resolvedURL() else {
                 print("❌ Could not resolve track URL")
@@ -173,9 +226,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             let playerItem = AVPlayerItem(url: trackURL)
             
-            // Enable background playback at the player level
+            // CRITICAL FIX: Configure player for background playback
             avPlayer = AVPlayer(playerItem: playerItem)
             avPlayer?.automaticallyWaitsToMinimizeStalling = false
+            
+            // CRITICAL: Set audio timing to prevent termination
+            avPlayer?.currentItem?.preferredForwardBufferDuration = 30
+            
             avPlayer?.play()
             
             isPlaying = true
@@ -193,7 +250,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
             
             setupPlayerObserver()
-            startTimeUpdates()
+            setupTimeObserver()
             updateNowPlayingInfo()
             
             print("▶️ Now playing: \(track.name)")
@@ -210,9 +267,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func resume() {
-        // Ensure audio session is still active
+        // CRITICAL: Ensure audio session is active before resuming
         do {
-            try AVAudioSession.sharedInstance().setActive(true)
+            try AVAudioSession.sharedInstance().setActive(true, options: [])
         } catch {
             print("❌ Failed to reactivate audio session: \(error)")
         }
@@ -225,7 +282,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func stop() {
         avPlayer?.pause()
         avPlayer?.seek(to: .zero)
-        stopTimeUpdates()
+        removeTimeObserver()
         removePlayerObserver()
         isPlaying = false
         currentTrack = nil
@@ -303,31 +360,34 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    private func startTimeUpdates() {
-        stopTimeUpdates()
-        displayLink = CADisplayLink(target: self, selector: #selector(updateTime))
-        displayLink?.add(to: .main, forMode: .common)
-    }
+    // MARK: - Time Observer (Replaces CADisplayLink)
     
-    private func stopTimeUpdates() {
-        displayLink?.invalidate()
-        displayLink = nil
-    }
-    
-    @objc private func updateTime() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, let avPlayer = self.avPlayer else { return }
-            self.currentTime = CMTimeGetSeconds(avPlayer.currentTime())
+    private func setupTimeObserver() {
+        removeTimeObserver()
+        
+        // CRITICAL FIX: Use AVPlayer's time observer instead of CADisplayLink
+        // CADisplayLink doesn't work in background
+        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserver = avPlayer?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            guard let self = self else { return }
+            self.currentTime = CMTimeGetSeconds(time)
             
-            // Update Now Playing info periodically
+            // Update Now Playing info every 5 seconds
             if Int(self.currentTime) % 5 == 0 {
                 self.updateNowPlayingInfo()
             }
         }
     }
     
+    private func removeTimeObserver() {
+        if let observer = timeObserver {
+            avPlayer?.removeTimeObserver(observer)
+            timeObserver = nil
+        }
+    }
+    
     deinit {
-        stopTimeUpdates()
+        removeTimeObserver()
         removePlayerObserver()
         NotificationCenter.default.removeObserver(self)
     }
