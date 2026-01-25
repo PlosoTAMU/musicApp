@@ -49,10 +49,14 @@ struct ContentView: View {
         .sheet(isPresented: $showYouTubeDownload) {
             YouTubeDownloadView(downloadManager: downloadManager)
         }
-        .overlay(alignment: .top) {
+        .overlay(alignment: .bottom) {
             if !downloadManager.activeDownloads.isEmpty {
-                DownloadBanner(downloadManager: downloadManager)
-                    .transition(.move(edge: .top))
+                VStack {
+                    Spacer()
+                    DownloadBanner(downloadManager: downloadManager)
+                        .padding(.bottom, audioPlayer.currentTrack != nil ? 105 : 49)
+                }
+                .transition(.move(edge: .bottom))
             }
         }
     }
@@ -145,7 +149,7 @@ struct MiniPlayerBar: View {
     private func getThumbnailImage(for track: Track?) -> UIImage? {
         guard let track = track else { return nil }
         
-        // Get thumbnail through DownloadManager
+        // Get thumbnail through file system
         let thumbnailsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Thumbnails", isDirectory: true)
         let filename = track.url.lastPathComponent
@@ -159,14 +163,28 @@ struct MiniPlayerBar: View {
     }
 }
 
+// MARK: - System Volume View
+struct SystemVolumeView: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let volumeView = MPVolumeView(frame: .zero)
+        volumeView.showsRouteButton = false
+        volumeView.tintColor = .white
+        return volumeView
+    }
+    
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+}
+
 // MARK: - Rewind Button
 struct RewindButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var isHolding: Bool
     
     var body: some View {
-        Image(systemName: "gobackward.10")
-            .font(.system(size: 28))
+        Image("rewind")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 24, height: 24)
             .foregroundColor(.white)
             .gesture(
                 LongPressGesture(minimumDuration: 0.3)
@@ -194,8 +212,10 @@ struct FastForwardButton: View {
     @Binding var isHolding: Bool
     
     var body: some View {
-        Image(systemName: "goforward.10")
-            .font(.system(size: 28))
+        Image("forward")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 24, height: 24)
             .foregroundColor(.white)
             .gesture(
                 LongPressGesture(minimumDuration: 0.3)
@@ -236,8 +256,8 @@ struct NowPlayingView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-                    .blur(radius: 50)
-                    .scaleEffect(1.3)
+                    .blur(radius: 30)
+                    .scaleEffect(1.2)
                     .ignoresSafeArea()
             } else {
                 LinearGradient(
@@ -295,11 +315,11 @@ struct NowPlayingView: View {
                             Image(uiImage: thumbnailImage)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
-                                .frame(width: 320, height: 320)
-                                .clipShape(RoundedRectangle(cornerRadius: 20))
+                                .frame(width: 280, height: 280)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
                                 .shadow(color: .black.opacity(0.5), radius: 30, y: 15)
                         } else {
-                            RoundedRectangle(cornerRadius: 20)
+                            RoundedRectangle(cornerRadius: 16)
                                 .fill(
                                     LinearGradient(
                                         colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
@@ -307,10 +327,10 @@ struct NowPlayingView: View {
                                         endPoint: .bottomTrailing
                                     )
                                 )
-                                .frame(width: 320, height: 320)
+                                .frame(width: 280, height: 280)
                                 .overlay(
                                     Image(systemName: "music.note")
-                                        .font(.system(size: 80))
+                                        .font(.system(size: 70))
                                         .foregroundColor(.white.opacity(0.5))
                                 )
                                 .shadow(color: .black.opacity(0.3), radius: 30, y: 15)
@@ -329,15 +349,15 @@ struct NowPlayingView: View {
                         audioPlayer.resume()
                     }
                 } label: {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 6) {
                         Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                            .font(.title2)
+                            .font(.title3)
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
                             .lineLimit(1)
                         
                         Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
-                            .font(.body)
+                            .font(.callout)
                             .foregroundColor(.white.opacity(0.7))
                             .lineLimit(1)
                     }
@@ -388,7 +408,7 @@ struct NowPlayingView: View {
                         audioPlayer.previous()
                     } label: {
                         Image(systemName: "backward.fill")
-                            .font(.system(size: 32))
+                            .font(.system(size: 28))
                             .foregroundColor(.white)
                     }
                     
@@ -402,7 +422,7 @@ struct NowPlayingView: View {
                         }
                     } label: {
                         Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 64))
+                            .font(.system(size: 56))
                             .foregroundColor(.white)
                     }
                     
@@ -412,12 +432,12 @@ struct NowPlayingView: View {
                         audioPlayer.next()
                     } label: {
                         Image(systemName: "forward.fill")
-                            .font(.system(size: 32))
+                            .font(.system(size: 28))
                             .foregroundColor(.white)
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 20)
+                .padding(.bottom, 16)
                 
                 // Volume control
                 VStack(spacing: 8) {
@@ -568,7 +588,7 @@ struct DownloadBanner: View {
     @State private var dotCount = 1
     
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 8) {
             ForEach(downloadManager.activeDownloads, id: \.id) { download in
                 HStack(spacing: 12) {
                     ProgressView()
@@ -585,11 +605,10 @@ struct DownloadBanner: View {
                 .padding(.vertical, 12)
                 .background(.ultraThinMaterial)
                 .cornerRadius(12)
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .shadow(color: .black.opacity(0.1), radius: 5, y: 2)
             }
         }
-        .padding(.top, 50)
+        .padding(.horizontal, 16)
         .onAppear {
             startDotAnimation()
         }
