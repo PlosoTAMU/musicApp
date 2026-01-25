@@ -15,11 +15,6 @@ struct ContentView: View {
     @State private var seekValue: Double = 0
     @State private var isHoldingRewind = false
     @State private var isHoldingFF = false
-    @State private var isSeeking = false
-    @State private var seekValue: Double = 0
-    @State private var showPlaylistPicker = false
-    @State private var isHoldingRewind = false
-    @State private var isHoldingFF = false
     
     var body: some View {
         GeometryReader { geometry in
