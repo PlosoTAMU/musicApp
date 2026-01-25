@@ -2,7 +2,7 @@ import SwiftUI
 
 struct YouTubeDownloadView: View {
     @ObservedObject var downloadManager: DownloadManager
-    @StateObject private var embeddedPython = EmbeddedPython.shared
+    @ObservedObject var embeddedPython = EmbeddedPython.shared  // Change from @StateObject to @ObservedObject
     @State private var youtubeURL = ""
     @State private var isDownloading = false
     @State private var errorMessage: String?

@@ -78,19 +78,59 @@ class DownloadManager: ObservableObject {
         return downloads.contains { $0.videoID == videoID && !$0.pendingDeletion }
     }
     
-    func hasDuplicate(videoID: String?, url: URL) -> Download? {
-        if let videoID = videoID,
-        let existing = downloads.first(where: { $0.videoID == videoID && !$0.pendingDeletion }) {
-            return existing
-        }
-        
-        let newFileName = url.deletingPathExtension().lastPathComponent
-        if let existing = downloads.first(where: {
-            $0.url.deletingPathExtension().lastPathComponent == newFileName && !$0.pendingDeletion
+    func findDuplicateByVideoID(videoID: String, source: DownloadSource) -> Download? {
+        // First check by exact videoID match
+        if let existing = downloads.first(where: { 
+            $0.videoID == videoID && 
+            $0.source == source && 
+            !$0.pendingDeletion 
         }) {
+            print("🔍 [Duplicate] Found exact match by videoID: \(existing.name)")
             return existing
         }
         
+        // For YouTube, also check common video ID variations
+        if source == .youtube {
+            // Remove common suffixes/prefixes that might be in stored IDs
+            let cleanVideoID = videoID.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
+            
+            if let existing = downloads.first(where: { download in
+                guard download.source == .youtube, 
+                    !download.pendingDeletion,
+                    let storedID = download.videoID else { return false }
+                
+                let cleanStoredID = storedID.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
+                return cleanStoredID == cleanVideoID
+            }) {
+                print("🔍 [Duplicate] Found match by cleaned videoID: \(existing.name)")
+                return existing
+            }
+            
+            // Also check if the video ID is in the filename
+            if let existing = downloads.first(where: { download in
+                guard download.source == .youtube, !download.pendingDeletion else { return false }
+                let filename = download.url.lastPathComponent
+                return filename.contains(videoID)
+            }) {
+                print("🔍 [Duplicate] Found match by filename: \(existing.name)")
+                return existing
+            }
+        }
+        
+        // For Spotify, check track ID
+        if source == .spotify {
+            if let existing = downloads.first(where: { download in
+                guard download.source == .spotify,
+                    !download.pendingDeletion,
+                    let storedID = download.videoID else { return false }
+                return storedID == videoID
+            }) {
+                print("🔍 [Duplicate] Found Spotify match: \(existing.name)")
+                return existing
+            }
+        }
+        
+        print("✅ [Duplicate] No duplicate found for videoID: \(videoID)")
         return nil
     }
     
