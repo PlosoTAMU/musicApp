@@ -79,14 +79,11 @@ class DownloadManager: ObservableObject {
     }
     
     func hasDuplicate(videoID: String?, url: URL) -> Download? {
-        // Check by video ID first
-        if let videoID = videoID {
-            if let existing = downloads.first(where: { $0.videoID == videoID && !$0.pendingDeletion }) {
-                return existing
-            }
+        if let videoID = videoID,
+        let existing = downloads.first(where: { $0.videoID == videoID && !$0.pendingDeletion }) {
+            return existing
         }
         
-        // Check by filename (without extension)
         let newFileName = url.deletingPathExtension().lastPathComponent
         if let existing = downloads.first(where: {
             $0.url.deletingPathExtension().lastPathComponent == newFileName && !$0.pendingDeletion

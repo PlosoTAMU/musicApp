@@ -17,8 +17,14 @@ struct YouTubeDownloadView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
-                Text("Download from \(detectedSource == .youtube ? "YouTube" : "Spotify")")
-                    .font(.headline)
+                HStack {
+                    Image(systemName: detectedSource == .youtube ? "play.rectangle.fill" : "music.note")
+                        .font(.title3)
+                        .foregroundColor(detectedSource == .youtube ? .red : .green)
+                    
+                    Text("Download from \(detectedSource == .youtube ? "YouTube" : "Spotify")")
+                        .font(.headline)
+                }
                 
                 if isDownloading {
                     VStack(spacing: 12) {
@@ -79,28 +85,7 @@ struct YouTubeDownloadView: View {
                 }
             }
             .onAppear {
-                // Check if pasteboard has URLs without triggering permission
-                if UIPasteboard.general.hasURLs || UIPasteboard.general.hasStrings {
-                    // Now access it (this MAY trigger permission on first use)
-                    if let clipboardString = UIPasteboard.general.string,
-                    !clipboardString.isEmpty,
-                    (clipboardString.contains("youtube.com") || 
-                        clipboardString.contains("youtu.be") || 
-                        clipboardString.contains("spotify.com")) {
-                        youtubeURL = clipboardString
-                        
-                        // Detect source
-                        if clipboardString.contains("spotify.com") {
-                            detectedSource = .spotify
-                        } else {
-                            detectedSource = .youtube
-                        }
-                        
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            startDownload()
-                        }
-                    }
-                }
+                checkClipboardAndStart()
             }
         }
         .alert("Rename Song", isPresented: $showRenameAlert, actions: {
@@ -119,25 +104,121 @@ struct YouTubeDownloadView: View {
         })
     }
     
-    private func startDownload() {
-        // Extract video ID BEFORE downloading
-        guard let videoID = extractVideoID(from: youtubeURL) else {
-            errorMessage = "Invalid URL"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                dismiss()
-            }
+    private func checkClipboardAndStart() {
+        // Check if pasteboard has content without triggering permission
+        guard UIPasteboard.general.hasURLs || UIPasteboard.general.hasStrings else {
+            errorMessage = "No URL found in clipboard"
             return
         }
         
-        // Check for duplicates more thoroughly
-        if let existing = downloadManager.hasDuplicate(videoID: videoID, url: URL(fileURLWithPath: videoID)) {
+        // Access clipboard
+        guard let clipboardString = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !clipboardString.isEmpty else {
+            errorMessage = "Clipboard is empty"
+            return
+        }
+        
+        // Detect and validate source
+        guard let (source, videoID) = detectSourceAndExtractID(from: clipboardString) else {
+            errorMessage = "Invalid URL format. Please copy a valid YouTube or Spotify link."
+            return
+        }
+        
+        youtubeURL = clipboardString
+        detectedSource = source
+        
+        // Check for duplicates BEFORE downloading
+        if let existing = downloadManager.findDuplicateByVideoID(videoID: videoID, source: source) {
             errorMessage = "Already downloaded: \(existing.name)"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                 dismiss()
             }
             return
         }
         
+        // Start download after short delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            startDownload(videoID: videoID)
+        }
+    }
+    
+    private func detectSourceAndExtractID(from urlString: String) -> (DownloadSource, String)? {
+        guard let url = URL(string: urlString) else { return nil }
+        let host = url.host?.lowercased() ?? ""
+        
+        // YouTube detection (multiple formats)
+        if host.contains("youtube.com") || host.contains("youtu.be") || host.contains("m.youtube.com") {
+            if let videoID = extractYouTubeID(from: url) {
+                return (.youtube, videoID)
+            }
+        }
+        
+        // Spotify detection (multiple formats)
+        if host.contains("spotify.com") || host.contains("open.spotify.com") {
+            if let trackID = extractSpotifyID(from: url) {
+                return (.spotify, trackID)
+            }
+        }
+        
+        return nil
+    }
+    
+    private func extractYouTubeID(from url: URL) -> String? {
+        let host = url.host?.lowercased() ?? ""
+        
+        // youtu.be/VIDEO_ID
+        if host.contains("youtu.be") {
+            let pathComponents = url.pathComponents.filter { $0 != "/" }
+            return pathComponents.first
+        }
+        
+        // youtube.com/watch?v=VIDEO_ID
+        if host.contains("youtube.com") {
+            // Check query parameters
+            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+               let queryItems = components.queryItems {
+                // Standard format: ?v=VIDEO_ID
+                if let videoID = queryItems.first(where: { $0.name == "v" })?.value {
+                    return videoID
+                }
+            }
+            
+            // youtube.com/embed/VIDEO_ID
+            if url.pathComponents.contains("embed"), url.pathComponents.count > 2 {
+                return url.pathComponents[2]
+            }
+            
+            // youtube.com/v/VIDEO_ID
+            if url.pathComponents.contains("v"), url.pathComponents.count > 2 {
+                return url.pathComponents[2]
+            }
+            
+            // youtube.com/shorts/VIDEO_ID
+            if url.pathComponents.contains("shorts"), url.pathComponents.count > 2 {
+                return url.pathComponents[2]
+            }
+        }
+        
+        return nil
+    }
+    
+    private func extractSpotifyID(from url: URL) -> String? {
+        let pathComponents = url.pathComponents.filter { $0 != "/" }
+        
+        // open.spotify.com/track/TRACK_ID or spotify.com/track/TRACK_ID
+        if let trackIndex = pathComponents.firstIndex(of: "track"), trackIndex + 1 < pathComponents.count {
+            var trackID = pathComponents[trackIndex + 1]
+            // Remove query parameters if present
+            if let queryIndex = trackID.firstIndex(of: "?") {
+                trackID = String(trackID[..<queryIndex])
+            }
+            return trackID
+        }
+        
+        return nil
+    }
+    
+    private func startDownload(videoID: String) {
         isDownloading = true
         errorMessage = nil
         consoleOutput = ""
@@ -166,8 +247,8 @@ struct YouTubeDownloadView: View {
                     }
                 }
                 
-                // Check again for duplicates after download (by file)
-                if let existing = downloadManager.hasDuplicate(videoID: videoID, url: fileURL) {
+                // Final duplicate check after download (in case of race condition)
+                if let existing = downloadManager.findDuplicateByVideoID(videoID: videoID, source: detectedSource) {
                     // Delete the newly downloaded file
                     try? FileManager.default.removeItem(at: fileURL)
                     
@@ -212,6 +293,8 @@ struct YouTubeDownloadView: View {
         
         let finalTitle = keepOriginalName ? downloadedTitle : newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let thumbnailPath = embeddedPython.getThumbnailPath(for: fileURL)
+        
+        // Extract video ID for storage
         let videoID = extractVideoID(from: youtubeURL)
         
         if !keepOriginalName && finalTitle != downloadedTitle && !finalTitle.isEmpty {
@@ -270,23 +353,12 @@ struct YouTubeDownloadView: View {
     }
     
     private func extractVideoID(from urlString: String) -> String? {
-        if let url = URL(string: urlString) {
-            // YouTube
-            if url.host?.contains("youtu.be") == true {
-                return url.lastPathComponent
-            } else if url.host?.contains("youtube.com") == true {
-                if let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems {
-                    return queryItems.first(where: { $0.name == "v" })?.value
-                }
-            }
-            // Spotify
-            else if url.host?.contains("spotify.com") == true {
-                let components = url.pathComponents
-                if let trackIndex = components.firstIndex(of: "track"), trackIndex + 1 < components.count {
-                    return components[trackIndex + 1]
-                }
-            }
+        guard let url = URL(string: urlString) else { return nil }
+        
+        if detectedSource == .youtube {
+            return extractYouTubeID(from: url)
+        } else {
+            return extractSpotifyID(from: url)
         }
-        return nil
     }
 }
