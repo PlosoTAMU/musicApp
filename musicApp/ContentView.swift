@@ -49,6 +49,12 @@ struct ContentView: View {
         .sheet(isPresented: $showYouTubeDownload) {
             YouTubeDownloadView(downloadManager: downloadManager)
         }
+        .overlay(alignment: .top) {
+            if !downloadManager.activeDownloads.isEmpty {
+                DownloadBanner(downloadManager: downloadManager)
+                    .transition(.move(edge: .top))
+            }
+        }
     }
 }
 
@@ -233,20 +239,27 @@ struct NowPlayingView: View {
     
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: dominantColors,
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .overlay(
+            // Blurred background from album art
+            if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
+                Image(uiImage: thumbnailImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: UIScreen.main.bounds.width * 1.5, height: UIScreen.main.bounds.height * 1.5)
+                    .blur(radius: 100)
+                    .scaleEffect(1.5)
+                    .ignoresSafeArea()
+            } else {
                 LinearGradient(
-                    colors: [Color.black.opacity(0.3), Color.clear],
-                    startPoint: .top,
-                    endPoint: .center
+                    colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
                 )
-            )
-            .ignoresSafeArea()
-            .animation(.easeInOut(duration: 0.5), value: dominantColors)
+                .ignoresSafeArea()
+            }
+            
+            // Dark overlay for readability
+            Color.black.opacity(0.3)
+                .ignoresSafeArea()
             
             VStack(spacing: 0) {
                 // Top bar
@@ -256,7 +269,7 @@ struct NowPlayingView: View {
                     } label: {
                         Image(systemName: "chevron.down")
                             .font(.title2)
-                            .foregroundColor(.primary)
+                            .foregroundColor(.white)
                     }
                     
                     Spacer()
@@ -271,7 +284,7 @@ struct NowPlayingView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                             .font(.title2)
-                            .foregroundColor(.primary)
+                            .foregroundColor(.white)
                     }
                 }
                 .padding()
@@ -293,10 +306,7 @@ struct NowPlayingView: View {
                                 .aspectRatio(contentMode: .fill)
                                 .frame(width: 320, height: 320)
                                 .clipShape(RoundedRectangle(cornerRadius: 20))
-                                .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
-                                .onAppear {
-                                    extractDominantColors(from: thumbnailImage)
-                                }
+                                .shadow(color: .black.opacity(0.5), radius: 30, y: 15)
                         } else {
                             RoundedRectangle(cornerRadius: 20)
                                 .fill(
@@ -312,7 +322,7 @@ struct NowPlayingView: View {
                                         .font(.system(size: 80))
                                         .foregroundColor(.white.opacity(0.5))
                                 )
-                                .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+                                .shadow(color: .black.opacity(0.3), radius: 30, y: 15)
                         }
                     }
                 }
@@ -332,11 +342,12 @@ struct NowPlayingView: View {
                         Text(audioPlayer.currentTrack?.name ?? "Unknown")
                             .font(.title2)
                             .fontWeight(.semibold)
+                            .foregroundColor(.white)
                             .lineLimit(1)
                         
                         Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
                             .font(.body)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.7))
                             .lineLimit(1)
                     }
                     .padding(.horizontal)
@@ -367,13 +378,13 @@ struct NowPlayingView: View {
                     HStack {
                         Text(formatTime(isSeeking ? seekValue : audioPlayer.currentTime))
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.7))
                         
                         Spacer()
                         
                         Text(formatTime(audioPlayer.duration))
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.7))
                     }
                 }
                 .padding(.horizontal, 32)
@@ -389,7 +400,7 @@ struct NowPlayingView: View {
                     } label: {
                         Image(systemName: "backward.fill")
                             .font(.system(size: 32))
-                            .foregroundColor(.primary)
+                            .foregroundColor(.white)
                     }
                     
                     Button {
@@ -401,7 +412,7 @@ struct NowPlayingView: View {
                     } label: {
                         Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                             .font(.system(size: 64))
-                            .foregroundColor(.primary)
+                            .foregroundColor(.white)
                     }
                     
                     Button {
@@ -409,7 +420,7 @@ struct NowPlayingView: View {
                     } label: {
                         Image(systemName: "forward.fill")
                             .font(.system(size: 32))
-                            .foregroundColor(.primary)
+                            .foregroundColor(.white)
                     }
                     
                     FastForwardButton(audioPlayer: audioPlayer, isHolding: $isHoldingFF)
@@ -421,14 +432,14 @@ struct NowPlayingView: View {
                 VStack(spacing: 8) {
                     HStack(spacing: 12) {
                         Image(systemName: "speaker.fill")
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.7))
                             .font(.caption)
                         
                         VolumeSlider()
                             .frame(height: 20)
                         
                         Image(systemName: "speaker.wave.3.fill")
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.7))
                             .font(.caption)
                     }
                 }
@@ -439,7 +450,6 @@ struct NowPlayingView: View {
         .gesture(
             DragGesture()
                 .onEnded { value in
-                    // If swiped down more than 100 points, dismiss
                     if value.translation.height > 100 {
                         isPresented = false
                     }
@@ -546,4 +556,32 @@ struct VolumeSlider: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+}
+
+struct DownloadBanner: View {
+    @ObservedObject var downloadManager: DownloadManager
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(downloadManager.activeDownloads.keys), id: \.self) { videoID in
+                HStack(spacing: 12) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    
+                    Text("Downloading...")
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                    
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(.ultraThinMaterial)
+                .cornerRadius(12)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+        }
+        .padding(.top, 50) // Below status bar
+    }
 }

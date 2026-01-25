@@ -11,14 +11,14 @@ class DownloadManager: ObservableObject {
     init() {
         let fileManager = FileManager.default
         
-        // Get the app's Documents directory (visible in Files app under "On My iPhone/iPad")
+        // Get the app's Documents directory
         let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         
-        // Create a Music folder that will be visible in Files app
+        // Create a Music folder
         musicDirectory = documentsPath.appendingPathComponent("Music", isDirectory: true)
         try? fileManager.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
         
-        // Make it accessible in Files app by NOT excluding it from backup
+        // Make it accessible in Files app
         var resourceValues = URLResourceValues()
         resourceValues.isExcludedFromBackup = false
         var musicDirURL = musicDirectory
@@ -27,7 +27,6 @@ class DownloadManager: ObservableObject {
         downloadsFileURL = documentsPath.appendingPathComponent("downloads.json")
         
         print("📁 Music directory: \(musicDirectory.path)")
-        print("📁 Will be visible in Files app under: On My iPhone > \(Bundle.main.displayName ?? "App") > Music")
         
         loadDownloads()
     }
@@ -68,7 +67,6 @@ class DownloadManager: ObservableObject {
                 )
             } catch {
                 print("❌ [DownloadManager] Failed to move file: \(error)")
-                // If move fails, use original
                 finalDownload = download
             }
         }
@@ -143,26 +141,11 @@ class DownloadManager: ObservableObject {
             print("❌ [DownloadManager] Failed to update metadata: \(error)")
         }
         
-        // Remove from memory
         downloads.removeAll { $0.id == download.id }
         deletionTimers.removeValue(forKey: download.id)
         saveDownloads()
         
         print("🗑️ [DownloadManager] Completely removed: \(download.name)")
-    }
-
-    private func getMetadataFileURL() -> URL {
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documentsPath.appendingPathComponent("audio_metadata.json")
-    }
-
-    private func loadMetadata() -> [String: [String: String]] {
-        let metadataURL = getMetadataFileURL()
-        guard let data = try? Data(contentsOf: metadataURL),
-            let metadata = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
-            return [:]
-        }
-        return metadata
     }
     
     func getDownload(byID id: UUID) -> Download? {
@@ -243,17 +226,36 @@ class DownloadManager: ObservableObject {
             let decoder = JSONDecoder()
             var loadedDownloads = try decoder.decode([Download].self, from: data)
             
-            // Verify files still exist
-            loadedDownloads = loadedDownloads.filter { download in
-                let exists = FileManager.default.fileExists(atPath: download.url.path)
-                if !exists {
-                    print("⚠️ [DownloadManager] Missing file: \(download.name) at \(download.url.path)")
-                }
-                return exists
-            }
+            // Fix file paths - resolve to current Documents directory
+            let currentMusicDir = musicDirectory
             
             for i in 0..<loadedDownloads.count {
+                let filename = loadedDownloads[i].url.lastPathComponent
+                let correctPath = currentMusicDir.appendingPathComponent(filename)
+                
+                // Update the URL to the correct path
+                loadedDownloads[i] = Download(
+                    id: loadedDownloads[i].id,
+                    name: loadedDownloads[i].name,
+                    url: correctPath,
+                    thumbnailPath: loadedDownloads[i].thumbnailPath,
+                    videoID: loadedDownloads[i].videoID,
+                    source: loadedDownloads[i].source
+                )
+                
                 loadedDownloads[i].pendingDeletion = false
+                
+                // Verify file exists
+                if !FileManager.default.fileExists(atPath: correctPath.path) {
+                    print("⚠️ [DownloadManager] Missing file: \(filename) at \(correctPath.path)")
+                } else {
+                    print("✅ [DownloadManager] Found file: \(filename)")
+                }
+            }
+            
+            // Only keep downloads where files exist
+            loadedDownloads = loadedDownloads.filter { download in
+                FileManager.default.fileExists(atPath: download.url.path)
             }
             
             downloads = loadedDownloads
@@ -275,6 +277,20 @@ class DownloadManager: ObservableObject {
                 }
             }
         }
+    }
+    
+    private func getMetadataFileURL() -> URL {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsPath.appendingPathComponent("audio_metadata.json")
+    }
+    
+    private func loadMetadata() -> [String: [String: String]] {
+        let metadataURL = getMetadataFileURL()
+        guard let data = try? Data(contentsOf: metadataURL),
+              let metadata = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
+            return [:]
+        }
+        return metadata
     }
 }
 
