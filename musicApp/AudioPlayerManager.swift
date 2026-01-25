@@ -13,7 +13,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var avPlayer: AVPlayer?
     private var playerObserver: Any?
     private var displayLink: CADisplayLink?
-    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     
     override init() {
         super.init()
@@ -26,7 +25,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func setupAudioSession() {
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            // This is the key: use .playback mode without .mixWithOthers
+            try audioSession.setCategory(.playback, mode: .default)
             try audioSession.setActive(true)
             
             // Enable background audio
@@ -160,10 +160,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         stopTimeUpdates()
         removePlayerObserver()
         
-        // Start background task
-        beginBackgroundTask()
-        
         do {
+            // Reactivate audio session
             try AVAudioSession.sharedInstance().setActive(true)
             
             guard let trackURL = track.resolvedURL() else {
@@ -174,7 +172,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
             _ = trackURL.startAccessingSecurityScopedResource()
             
             let playerItem = AVPlayerItem(url: trackURL)
+            
+            // Enable background playback at the player level
             avPlayer = AVPlayer(playerItem: playerItem)
+            avPlayer?.automaticallyWaitsToMinimizeStalling = false
             avPlayer?.play()
             
             isPlaying = true
@@ -206,14 +207,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
         avPlayer?.pause()
         isPlaying = false
         updateNowPlayingInfo()
-        endBackgroundTask()
     }
     
     func resume() {
+        // Ensure audio session is still active
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("❌ Failed to reactivate audio session: \(error)")
+        }
+        
         avPlayer?.play()
         isPlaying = true
         updateNowPlayingInfo()
-        beginBackgroundTask()
     }
     
     func stop() {
@@ -226,7 +232,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        endBackgroundTask()
     }
     
     func seek(to time: Double) {
@@ -277,23 +282,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Background Task Management
-    
-    private func beginBackgroundTask() {
-        endBackgroundTask()
-        
-        backgroundTask = UIApplication.shared.beginBackgroundTask { [weak self] in
-            self?.endBackgroundTask()
-        }
-    }
-    
-    private func endBackgroundTask() {
-        if backgroundTask != .invalid {
-            UIApplication.shared.endBackgroundTask(backgroundTask)
-            backgroundTask = .invalid
-        }
-    }
-    
     // MARK: - Observers
     
     private func setupPlayerObserver() {
@@ -341,7 +329,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     deinit {
         stopTimeUpdates()
         removePlayerObserver()
-        endBackgroundTask()
         NotificationCenter.default.removeObserver(self)
     }
 }

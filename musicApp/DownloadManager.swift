@@ -107,15 +107,62 @@ class DownloadManager: ObservableObject {
     private func confirmDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
         onDelete(download)
         
-        try? FileManager.default.removeItem(at: download.url)
-        
-        if let thumbPath = download.thumbnailPath {
-            try? FileManager.default.removeItem(atPath: thumbPath)
+        // Delete the audio file
+        do {
+            if FileManager.default.fileExists(atPath: download.url.path) {
+                try FileManager.default.removeItem(at: download.url)
+                print("✅ [DownloadManager] Deleted audio file: \(download.url.lastPathComponent)")
+            }
+        } catch {
+            print("❌ [DownloadManager] Failed to delete audio file: \(error)")
         }
         
+        // Delete thumbnail
+        if let thumbPath = download.thumbnailPath {
+            do {
+                if FileManager.default.fileExists(atPath: thumbPath) {
+                    try FileManager.default.removeItem(atPath: thumbPath)
+                    print("✅ [DownloadManager] Deleted thumbnail: \(thumbPath)")
+                }
+            } catch {
+                print("❌ [DownloadManager] Failed to delete thumbnail: \(error)")
+            }
+        }
+        
+        // Delete metadata entry
+        let metadataURL = getMetadataFileURL()
+        var metadata = loadMetadata()
+        let filename = download.url.lastPathComponent
+        metadata.removeValue(forKey: filename)
+        
+        do {
+            let data = try JSONEncoder().encode(metadata)
+            try data.write(to: metadataURL)
+            print("✅ [DownloadManager] Removed metadata entry")
+        } catch {
+            print("❌ [DownloadManager] Failed to update metadata: \(error)")
+        }
+        
+        // Remove from memory
         downloads.removeAll { $0.id == download.id }
         deletionTimers.removeValue(forKey: download.id)
         saveDownloads()
+        
+        print("🗑️ [DownloadManager] Completely removed: \(download.name)")
+    }
+
+    private func getMetadataFileURL() -> URL {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsPath.appendingPathComponent("audio_metadata.json")
+    }
+
+    private func loadMetadata() -> [String: [String: String]] {
+        let metadataURL = getMetadataFileURL()
+        guard let data = try? Data(contentsOf: metadataURL),
+            let metadata = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
+            return [:]
+        }
+        return metadata
     }
     
     func getDownload(byID id: UUID) -> Download? {
