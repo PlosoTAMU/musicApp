@@ -10,6 +10,16 @@ struct ContentView: View {
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
+    @State private var showPlaylistPicker = false
+    @State private var isSeeking = false
+    @State private var seekValue: Double = 0
+    @State private var isHoldingRewind = false
+    @State private var isHoldingFF = false
+    @State private var isSeeking = false
+    @State private var seekValue: Double = 0
+    @State private var showPlaylistPicker = false
+    @State private var isHoldingRewind = false
+    @State private var isHoldingFF = false
     
     var body: some View {
         GeometryReader { geometry in
@@ -41,7 +51,7 @@ struct ContentView: View {
                     // Top bar
                     HStack {
                         Button {
-                            isPresented = false
+                            showNowPlaying = false
                         } label: {
                             Image(systemName: "chevron.down")
                                 .font(.title2)
@@ -228,7 +238,7 @@ struct ContentView: View {
             DragGesture()
                 .onEnded { value in
                     if value.translation.height > 100 {
-                        isPresented = false
+                        showNowPlaying = false
                     }
                 }
         )
@@ -236,6 +246,21 @@ struct ContentView: View {
             Text("Playlist picker coming soon")
                 .padding()
         }
+    }
+    
+    private func formatTime(_ time: Double) -> String {
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    private func getThumbnailImage(for track: Track?) -> UIImage? {
+        guard let track = track,
+              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
+            return nil
+        }
+        return image
     }
 }
 
@@ -448,7 +473,7 @@ struct NowPlayingView: View {
                     // Top bar
                     HStack {
                         Button {
-                            isPresented = false
+                            showNowPlaying = false
                         } label: {
                             Image(systemName: "chevron.down")
                                 .font(.title2)
@@ -661,6 +686,8 @@ struct NowPlayingView: View {
     }
 }
 
+
+// MARK: - Custom Volume Slider
 struct VolumeSlider: UIViewRepresentable {
     class Coordinator: NSObject {
         var parent: VolumeSlider
