@@ -308,11 +308,10 @@ struct NowPlayingView: View {
                 
                 HStack(spacing: 16) {
                     Button { audioPlayer.previous() } label: {
-                        Image("rewind")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 32, height: 32)
+                        Image(systemName: "backward.fill")
+                            .font(.system(size: 32))
                             .foregroundColor(.white)
+                            .frame(width: 50, height: 50)
                     }
                     
                     RewindButton(audioPlayer: audioPlayer)
@@ -332,11 +331,10 @@ struct NowPlayingView: View {
                     FastForwardButton(audioPlayer: audioPlayer)
                     
                     Button { audioPlayer.next() } label: {
-                        Image("forward")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 32, height: 32)
+                        Image(systemName: "forward.fill")
+                            .font(.system(size: 32))
                             .foregroundColor(.white)
+                            .frame(width: 50, height: 50)
                     }
                 }
                 .padding(.horizontal, 28)
@@ -470,10 +468,11 @@ struct RewindButton: View {
     @State private var pressTimer: Timer?
     
     var body: some View {
-        Image(systemName: "backward.fill") // Use your custom image if you have one
-            .font(.system(size: 32))
-            .foregroundColor(.white)
-            .frame(width: 50, height: 50)
+        Image("rewind")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 32, height: 32)
+                .foregroundColor(.white)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
@@ -512,10 +511,11 @@ struct FastForwardButton: View {
     @State private var pressTimer: Timer?
     
     var body: some View {
-        Image(systemName: "forward.fill")
-            .font(.system(size: 32))
-            .foregroundColor(.white)
-            .frame(width: 50, height: 50)
+        Image("forward")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 32, height: 32)
+                .foregroundColor(.white)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
