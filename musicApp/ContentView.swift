@@ -466,38 +466,42 @@ struct RewindButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @State private var isLongPressing = false
     @State private var pressTimer: Timer?
+    @State private var rewindTimer: Timer? // New timer for the loop
     
     var body: some View {
-        Image("rewind")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 32, height: 32)
-                .foregroundColor(.white)
+        Image(systemName: "backward.fill")
+            .font(.system(size: 32))
+            .foregroundColor(.white)
+            .frame(width: 50, height: 50)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
-                        // 1. Touch Down: Start timer if not already started
                         if pressTimer == nil {
+                            // 1. Wait 0.4s to detect a hold
                             pressTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
-                                // 2. Long Press Detected: Start Rewinding
                                 isLongPressing = true
-                                audioPlayer.playbackSpeed = -2.0 // Use negative speed if supported, otherwise standard rewind logic
-                                // Note: detailed rewind logic usually requires negative rate or rapid seeking
-                                // For simplicity/safety here, we often just skip rapidly or speed up
+                                
+                                // 2. Start the Rewind Loop (Simulate 2x-3x rewind)
+                                rewindTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+                                    // Move back 0.5s every 0.2s
+                                    audioPlayer.skip(seconds: -0.5)
+                                }
                             }
                         }
                     }
                     .onEnded { _ in
-                        // 3. Touch Up
+                        // Clean up all timers
                         pressTimer?.invalidate()
                         pressTimer = nil
                         
+                        rewindTimer?.invalidate()
+                        rewindTimer = nil
+                        
                         if isLongPressing {
-                            // Was holding: Reset speed
-                            audioPlayer.playbackSpeed = 1.0
                             isLongPressing = false
+                            // Loop stopped, audio continues from new spot naturally
                         } else {
-                            // Was a tap: Perform Skip
+                            // Was a tap: Perform single Skip
                             audioPlayer.skip(seconds: -10)
                         }
                     }
