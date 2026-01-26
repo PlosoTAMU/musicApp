@@ -50,8 +50,32 @@ struct YouTubeDownloadView: View {
             .onAppear {
                 if !hasProcessed {
                     hasProcessed = true
+                    // FIXED: Setup callback before starting download
+                    setupTitleCallback()
                     checkClipboardAndStart()
                 }
+            }
+            .onDisappear {
+                // Clean up callback
+                EmbeddedPython.shared.onTitleFetched = nil
+            }
+        }
+    }
+    
+    // FIXED: Setup callback to update download title in real-time
+    private func setupTitleCallback() {
+        EmbeddedPython.shared.onTitleFetched = { [weak downloadManager] videoID, title in
+            guard let manager = downloadManager else { return }
+            
+            // Find the active download by videoID and update its title
+            if let index = manager.activeDownloads.firstIndex(where: { $0.videoID == videoID }) {
+                manager.activeDownloads[index] = ActiveDownload(
+                    id: manager.activeDownloads[index].id,
+                    videoID: videoID,
+                    title: title,
+                    progress: manager.activeDownloads[index].progress
+                )
+                print("📝 [YouTubeDownloadView] Updated banner title to: \(title)")
             }
         }
     }
@@ -79,15 +103,15 @@ struct YouTubeDownloadView: View {
             return // Show this error in the sheet
         }
         
-        // No duplicate - start download and dismiss immediately
+        // FIXED: Start with "Fetching info" - will be updated by callback
         downloadManager.startBackgroundDownload(
             url: clipboardString,
             videoID: videoID,
             source: source,
-            title: "Loading..."
+            title: "Fetching info"
         )
         
-        // Dismiss immediately - banner will show
+        // Dismiss immediately - banner will show and update
         dismiss()
     }
     

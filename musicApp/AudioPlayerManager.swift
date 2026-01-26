@@ -9,8 +9,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var currentIndex: Int = 0
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
+    @Published var reverbAmount: Double = 0 {
+        didSet { updateReverb() }
+    }
+    @Published var playbackSpeed: Double = 1.0 {
+        didSet { updatePlaybackSpeed() }
+    }
     
     private var avPlayer: AVPlayer?
+    private var audioEngine: AVAudioEngine?
+    private var playerNode: AVAudioPlayerNode?
+    private var reverbNode: AVAudioUnitReverb?
+    private var timePitchNode: AVAudioUnitTimePitch?
+    
     private var playerObserver: Any?
     private var timeObserver: Any?
     
@@ -25,15 +36,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func setupAudioSession() {
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            
-            // CRITICAL FIX: Use .playback mode without .mixWithOthers
-            // Also set mode to .spokenAudio which is more reliable for background playback
             try audioSession.setCategory(.playback, mode: .default, options: [])
             try audioSession.setActive(true)
-            
-            // Request background audio capabilities
             UIApplication.shared.beginReceivingRemoteControlEvents()
-            
             print("✅ Audio session configured for background playback")
         } catch {
             print("❌ Failed to setup audio session: \(error)")
@@ -71,7 +76,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
             return .commandFailed
         }
         
-        // Enable skip forward/backward
         commandCenter.skipForwardCommand.isEnabled = true
         commandCenter.skipForwardCommand.preferredIntervals = [10]
         commandCenter.skipForwardCommand.addTarget { [weak self] _ in
@@ -102,7 +106,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
             object: nil
         )
         
-        // CRITICAL: Listen for app state changes to keep audio session active
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppWillResignActive),
@@ -119,21 +122,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     @objc private func handleAppWillResignActive() {
-        // CRITICAL FIX: Ensure audio session stays active when app goes to background
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: [])
-            print("🔊 Audio session kept active on background")
+            print("📊 Audio session kept active on background")
         } catch {
             print("❌ Failed to keep audio session active: \(error)")
         }
     }
     
     @objc private func handleAppDidBecomeActive() {
-        // Reactivate audio session when returning to foreground
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: [])
             updateNowPlayingInfo()
-            print("🔊 Audio session reactivated on foreground")
+            print("📊 Audio session reactivated on foreground")
         } catch {
             print("❌ Failed to reactivate audio session: \(error)")
         }
@@ -169,7 +170,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         switch reason {
         case .oldDeviceUnavailable:
-            // Headphones unplugged - pause playback
             pause()
         default:
             break
@@ -184,9 +184,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = track.folderName
         nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
-        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? playbackSpeed : 0.0
         
-        // Add artwork if available
         if let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
            let image = UIImage(contentsOfFile: thumbnailPath.path) {
             let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
@@ -214,7 +213,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         removePlayerObserver()
         
         do {
-            // CRITICAL: Reactivate audio session before playing
             try AVAudioSession.sharedInstance().setActive(true, options: [])
             
             guard let trackURL = track.resolvedURL() else {
@@ -226,13 +224,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             let playerItem = AVPlayerItem(url: trackURL)
             
-            // CRITICAL FIX: Configure player for background playback
             avPlayer = AVPlayer(playerItem: playerItem)
             avPlayer?.automaticallyWaitsToMinimizeStalling = false
-            
-            // CRITICAL: Set audio timing to prevent termination
             avPlayer?.currentItem?.preferredForwardBufferDuration = 30
             
+            // Apply current playback speed
+            avPlayer?.rate = Float(playbackSpeed)
             avPlayer?.play()
             
             isPlaying = true
@@ -267,14 +264,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func resume() {
-        // CRITICAL: Ensure audio session is active before resuming
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: [])
         } catch {
             print("❌ Failed to reactivate audio session: \(error)")
         }
         
-        avPlayer?.play()
+        avPlayer?.rate = Float(playbackSpeed)
         isPlaying = true
         updateNowPlayingInfo()
     }
@@ -302,23 +298,20 @@ class AudioPlayerManager: NSObject, ObservableObject {
         seek(to: newTime)
     }
     
-    // MARK: - Fast Forward / Rewind
+    // MARK: - Audio Effects
     
-    func setPlaybackRate(_ rate: Float) {
-        avPlayer?.rate = rate
-        isPlaying = (rate != 0)
+    private func updateReverb() {
+        // Reverb not directly supported with AVPlayer, would need AVAudioEngine
+        // This is a placeholder - full implementation would require migrating to AVAudioEngine
+        print("🎚️ Reverb set to: \(reverbAmount)%")
     }
     
-    func startFastForward() {
-        setPlaybackRate(2.0)
-    }
-    
-    func startRewind() {
-        setPlaybackRate(-2.0)
-    }
-    
-    func resumeNormalSpeed() {
-        setPlaybackRate(1.0)
+    private func updatePlaybackSpeed() {
+        if isPlaying {
+            avPlayer?.rate = Float(playbackSpeed)
+        }
+        updateNowPlayingInfo()
+        print("⚡ Playback speed set to: \(playbackSpeed)x")
     }
     
     // MARK: - Playlist Navigation
@@ -360,19 +353,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Time Observer (Replaces CADisplayLink)
-    
     private func setupTimeObserver() {
         removeTimeObserver()
         
-        // CRITICAL FIX: Use AVPlayer's time observer instead of CADisplayLink
-        // CADisplayLink doesn't work in background
         let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         timeObserver = avPlayer?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self = self else { return }
             self.currentTime = CMTimeGetSeconds(time)
             
-            // Update Now Playing info every 5 seconds
             if Int(self.currentTime) % 5 == 0 {
                 self.updateNowPlayingInfo()
             }

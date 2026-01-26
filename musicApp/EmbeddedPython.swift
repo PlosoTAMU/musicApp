@@ -17,6 +17,9 @@ class EmbeddedPython: ObservableObject {
     private var progressTimer: Timer?
     private var currentProgressFile: String?
     
+    // FIXED: Callback for title updates
+    var onTitleFetched: ((String, String) -> Void)? // (videoID, title) -> Void
+    
     init() {}
     
     func initialize() {
@@ -66,7 +69,6 @@ class EmbeddedPython: ObservableObject {
         setenv("SSL_CERT_FILE", certPath, 1)
         setenv("REQUESTS_CA_BUNDLE", certPath, 1)
 
-
         let encodingsPath = libPath + "/encodings"
         guard FileManager.default.fileExists(atPath: encodingsPath) else {
             print("❌ [EmbeddedPython] encodings NOT found at: \(encodingsPath)")
@@ -94,7 +96,7 @@ class EmbeddedPython: ObservableObject {
         }
     }
     
-    func downloadAudio(url: String) async throws -> (URL, String) {
+    func downloadAudio(url: String, videoID: String = "") async throws -> (URL, String) {
         guard pythonInitialized else {
             throw PythonError.notInitialized
         }
@@ -116,8 +118,8 @@ class EmbeddedPython: ObservableObject {
                     self?.updateStatus("Downloading...")
                     self?.updateProgress(0.1)
                     
-                    // Python downloads the file
-                    let (downloadedURL, title, thumbnailURL) = try self?.runYtdlp(url: url, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "", nil)
+                    // Python downloads the file - FIXED: callback updates banner immediately when title is known
+                    let (downloadedURL, title, thumbnailURL) = try self?.runYtdlp(url: url, videoID: videoID, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "", nil)
                     
                     self?.updateStatus("Download complete, compressing...")
                     self?.updateProgress(0.7)
@@ -126,7 +128,7 @@ class EmbeddedPython: ObservableObject {
                     self?.stopProgressMonitoring()
                     
                     // Compress it with proper naming
-                    print("🔄 [downloadAudio] Compressing audio...")
+                    print("📄 [downloadAudio] Compressing audio...")
                     let compressedURL = (try? self?.compressAudio(inputURL: downloadedURL, title: title, outputDir: outputDir)) ?? downloadedURL
                     
                     self?.updateProgress(0.9)
@@ -205,16 +207,14 @@ class EmbeddedPython: ObservableObject {
         let safeTitle = title.sanitizedForFilename()
         let outputURL = outputDir.appendingPathComponent("\(safeTitle).m4a")
         
-        print("🔄 [compressAudio] Compressing: \(inputURL.path)")
-        print("🔄 [compressAudio] Output: \(outputURL.path)")
+        print("📄 [compressAudio] Compressing: \(inputURL.path)")
+        print("📄 [compressAudio] Output: \(outputURL.path)")
         
         updateStatus("Compressing...")
         
         // SPEED OPTIMIZATION: Use ultrafast preset with hardware encoder
-        // -threads 0 = use all available cores
-        // -async 1 = reduce latency
         let command = "-i \"\(inputURL.path)\" -vn -c:a aac_at -b:a 48k -threads 0 -preset ultrafast -async 1 -y \"\(outputURL.path)\""
-        print("🔄 [compressAudio] Command: \(command)")
+        print("📄 [compressAudio] Command: \(command)")
         
         let session = FFmpegKit.execute(command)
         
@@ -280,15 +280,6 @@ class EmbeddedPython: ObservableObject {
             return thumbnailPath
         }
         
-        // If thumbnail is missing or corrupted, try to regenerate it
-        print("⚠️ [Thumbnail] Missing or corrupted for: \(filename)")
-        let metadata = loadMetadata()
-        if let trackMeta = metadata[filename],
-        let thumbnailURL = trackMeta["thumbnail"] {
-            print("🔄 [Thumbnail] Attempting to re-download...")
-            downloadThumbnail(url: thumbnailURL, for: filename)
-        }
-        
         return nil
     }
     
@@ -307,20 +298,20 @@ class EmbeddedPython: ObservableObject {
         }
         
         Task {
-            // Try up to 2 times
-            for attempt in 1...2 {
+            // Try up to 3 times
+            for attempt in 1...3 {
                 do {
                     let (data, response) = try await URLSession.shared.data(from: thumbnailURL)
                     
                     guard let httpResponse = response as? HTTPURLResponse,
                         httpResponse.statusCode == 200,
                         let _ = UIImage(data: data) else {
-                        if attempt == 2 {
+                        if attempt == 3 {
                             print("❌ [Thumbnail] Invalid image data after \(attempt) attempts")
                             tryFallbackThumbnail(for: filename, originalURL: url)
                         } else {
                             print("⚠️ [Thumbnail] Attempt \(attempt) failed, retrying...")
-                            try? await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second
+                            try? await Task.sleep(nanoseconds: 1_000_000_000)
                             continue
                         }
                         return
@@ -332,7 +323,7 @@ class EmbeddedPython: ObservableObject {
                         print("✅ [Thumbnail] Saved and verified on attempt \(attempt): \(savePath.lastPathComponent)")
                         return
                     } else {
-                        if attempt == 2 {
+                        if attempt == 3 {
                             print("⚠️ [Thumbnail] Saved but unreadable after \(attempt) attempts")
                             try? FileManager.default.removeItem(at: savePath)
                             tryFallbackThumbnail(for: filename, originalURL: url)
@@ -343,7 +334,7 @@ class EmbeddedPython: ObservableObject {
                         }
                     }
                 } catch {
-                    if attempt == 2 {
+                    if attempt == 3 {
                         print("❌ [Thumbnail] Failed after \(attempt) attempts: \(error)")
                         tryFallbackThumbnail(for: filename, originalURL: url)
                     } else {
@@ -354,15 +345,16 @@ class EmbeddedPython: ObservableObject {
             }
         }
     }
-
-
     
     private func tryFallbackThumbnail(for filename: String, originalURL: String) {
         // Extract video ID from filename or URL
-        guard let videoID = filename.components(separatedBy: ".").first else { return }
+        let components = filename.components(separatedBy: ".")
+        guard components.count > 0 else { return }
+        let videoID = components[0]
         
         // Try different thumbnail qualities
         let fallbackURLs = [
+            "https://img.youtube.com/vi/\(videoID)/maxresdefault.jpg",
             "https://img.youtube.com/vi/\(videoID)/hqdefault.jpg",
             "https://img.youtube.com/vi/\(videoID)/mqdefault.jpg",
             "https://img.youtube.com/vi/\(videoID)/default.jpg"
@@ -415,17 +407,21 @@ class EmbeddedPython: ObservableObject {
     
     // MARK: - Optimized Python Execution
     
-    private func runYtdlp(url: String, outputDir: String) throws -> (URL, String, String?) {
+    private func runYtdlp(url: String, videoID: String, outputDir: String) throws -> (URL, String, String?) {
         let resultFilePath = NSTemporaryDirectory() + "ytdlp_result.json"
         let logFilePath = NSTemporaryDirectory() + "ytdlp_debug.log"
+        let titleFilePath = NSTemporaryDirectory() + "ytdlp_title.txt" // FIXED: Intermediate title file
         
         print("🎬 [runYtdlp] Starting download for URL: \(url)")
         print("🎬 [runYtdlp] Output directory: \(outputDir)")
         
-        let script = generateYtdlpScript(url: url, outputDir: outputDir, resultFilePath: resultFilePath, logFilePath: logFilePath)
+        let script = generateYtdlpScript(url: url, outputDir: outputDir, resultFilePath: resultFilePath, logFilePath: logFilePath, titleFilePath: titleFilePath)
         
         print("🎬 [runYtdlp] Executing Python script...")
         let startTime = Date()
+        
+        // FIXED: Monitor for title file in background
+        startTitleMonitoring(titleFilePath: titleFilePath, videoID: videoID)
         
         guard executePython(script) != nil else {
             print("❌ [runYtdlp] executePython returned nil")
@@ -442,6 +438,7 @@ class EmbeddedPython: ObservableObject {
             print("📋 [runYtdlp] Debug log:\n\(debugLog)")
         }
         try? FileManager.default.removeItem(atPath: logFilePath)
+        try? FileManager.default.removeItem(atPath: titleFilePath)
         
         guard let jsonData = try? Data(contentsOf: URL(fileURLWithPath: resultFilePath)),
               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
@@ -466,12 +463,32 @@ class EmbeddedPython: ObservableObject {
         if let thumb = thumbnailURL {
             print("🖼️ [runYtdlp] Thumbnail URL: \(thumb)")
         }
-        print("✅ [runYtdlp] Audio saved to: \(audioURL.path)")
-        print("✅ [runYtdlp] File exists: \(FileManager.default.fileExists(atPath: audioURL.path))")
         return (audioURL, title, thumbnailURL)
     }
     
-    private func generateYtdlpScript(url: String, outputDir: String, resultFilePath: String, logFilePath: String) -> String {
+    // FIXED: Monitor for title file and update banner immediately
+    private func startTitleMonitoring(titleFilePath: String, videoID: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            var hasRead = false
+            for _ in 0..<20 { // Check for 10 seconds
+                if !hasRead, FileManager.default.fileExists(atPath: titleFilePath),
+                   let title = try? String(contentsOfFile: titleFilePath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+                   !title.isEmpty {
+                    print("📝 [TitleMonitor] Got title: \(title)")
+                    hasRead = true
+                    
+                    // Update banner on main thread
+                    DispatchQueue.main.async {
+                        self.onTitleFetched?(videoID, title)
+                    }
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+    }
+    
+    private func generateYtdlpScript(url: String, outputDir: String, resultFilePath: String, logFilePath: String, titleFilePath: String) -> String {
         let cleanURL = url.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: "")
         
         return """
@@ -480,6 +497,8 @@ class EmbeddedPython: ObservableObject {
         import json
         
         log_file = r'''\(logFilePath)'''
+        title_file = r'''\(titleFilePath)'''
+        
         def log(msg):
             try:
                 with open(log_file, 'a', encoding='utf-8') as f:
@@ -504,48 +523,53 @@ class EmbeddedPython: ObservableObject {
         url = r'''\(cleanURL)'''
         os.makedirs(output_dir, exist_ok=True)
         
-        # SPEED OPTIMIZATIONS while keeping format fallbacks
         ydl_opts = {
-            'format': '140/bestaudio[ext=m4a]/bestaudio/best',  # Keep fallbacks for compatibility
+            'format': '140/bestaudio[ext=m4a]/bestaudio/best',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'quiet': False,
             'noplaylist': True,
             'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['ios', 'android'],  # Keep both for reliability
+                    'player_client': ['ios', 'android'],
                     'skip': ['web'],
                 }
             },
             'merge_output_format': 'm4a',
-            'http_chunk_size': 10485760,  # 10MB chunks for faster download
-            'retries': 3,  # Fewer retries
-            'fragment_retries': 1,  # Fewer fragment retries
-            'skip_unavailable_fragments': True,  # Don't wait for missing fragments
-            'socket_timeout': 20,  # Shorter timeout
-            'noprogress': True,  # Disable progress bar overhead
-            'no_color': True,  # Disable color codes
-            'nocheckcertificate': True,  # Skip SSL verification
+            'http_chunk_size': 10485760,
+            'retries': 3,
+            'fragment_retries': 1,
+            'skip_unavailable_fragments': True,
+            'socket_timeout': 20,
+            'noprogress': True,
+            'no_color': True,
+            'nocheckcertificate': True,
         }
         
         result = {}
         try:
             log('Creating YoutubeDL instance...')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Extract info WITHOUT downloading first to get metadata quickly
+                # FIXED: Extract info first to get title IMMEDIATELY
                 log('Extracting info...')
                 info = ydl.extract_info(url, download=False)
                 title = info.get('title', 'Unknown')
                 video_id = info.get('id', 'unknown')
                 
-                # Get best thumbnail (maxresdefault > sddefault > hqdefault > default)
+                # FIXED: Write title to file immediately so banner can update
+                try:
+                    with open(title_file, 'w', encoding='utf-8') as tf:
+                        tf.write(title)
+                    log(f'Wrote title to file: {title}')
+                except Exception as e:
+                    log(f'Failed to write title file: {e}')
+                
+                # Get best thumbnail
                 thumbnail_url = None
                 thumbnails = info.get('thumbnails', [])
                 if thumbnails:
-                    # Sort by preference
-                    thumbnail_url = thumbnails[-1].get('url')  # Usually highest quality is last
+                    thumbnail_url = thumbnails[-1].get('url')
                 else:
-                    # Fallback to standard YouTube thumbnail URL
                     thumbnail_url = f'https://img.youtube.com/vi/{video_id}/maxresdefault.jpg'
                 
                 log(f'Thumbnail URL: {thumbnail_url}')
@@ -558,7 +582,6 @@ class EmbeddedPython: ObservableObject {
                 log(f'Downloaded: {downloaded_path}')
                 
                 if os.path.exists(downloaded_path):
-                    # Format 140 is already M4A, but check anyway
                     if not downloaded_path.endswith('.m4a'):
                         m4a_path = os.path.splitext(downloaded_path)[0] + '.m4a'
                         log(f'Renaming {downloaded_path} to {m4a_path}')
@@ -612,8 +635,6 @@ class EmbeddedPython: ObservableObject {
             downloadThumbnail(url: thumbnailURL, for: filename)
         }
     }
-
-
     
     private func initializePythonRuntime() -> Bool {
         _Py_NoSiteFlag = 1

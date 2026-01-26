@@ -39,7 +39,8 @@ class DownloadManager: ObservableObject {
         return musicDirectory
     }
     
-    func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String = "Unknown") {
+    func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String = "Fetching info") {
+        // FIXED: Start with "Fetching info" then update to actual title
         let activeDownload = ActiveDownload(id: UUID(), videoID: videoID, title: title, progress: 0.0)
         activeDownloads.append(activeDownload)
         
@@ -47,21 +48,29 @@ class DownloadManager: ObservableObject {
             guard let self = self else { return }
             
             do {
+                // FIXED: Get title first, then update banner immediately
                 let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: url)
                 
-                // Update the active download with actual title
-                await MainActor.run {
-                    if let index = self.activeDownloads.firstIndex(where: { $0.videoID == videoID }) {
-                        self.activeDownloads[index] = ActiveDownload(
-                            id: self.activeDownloads[index].id,
-                            videoID: videoID,
-                            title: downloadedTitle,
-                            progress: 0.9
-                        )
-                    }
+                // FIXED: Wait for thumbnail to download before creating Download object
+                var thumbnailPath: URL? = nil
+                var retryCount = 0
+                let maxRetries = 3
+                
+                while thumbnailPath == nil && retryCount < maxRetries {
+                    await Task.sleep(1_000_000_000) // Wait 1 second
+                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+                    retryCount += 1
+                    print("🔄 [DownloadManager] Thumbnail check attempt \(retryCount)/\(maxRetries)")
                 }
                 
-                let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+                if thumbnailPath == nil {
+                    print("⚠️ [DownloadManager] Thumbnail not found after \(maxRetries) attempts, forcing regeneration...")
+                    if !videoID.isEmpty {
+                        EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
+                        await Task.sleep(2_000_000_000) // Wait 2 seconds for regeneration
+                        thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+                    }
+                }
                 
                 let download = Download(
                     name: downloadedTitle,
@@ -114,6 +123,7 @@ class DownloadManager: ObservableObject {
         
         downloads.append(finalDownload)
         saveDownloads()
+        objectWillChange.send() // FIXED: Force UI update
     }
     
     func markForDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
@@ -317,12 +327,12 @@ class DownloadManager: ObservableObject {
                         EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID)
                         
                         // Update path after potential regeneration
-                        if let newPath = EmbeddedPython.shared.getThumbnailPath(for: download.url) {
-                            downloads[index].thumbnailPath = newPath.path
-                            needsSave = true
-                        } else {
-                            downloads[index].thumbnailPath = nil
-                            needsSave = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            if let newPath = EmbeddedPython.shared.getThumbnailPath(for: download.url) {
+                                self.downloads[index].thumbnailPath = newPath.path
+                                self.saveDownloads()
+                                self.objectWillChange.send()
+                            }
                         }
                     } else {
                         downloads[index].thumbnailPath = nil
@@ -334,9 +344,12 @@ class DownloadManager: ObservableObject {
                 print("🔄 [DownloadManager] No thumbnail for: \(download.name), attempting to generate...")
                 EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID)
                 
-                if let newPath = EmbeddedPython.shared.getThumbnailPath(for: download.url) {
-                    downloads[index].thumbnailPath = newPath.path
-                    needsSave = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    if let newPath = EmbeddedPython.shared.getThumbnailPath(for: download.url) {
+                        self.downloads[index].thumbnailPath = newPath.path
+                        self.saveDownloads()
+                        self.objectWillChange.send()
+                    }
                 }
             }
         }
