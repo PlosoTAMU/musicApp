@@ -550,14 +550,26 @@ class EmbeddedPython: ObservableObject {
             var hasRead = false
             for _ in 0..<20 { // Check for 10 seconds
                 if !hasRead, FileManager.default.fileExists(atPath: titleFilePath),
-                   let title = try? String(contentsOfFile: titleFilePath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
-                   !title.isEmpty {
-                    print("📝 [TitleMonitor] Got title: \(title)")
+                   let content = try? String(contentsOfFile: titleFilePath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+                   !content.isEmpty {
+                    
+                    // Parse format: videoID|title
+                    let components = content.split(separator: "|", maxSplits: 1).map(String.init)
+                    guard components.count == 2 else {
+                        print("⚠️ [TitleMonitor] Invalid format: \(content)")
+                        Thread.sleep(forTimeInterval: 0.5)
+                        continue
+                    }
+                    
+                    let extractedVideoID = components[0]
+                    let title = components[1]
+                    
+                    print("📝 [TitleMonitor] Got title: \(title) for videoID: \(extractedVideoID)")
                     hasRead = true
                     
-                    // Update banner on main thread
+                    // Update banner on main thread using the EXTRACTED videoID
                     DispatchQueue.main.async {
-                        self.onTitleFetched?(videoID, title)
+                        self.onTitleFetched?(extractedVideoID, title)
                     }
                     break
                 }
@@ -635,9 +647,10 @@ class EmbeddedPython: ObservableObject {
                 video_id = info.get('id', 'unknown')
                 
                 # FIXED: Write title to file immediately so banner can update
+                # Format: videoID|title
                 try:
                     with open(title_file, 'w', encoding='utf-8') as tf:
-                        tf.write(title)
+                        tf.write(f'{video_id}|{title}')
                     log(f'Wrote title to file: {title}')
                 except Exception as e:
                     log(f'Failed to write title file: {e}')

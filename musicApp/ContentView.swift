@@ -284,9 +284,11 @@ struct NowPlayingView: View {
                             // FIXED: Capture current position BEFORE setting isSeeking
                             localSeekPosition = audioPlayer.currentTime
                             isSeeking = true
+                            audioPlayer.pauseTimeUpdates() // STOP the CADisplayLink updates
                         } else {
                             isSeeking = false
                             audioPlayer.seek(to: localSeekPosition)
+                            audioPlayer.resumeTimeUpdates() // RESUME the CADisplayLink updates
                         }
                     }
                     .accentColor(.white)

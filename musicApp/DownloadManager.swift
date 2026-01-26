@@ -47,12 +47,32 @@ class DownloadManager: ObservableObject {
         EmbeddedPython.shared.onTitleFetched = { [weak self] callbackVideoID, callbackTitle in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                
+                print("🔍 [DownloadManager] Callback fired with videoID: \(callbackVideoID), title: \(callbackTitle)")
+                print("🔍 [DownloadManager] Active downloads: \(self.activeDownloads.map { "{\($0.videoID): \($0.title)}" }.joined(separator: ", "))")
+                
                 // FIXED: Update title in place instead of replacing entire object
                 if let index = self.activeDownloads.firstIndex(where: { $0.videoID == callbackVideoID }) {
+                    print("✅ [DownloadManager] MATCH FOUND at index \(index)")
                     self.activeDownloads[index].title = callbackTitle
                     self.activeDownloads[index].progress = 0.5
                     self.objectWillChange.send() // Force UI update
                     print("📝 [DownloadManager] Updated title to: \(callbackTitle)")
+                } else {
+                    print("❌ [DownloadManager] NO MATCH FOUND for videoID: \(callbackVideoID)")
+                    print("❌ [DownloadManager] Trying fuzzy match...")
+                    
+                    // AGGRESSIVE FIX: Try to find by partial match
+                    if let index = self.activeDownloads.firstIndex(where: { 
+                        $0.videoID.contains(callbackVideoID) || callbackVideoID.contains($0.videoID)
+                    }) {
+                        print("✅ [DownloadManager] FUZZY MATCH FOUND at index \(index)")
+                        self.activeDownloads[index].title = callbackTitle
+                        self.activeDownloads[index].progress = 0.5
+                        self.objectWillChange.send()
+                    } else {
+                        print("❌ [DownloadManager] NO FUZZY MATCH EITHER!")
+                    }
                 }
             }
         }

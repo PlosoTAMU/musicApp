@@ -436,6 +436,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
         displayLink = nil
     }
     
+    // MARK: - Seeking Support
+    
+    func pauseTimeUpdates() {
+        stopTimeUpdates()
+    }
+    
+    func resumeTimeUpdates() {
+        if isPlaying {
+            startTimeUpdates()
+        }
+    }
+    
     @objc private func updateTime() {
         guard let player = playerNode,
               let file = audioFile,
