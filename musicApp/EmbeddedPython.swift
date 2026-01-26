@@ -17,6 +17,11 @@ class EmbeddedPython: ObservableObject {
     private var progressTimer: Timer?
     private var currentProgressFile: String?
     
+    // FIXED: Title monitoring
+    private var titleTimer: Timer?
+    private var currentTitleFile: String?
+    private var titleHasBeenFetched: Set<String> = [] // Track which videoIDs have had titles fetched
+    
     // FIXED: Callback for title updates
     var onTitleFetched: ((String, String) -> Void)? // (videoID, title) -> Void
     
@@ -115,6 +120,9 @@ class EmbeddedPython: ObservableObject {
                     // Start progress monitoring
                     self?.startProgressMonitoring(outputDir: outputDir.path)
                     
+                    // FIXED: Start title monitoring
+                    self?.startTitleMonitoring(videoID: videoID)
+                    
                     self?.updateStatus("Downloading...")
                     self?.updateProgress(0.1)
                     
@@ -126,6 +134,9 @@ class EmbeddedPython: ObservableObject {
                     
                     // Stop progress monitoring
                     self?.stopProgressMonitoring()
+                    
+                    // FIXED: Stop title monitoring
+                    self?.stopTitleMonitoring()
                     
                     // Compress it with proper naming
                     print("📄 [downloadAudio] Compressing audio...")
@@ -144,6 +155,7 @@ class EmbeddedPython: ObservableObject {
                     continuation.resume(returning: (compressedURL, title))
                 } catch {
                     self?.stopProgressMonitoring()
+                    self?.stopTitleMonitoring() // FIXED: Also stop title monitoring on error
                     self?.updateStatus("Failed")
                     self?.updateProgress(0.0)
                     continuation.resume(throwing: error)
@@ -172,6 +184,72 @@ class EmbeddedPython: ObservableObject {
             self?.progressTimer = nil
         }
         currentProgressFile = nil
+    }
+    
+    // MARK: - Title Monitoring
+    
+    // FIXED: Monitor title file and notify callback when title is fetched
+    private func startTitleMonitoring(videoID: String) {
+        stopTitleMonitoring() // Clean up any existing timer
+        
+        guard !videoID.isEmpty else { return }
+        
+        let tempDir = FileManager.default.temporaryDirectory
+        let titleFile = tempDir.appendingPathComponent("\(videoID)_title.txt").path
+        currentTitleFile = titleFile
+        
+        // Don't re-fetch if already fetched
+        guard !titleHasBeenFetched.contains(videoID) else {
+            print("📝 [TitleMonitoring] Title already fetched for: \(videoID)")
+            return
+        }
+        
+        print("📝 [TitleMonitoring] Starting title monitoring for: \(videoID)")
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.titleTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+                self?.checkTitleFile(videoID: videoID)
+            }
+        }
+    }
+    
+    private func stopTitleMonitoring() {
+        DispatchQueue.main.async { [weak self] in
+            self?.titleTimer?.invalidate()
+            self?.titleTimer = nil
+        }
+        currentTitleFile = nil
+    }
+    
+    private func checkTitleFile(videoID: String) {
+        guard let titleFilePath = currentTitleFile,
+              FileManager.default.fileExists(atPath: titleFilePath) else {
+            return
+        }
+        
+        do {
+            let title = try String(contentsOfFile: titleFilePath, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            guard !title.isEmpty else { return }
+            
+            // Mark as fetched
+            titleHasBeenFetched.insert(videoID)
+            
+            // Call the callback on main thread
+            DispatchQueue.main.async { [weak self] in
+                self?.onTitleFetched?(videoID, title)
+                print("📝 [TitleMonitoring] Title fetched: \(title)")
+            }
+            
+            // Stop monitoring once we've got the title
+            stopTitleMonitoring()
+            
+            // Clean up title file
+            try? FileManager.default.removeItem(atPath: titleFilePath)
+        } catch {
+            // Ignore read errors, will retry on next timer tick
+        }
     }
     
     private func checkDownloadProgress() {

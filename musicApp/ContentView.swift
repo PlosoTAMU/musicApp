@@ -164,10 +164,24 @@ struct NowPlayingView: View {
     @Binding var isPresented: Bool
     @State private var isSeeking = false
     @State private var seekValue: Double = 0
+    @State private var localSeekPosition: Double = 0 // FIXED: Separate state for slider during seeking
     @State private var showPlaylistPicker = false
     @State private var isHoldingRewind = false
     @State private var isHoldingFF = false
     @State private var backgroundImage: UIImage?
+    
+    // FIXED: Computed binding that prevents race conditions
+    private var sliderBinding: Binding<Double> {
+        Binding(
+            get: { isSeeking ? localSeekPosition : audioPlayer.currentTime },
+            set: { newValue in
+                localSeekPosition = newValue
+                if !isSeeking {
+                    audioPlayer.seek(to: newValue)
+                }
+            }
+        )
+    }
     
     var body: some View {
         ZStack {
@@ -265,20 +279,21 @@ struct NowPlayingView: View {
                 
                 
                 VStack(spacing: 2) {
-                    Slider(
-                        value: $seekValue,
-                        in: 0...max(audioPlayer.duration, 1),
-                        onEditingChanged: { editing in
-                            isSeeking = editing
-                            if !editing {
-                                audioPlayer.seek(to: seekValue)
-                            }
+                    Slider(value: sliderBinding, in: 0...max(audioPlayer.duration, 1)) { editing in
+                        if editing {
+                            // FIXED: Capture current position BEFORE setting isSeeking
+                            localSeekPosition = audioPlayer.currentTime
+                            isSeeking = true
+                        } else {
+                            isSeeking = false
+                            audioPlayer.seek(to: localSeekPosition)
                         }
-                    )
+                    }
                     .accentColor(.white)
+                    .disabled(audioPlayer.duration == 0)
                     
                     HStack {
-                        Text(formatTime(isSeeking ? seekValue : audioPlayer.currentTime))
+                        Text(formatTime(isSeeking ? localSeekPosition : audioPlayer.currentTime))
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
                         
@@ -290,21 +305,6 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 32)
-                .task {
-                    // Continuously sync seekValue with playback when not seeking
-                    while !Task.isCancelled {
-                        if !isSeeking {
-                            seekValue = audioPlayer.currentTime
-                        }
-                        try? await Task.sleep(nanoseconds: 100_000_000) // Update 10 times per second
-                    }
-                }
-                .padding(.horizontal, 32)
-                .onChange(of: audioPlayer.currentTime) { newTime in
-                    if !isSeeking {
-                        seekValue = newTime
-                    }
-                }
                 .onAppear {
                     seekValue = audioPlayer.currentTime
                 }

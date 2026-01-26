@@ -26,11 +26,16 @@ struct Download: Identifiable, Codable {
     }
 }
 
-struct ActiveDownload: Identifiable {
+struct ActiveDownload: Identifiable, Equatable {
     let id: UUID
     let videoID: String
-    var title: String
+    var title: String // FIXED: Changed from `let` to `var` so title can be updated
     var progress: Double
+    
+    // FIXED: Explicit Equatable conformance for proper SwiftUI diffing
+    static func == (lhs: ActiveDownload, rhs: ActiveDownload) -> Bool {
+        lhs.id == rhs.id && lhs.videoID == rhs.videoID && lhs.title == rhs.title && lhs.progress == rhs.progress
+    }
 }
 
 extension Bundle {

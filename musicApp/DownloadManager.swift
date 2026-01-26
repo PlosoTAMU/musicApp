@@ -43,14 +43,16 @@ class DownloadManager: ObservableObject {
         let activeDownload = ActiveDownload(id: UUID(), videoID: videoID, title: title, progress: 0.0)
         activeDownloads.append(activeDownload)
         
-        // Set callback BEFORE starting
+        // Set up callback BEFORE starting download
         EmbeddedPython.shared.onTitleFetched = { [weak self] callbackVideoID, callbackTitle in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                // Find and update the existing ActiveDownload
+                // FIXED: Update title in place instead of replacing entire object
                 if let index = self.activeDownloads.firstIndex(where: { $0.videoID == callbackVideoID }) {
                     self.activeDownloads[index].title = callbackTitle
-                    print("📝 [DownloadManager] Updated banner to: \(callbackTitle)")
+                    self.activeDownloads[index].progress = 0.5
+                    self.objectWillChange.send() // Force UI update
+                    print("📝 [DownloadManager] Updated title to: \(callbackTitle)")
                 }
             }
         }
@@ -63,14 +65,15 @@ class DownloadManager: ObservableObject {
                 
                 var thumbnailPath: URL? = nil
                 for attempt in 1...5 {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await Task.sleep(1_000_000_000)
                     thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                     if thumbnailPath != nil { break }
+                    print("🔄 Thumbnail check \(attempt)/5")
                 }
                 
                 if thumbnailPath == nil && !videoID.isEmpty {
                     EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    await Task.sleep(2_000_000_000)
                     thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                 }
                 
