@@ -309,9 +309,10 @@ struct NowPlayingView: View {
                 HStack(spacing: 16) {
                     Button { audioPlayer.previous() } label: {
                         Image("rewind")
-                            .font(.system(size: 32))
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 32, height: 32)
                             .foregroundColor(.white)
-                            .frame(width: 50, height: 50)
                     }
                     
                     RewindButton(audioPlayer: audioPlayer)
@@ -332,9 +333,10 @@ struct NowPlayingView: View {
                     
                     Button { audioPlayer.next() } label: {
                         Image("forward")
-                            .font(.system(size: 32))
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 32, height: 32)
                             .foregroundColor(.white)
-                            .frame(width: 50, height: 50)
                     }
                 }
                 .padding(.horizontal, 28)
