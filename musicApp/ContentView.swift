@@ -166,8 +166,6 @@ struct NowPlayingView: View {
     @State private var seekValue: Double = 0
     @State private var localSeekPosition: Double = 0 // FIXED: Separate state for slider during seeking
     @State private var showPlaylistPicker = false
-    @State private var isHoldingRewind = false
-    @State private var isHoldingFF = false
     @State private var backgroundImage: UIImage?
     
     // FIXED: Computed binding that prevents race conditions
@@ -316,7 +314,7 @@ struct NowPlayingView: View {
                             .frame(width: 50, height: 50)
                     }
                     
-                    RewindButton(audioPlayer: audioPlayer, isHolding: $isHoldingRewind)
+                    RewindButton(audioPlayer: audioPlayer)
                     
                     Button {
                         if audioPlayer.isPlaying {
@@ -330,7 +328,7 @@ struct NowPlayingView: View {
                             .foregroundColor(.white)
                     }
                     
-                    FastForwardButton(audioPlayer: audioPlayer, isHolding: $isHoldingFF)
+                    FastForwardButton(audioPlayer: audioPlayer)
                     
                     Button { audioPlayer.next() } label: {
                         Image(systemName: "forward.fill")
