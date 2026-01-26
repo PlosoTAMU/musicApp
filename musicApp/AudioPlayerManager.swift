@@ -341,22 +341,22 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(time * sampleRate)
         
-        player.stop()
+        // Optional: Pause updates to prevent fighting with the timer
+        pauseTimeUpdates() 
         
-        if startFrame < file.length {
-            player.scheduleSegment(file, startingFrame: startFrame, frameCount: AVAudioFrameCount(file.length - startFrame), at: nil) { [weak self] in
-                DispatchQueue.main.async {
-                    self?.next()
-                }
-            }
-            
-            if isPlaying {
-                player.play()
-            }
+        playerNode?.stop()
+        
+        if length > 0 {
+            playerNode?.scheduleSegment(file, startingFrame: newSampleTime, frameCount: AVAudioFrameCount(length), at: nil, completionHandler: nil)
         }
         
-        currentTime = time
-        updateNowPlayingInfo()
+        playerNode?.play()
+        
+        // FIX: Manually update currentTime immediately to prevent UI glitching to 0
+        self.currentTime = time
+        
+        // Resume updates
+        resumeTimeUpdates()
     }
     
     func skip(seconds: Double) {

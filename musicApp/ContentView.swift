@@ -280,15 +280,12 @@ struct NowPlayingView: View {
                 
                 VStack(spacing: 2) {
                     Slider(value: sliderBinding, in: 0...max(audioPlayer.duration, 1)) { editing in
+                        isSeeking = editing
                         if editing {
-                            // FIXED: Capture current position BEFORE setting isSeeking
+                            // FIX: Initialize local position to current time when drag starts
                             localSeekPosition = audioPlayer.currentTime
-                            isSeeking = true
-                            audioPlayer.pauseTimeUpdates() // STOP the CADisplayLink updates
                         } else {
-                            isSeeking = false
                             audioPlayer.seek(to: localSeekPosition)
-                            audioPlayer.resumeTimeUpdates() // RESUME the CADisplayLink updates
                         }
                     }
                     .accentColor(.white)

@@ -42,6 +42,8 @@ class DownloadManager: ObservableObject {
     func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String = "Fetching info") {
         let activeDownload = ActiveDownload(id: UUID(), videoID: videoID, title: title, progress: 0.0)
         activeDownloads.append(activeDownload)
+
+        let targetDownloadID = activeDownload.id
         
         // Set up callback BEFORE starting download
         EmbeddedPython.shared.onTitleFetched = { [weak self] callbackVideoID, callbackTitle in
@@ -52,7 +54,7 @@ class DownloadManager: ObservableObject {
                 print("🔍 [DownloadManager] Active downloads: \(self.activeDownloads.map { "{\($0.videoID): \($0.title)}" }.joined(separator: ", "))")
                 
                 // FIXED: Update title in place instead of replacing entire object
-                if let index = self.activeDownloads.firstIndex(where: { $0.videoID == callbackVideoID }) {
+                if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
                     print("✅ [DownloadManager] MATCH FOUND at index \(index)")
                     self.activeDownloads[index].title = callbackTitle
                     self.activeDownloads[index].progress = 0.5
