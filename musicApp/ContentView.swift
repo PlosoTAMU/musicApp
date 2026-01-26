@@ -469,7 +469,7 @@ struct RewindButton: View {
     @State private var rewindTimer: Timer? // New timer for the loop
     
     var body: some View {
-        Image(systemName: "backward.fill")
+        Image("backward")
             .font(.system(size: 32))
             .foregroundColor(.white)
             .frame(width: 50, height: 50)
