@@ -481,7 +481,7 @@ struct RewindButton: View {
                             pressTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
                                 // 2. Long Press Detected: Start Rewinding
                                 isLongPressing = true
-                                audioPlayer.playbackSpeed = 2.0 // Use negative speed if supported, otherwise standard rewind logic
+                                audioPlayer.playbackSpeed = 0.5 // Use negative speed if supported, otherwise standard rewind logic
                                 // Note: detailed rewind logic usually requires negative rate or rapid seeking
                                 // For simplicity/safety here, we often just skip rapidly or speed up
                             }
