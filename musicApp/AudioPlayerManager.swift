@@ -25,6 +25,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var playerObserver: Any?
     private var timeObserver: Any?
     private var displayLink: CADisplayLink?
+    private var seekOffset: TimeInterval = 0
     
     override init() {
         super.init()
@@ -238,6 +239,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         stopTimeUpdates()
+
+        seekOffset = 0
         
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: [])
@@ -338,16 +341,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
         guard let file = audioFile,
               let player = playerNode else { return }
         
-        // 1. Calculate the frame position based on time
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(time * sampleRate)
         
-        // 2. Pause the time updates so they don't fight the slider
+        // Pause updates
         pauseTimeUpdates()
         
         player.stop()
         
-        // 3. Schedule the remaining audio segment
         if startFrame < file.length {
             let remainingFrames = AVAudioFrameCount(file.length - startFrame)
             
@@ -365,11 +366,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
         }
         
-        // 4. FIX: Manually update currentTime immediately to prevent UI glitching to 0
+        // CRITICAL FIX: Save the new offset
+        self.seekOffset = time
+        
+        // Update UI immediately
         self.currentTime = time
         updateNowPlayingInfo()
         
-        // 5. Resume updates
         resumeTimeUpdates()
     }
     
@@ -471,7 +474,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         let sampleRate = file.fileFormat.sampleRate
-        currentTime = Double(playerTime.sampleTime) / sampleRate
+        let currentSegmentTime = Double(playerTime.sampleTime) / sampleRate
+        
+        // CRITICAL FIX: Add the offset to the current segment time
+        currentTime = seekOffset + currentSegmentTime
         
         if Int(currentTime) % 5 == 0 {
             updateNowPlayingInfo()
