@@ -40,16 +40,32 @@ class DownloadManager: ObservableObject {
     }
     
     func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String = "Fetching info") {
-        // FIXED: Start with "Fetching info" then update to actual title
+        // Start with "Fetching info" then update to actual title via callback
         let activeDownload = ActiveDownload(id: UUID(), videoID: videoID, title: title, progress: 0.0)
         activeDownloads.append(activeDownload)
+        
+        // Setup callback to update title in real-time
+        EmbeddedPython.shared.onTitleFetched = { [weak self] callbackVideoID, callbackTitle in
+            guard let self = self else { return }
+            
+            DispatchQueue.main.async {
+                if let index = self.activeDownloads.firstIndex(where: { $0.videoID == callbackVideoID }) {
+                    self.activeDownloads[index] = ActiveDownload(
+                        id: self.activeDownloads[index].id,
+                        videoID: callbackVideoID,
+                        title: callbackTitle,
+                        progress: self.activeDownloads[index].progress
+                    )
+                    print("📝 [DownloadManager] Updated banner title to: \(callbackTitle)")
+                }
+            }
+        }
         
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
             
             do {
-                // FIXED: Get title first, then update banner immediately
-                let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: url)
+                let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: url, videoID: videoID)
                 
                 // FIXED: Wait for thumbnail to download before creating Download object
                 var thumbnailPath: URL? = nil

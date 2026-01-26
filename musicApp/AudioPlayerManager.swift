@@ -10,27 +10,54 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
     @Published var reverbAmount: Double = 0 {
-        didSet { updateReverb() }
+        didSet { applyReverb() }
     }
     @Published var playbackSpeed: Double = 1.0 {
-        didSet { updatePlaybackSpeed() }
+        didSet { applyPlaybackSpeed() }
     }
     
-    private var avPlayer: AVPlayer?
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
+    private var audioFile: AVAudioFile?
     private var reverbNode: AVAudioUnitReverb?
     private var timePitchNode: AVAudioUnitTimePitch?
     
     private var playerObserver: Any?
     private var timeObserver: Any?
+    private var displayLink: CADisplayLink?
     
     override init() {
         super.init()
+        setupAudioEngine()
         setupAudioSession()
         setupRemoteControls()
         setupInterruptionHandling()
-        setupTimeObserver()
+    }
+    
+    private func setupAudioEngine() {
+        audioEngine = AVAudioEngine()
+        playerNode = AVAudioPlayerNode()
+        reverbNode = AVAudioUnitReverb()
+        timePitchNode = AVAudioUnitTimePitch()
+        
+        guard let engine = audioEngine,
+              let player = playerNode,
+              let reverb = reverbNode,
+              let timePitch = timePitchNode else { return }
+        
+        // Attach nodes
+        engine.attach(player)
+        engine.attach(reverb)
+        engine.attach(timePitch)
+        
+        // Configure reverb
+        reverb.loadFactoryPreset(.largeHall)
+        reverb.wetDryMix = 0
+        
+        // Configure time pitch
+        timePitchNode?.rate = 1.0
+        
+        print("✅ Audio engine configured")
     }
     
     private func setupAudioSession() {
@@ -184,7 +211,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = track.folderName
         nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
-        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? playbackSpeed : 0.0
+        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
         
         if let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
            let image = UIImage(contentsOfFile: thumbnailPath.path) {
@@ -205,12 +232,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     func play(_ track: Track) {
         if isPlaying {
-            avPlayer?.pause()
+            playerNode?.stop()
+            audioEngine?.stop()
             isPlaying = false
         }
         
-        removeTimeObserver()
-        removePlayerObserver()
+        stopTimeUpdates()
         
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: [])
@@ -222,15 +249,37 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             _ = trackURL.startAccessingSecurityScopedResource()
             
-            let playerItem = AVPlayerItem(url: trackURL)
+            // Load audio file
+            audioFile = try AVAudioFile(forReading: trackURL)
             
-            avPlayer = AVPlayer(playerItem: playerItem)
-            avPlayer?.automaticallyWaitsToMinimizeStalling = false
-            avPlayer?.currentItem?.preferredForwardBufferDuration = 30
+            guard let file = audioFile,
+                  let engine = audioEngine,
+                  let player = playerNode,
+                  let reverb = reverbNode,
+                  let timePitch = timePitchNode else {
+                print("❌ Audio nodes not configured")
+                return
+            }
             
-            // Apply current playback speed
-            avPlayer?.rate = Float(playbackSpeed)
-            avPlayer?.play()
+            let format = file.processingFormat
+            
+            // Connect nodes: player -> timePitch -> reverb -> output
+            engine.connect(player, to: timePitch, format: format)
+            engine.connect(timePitch, to: reverb, format: format)
+            engine.connect(reverb, to: engine.mainMixerNode, format: format)
+            
+            // Start engine
+            try engine.start()
+            
+            // Schedule file
+            player.scheduleFile(file, at: nil) { [weak self] in
+                DispatchQueue.main.async {
+                    self?.next()
+                }
+            }
+            
+            // Start playback
+            player.play()
             
             isPlaying = true
             currentTrack = track
@@ -239,15 +288,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 currentIndex = index
             }
             
-            Task { @MainActor in
-                if let duration = try? await playerItem.asset.load(.duration) {
-                    self.duration = CMTimeGetSeconds(duration)
-                    self.updateNowPlayingInfo()
-                }
-            }
+            // Get duration
+            let frameCount = Double(file.length)
+            let sampleRate = file.fileFormat.sampleRate
+            duration = frameCount / sampleRate
             
-            setupPlayerObserver()
-            setupTimeObserver()
+            startTimeUpdates()
             updateNowPlayingInfo()
             
             print("▶️ Now playing: \(track.name)")
@@ -258,8 +304,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func pause() {
-        avPlayer?.pause()
+        playerNode?.pause()
         isPlaying = false
+        stopTimeUpdates()
         updateNowPlayingInfo()
     }
     
@@ -270,16 +317,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
             print("❌ Failed to reactivate audio session: \(error)")
         }
         
-        avPlayer?.rate = Float(playbackSpeed)
+        playerNode?.play()
         isPlaying = true
+        startTimeUpdates()
         updateNowPlayingInfo()
     }
     
     func stop() {
-        avPlayer?.pause()
-        avPlayer?.seek(to: .zero)
-        removeTimeObserver()
-        removePlayerObserver()
+        playerNode?.stop()
+        audioEngine?.stop()
+        stopTimeUpdates()
         isPlaying = false
         currentTrack = nil
         currentTime = 0
@@ -288,7 +335,26 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func seek(to time: Double) {
-        avPlayer?.seek(to: CMTime(seconds: time, preferredTimescale: 600))
+        guard let file = audioFile,
+              let player = playerNode else { return }
+        
+        let sampleRate = file.fileFormat.sampleRate
+        let startFrame = AVAudioFramePosition(time * sampleRate)
+        
+        player.stop()
+        
+        if startFrame < file.length {
+            player.scheduleSegment(file, startingFrame: startFrame, frameCount: AVAudioFrameCount(file.length - startFrame), at: nil) { [weak self] in
+                DispatchQueue.main.async {
+                    self?.next()
+                }
+            }
+            
+            if isPlaying {
+                player.play()
+            }
+        }
+        
         currentTime = time
         updateNowPlayingInfo()
     }
@@ -298,18 +364,41 @@ class AudioPlayerManager: NSObject, ObservableObject {
         seek(to: newTime)
     }
     
-    // MARK: - Audio Effects
+    // MARK: - Fast Forward / Rewind with 2x speed
     
-    private func updateReverb() {
-        // Reverb not directly supported with AVPlayer, would need AVAudioEngine
-        // This is a placeholder - full implementation would require migrating to AVAudioEngine
+    func setPlaybackRate(_ rate: Float) {
+        timePitchNode?.rate = rate
+        isPlaying = (rate != 0)
+    }
+    
+    func startFastForward() {
+        setPlaybackRate(2.0)
+    }
+    
+    func startRewind() {
+        // Rewind is not directly supported, so skip backward rapidly
+        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
+            guard let self = self, self.isPlaying else {
+                timer.invalidate()
+                return
+            }
+            self.skip(seconds: -1)
+        }
+    }
+    
+    func resumeNormalSpeed() {
+        setPlaybackRate(Float(playbackSpeed))
+    }
+    
+    // MARK: - Audio Effects (WORKING)
+    
+    private func applyReverb() {
+        reverbNode?.wetDryMix = Float(reverbAmount)
         print("🎚️ Reverb set to: \(reverbAmount)%")
     }
     
-    private func updatePlaybackSpeed() {
-        if isPlaying {
-            avPlayer?.rate = Float(playbackSpeed)
-        }
+    private func applyPlaybackSpeed() {
+        timePitchNode?.rate = Float(playbackSpeed)
         updateNowPlayingInfo()
         print("⚡ Playback speed set to: \(playbackSpeed)x")
     }
@@ -332,51 +421,39 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Observers
+    // MARK: - Time Updates
     
-    private func setupPlayerObserver() {
-        guard let player = avPlayer else { return }
+    private func startTimeUpdates() {
+        stopTimeUpdates()
         
-        playerObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: player.currentItem,
-            queue: .main
-        ) { [weak self] _ in
-            self?.next()
-        }
+        displayLink = CADisplayLink(target: self, selector: #selector(updateTime))
+        displayLink?.preferredFramesPerSecond = 2 // Update twice per second
+        displayLink?.add(to: .main, forMode: .common)
     }
     
-    private func removePlayerObserver() {
-        if let observer = playerObserver {
-            NotificationCenter.default.removeObserver(observer)
-            playerObserver = nil
-        }
+    private func stopTimeUpdates() {
+        displayLink?.invalidate()
+        displayLink = nil
     }
     
-    private func setupTimeObserver() {
-        removeTimeObserver()
+    @objc private func updateTime() {
+        guard let player = playerNode,
+              let file = audioFile,
+              let nodeTime = player.lastRenderTime,
+              let playerTime = player.playerTime(forNodeTime: nodeTime) else {
+            return
+        }
         
-        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-        timeObserver = avPlayer?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            guard let self = self else { return }
-            self.currentTime = CMTimeGetSeconds(time)
-            
-            if Int(self.currentTime) % 5 == 0 {
-                self.updateNowPlayingInfo()
-            }
-        }
-    }
-    
-    private func removeTimeObserver() {
-        if let observer = timeObserver {
-            avPlayer?.removeTimeObserver(observer)
-            timeObserver = nil
+        let sampleRate = file.fileFormat.sampleRate
+        currentTime = Double(playerTime.sampleTime) / sampleRate
+        
+        if Int(currentTime) % 5 == 0 {
+            updateNowPlayingInfo()
         }
     }
     
     deinit {
-        removeTimeObserver()
-        removePlayerObserver()
+        stopTimeUpdates()
         NotificationCenter.default.removeObserver(self)
     }
 }
