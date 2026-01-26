@@ -334,7 +334,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
     
-    func seek(to time: Double) {
+    func seek(to time: TimeInterval) {
         guard let file = audioFile,
               let player = playerNode else { return }
         
