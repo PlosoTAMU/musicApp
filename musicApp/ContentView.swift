@@ -38,7 +38,7 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 Spacer()
                 
-                // Download banner - properly positioned
+                // Download banner
                 if !downloadManager.activeDownloads.isEmpty {
                     DownloadBanner(downloadManager: downloadManager)
                         .padding(.bottom, 8)
@@ -171,7 +171,6 @@ struct NowPlayingView: View {
     
     var body: some View {
         ZStack {
-            // Blurred background
             if let bgImage = backgroundImage {
                 Image(uiImage: bgImage)
                     .resizable()
@@ -192,8 +191,7 @@ struct NowPlayingView: View {
             Color.black.opacity(0.4)
                 .ignoresSafeArea()
             
-            VStack(spacing: 8) {
-                // Top bar
+            VStack(spacing: 6) {
                 HStack {
                     Button {
                         isPresented = false
@@ -225,7 +223,6 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Album artwork
                 if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                     Image(uiImage: thumbnailImage)
                         .resizable()
@@ -251,7 +248,6 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Track info
                 VStack(spacing: 6) {
                     Text(audioPlayer.currentTrack?.name ?? "Unknown")
                         .font(.title)
@@ -269,30 +265,18 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Progress bar - reduced vertical spacing
-                VStack(spacing: 4) {
-                    Slider(
-                        value: Binding(
-                            get: { isSeeking ? seekValue : audioPlayer.currentTime },
-                            set: { newValue in
-                                seekValue = newValue
-                                if isSeeking {
-                                    audioPlayer.seek(to: newValue)
-                                }
-                            }
-                        ),
-                        in: 0...max(audioPlayer.duration, 1),
-                        onEditingChanged: { editing in
-                            isSeeking = editing
-                            if editing {
-                                seekValue = audioPlayer.currentTime
-                            }
+                VStack(spacing: 2) {
+                    Slider(value: $seekValue, in: 0...max(audioPlayer.duration, 1)) { editing in
+                        isSeeking = editing
+                        if !editing {
+                            audioPlayer.seek(to: seekValue)
                         }
-                    )
+                    }
                     .accentColor(.white)
+                    .disabled(isSeeking && audioPlayer.duration == 0)
                     
                     HStack {
-                        Text(formatTime(isSeeking ? seekValue : audioPlayer.currentTime))
+                        Text(formatTime(seekValue))
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
                         
@@ -304,13 +288,17 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 32)
-                .padding(.vertical, 4)
+                .onChange(of: audioPlayer.currentTime) { newTime in
+                    if !isSeeking {
+                        seekValue = newTime
+                    }
+                }
+                .onAppear {
+                    seekValue = audioPlayer.currentTime
+                }
                 
-                // Playback controls
                 HStack(spacing: 16) {
-                    Button {
-                        audioPlayer.previous()
-                    } label: {
+                    Button { audioPlayer.previous() } label: {
                         Image(systemName: "backward.fill")
                             .font(.system(size: 32))
                             .foregroundColor(.white)
@@ -333,9 +321,7 @@ struct NowPlayingView: View {
                     
                     FastForwardButton(audioPlayer: audioPlayer, isHolding: $isHoldingFF)
                     
-                    Button {
-                        audioPlayer.next()
-                    } label: {
+                    Button { audioPlayer.next() } label: {
                         Image(systemName: "forward.fill")
                             .font(.system(size: 32))
                             .foregroundColor(.white)
@@ -343,19 +329,16 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 28)
-                .padding(.top, 8)
+                .padding(.top, 12)
                 
-                // Speed & Reverb stacked
                 VStack(spacing: 10) {
                     HStack(spacing: 10) {
                         Image(systemName: "gauge")
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
                             .frame(width: 20)
-                        
                         Slider(value: $audioPlayer.playbackSpeed, in: 0.5...2.0)
                             .accentColor(.white)
-                        
                         Text(String(format: "%.1fx", audioPlayer.playbackSpeed))
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.9))
@@ -367,10 +350,8 @@ struct NowPlayingView: View {
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
                             .frame(width: 20)
-                        
                         Slider(value: $audioPlayer.reverbAmount, in: 0...100)
                             .accentColor(.white)
-                        
                         Text("\(Int(audioPlayer.reverbAmount))%")
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.9))
@@ -378,17 +359,14 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 32)
-                .padding(.top, 12)
+                .padding(.top, 16)
                 
-                // Volume control
                 HStack(spacing: 12) {
                     Image(systemName: "speaker.fill")
                         .foregroundColor(.white.opacity(0.7))
                         .font(.caption)
-                    
                     VolumeSlider()
                         .frame(height: 20)
-                    
                     Image(systemName: "speaker.wave.3.fill")
                         .foregroundColor(.white.opacity(0.7))
                         .font(.caption)
@@ -472,9 +450,7 @@ struct NowPlayingView: View {
     }
 }
 
-
-
-// MARK: - Rewind Button
+// MARK: - Rewind/Forward Buttons
 struct RewindButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var isHolding: Bool
@@ -482,7 +458,6 @@ struct RewindButton: View {
     
     var body: some View {
         Button {
-            // Single tap - skip back 10 seconds
             audioPlayer.skip(seconds: -10)
         } label: {
             Image("rewind")
@@ -495,33 +470,23 @@ struct RewindButton: View {
             LongPressGesture(minimumDuration: 0.5)
                 .onEnded { _ in
                     isHolding = true
-                    startContinuousRewind()
+                    holdTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+                        if audioPlayer.currentTime > 0 {
+                            audioPlayer.currentTime = max(0, audioPlayer.currentTime - 0.5)
+                        }
+                    }
                 }
         )
         .onLongPressGesture(minimumDuration: 0.5, pressing: { pressing in
             if !pressing && isHolding {
-                stopContinuousRewind()
+                holdTimer?.invalidate()
+                holdTimer = nil
                 isHolding = false
             }
         }, perform: {})
     }
-    
-    private func startContinuousRewind() {
-        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-            if audioPlayer.currentTime > 0 {
-                let newTime = max(0, audioPlayer.currentTime - 0.5)
-                audioPlayer.seek(to: newTime)
-            }
-        }
-    }
-    
-    private func stopContinuousRewind() {
-        holdTimer?.invalidate()
-        holdTimer = nil
-    }
 }
 
-// MARK: - Fast Forward Button
 struct FastForwardButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var isHolding: Bool
@@ -529,7 +494,6 @@ struct FastForwardButton: View {
     
     var body: some View {
         Button {
-            // Single tap - skip forward 10 seconds
             audioPlayer.skip(seconds: 10)
         } label: {
             Image("forward")
@@ -542,33 +506,23 @@ struct FastForwardButton: View {
             LongPressGesture(minimumDuration: 0.5)
                 .onEnded { _ in
                     isHolding = true
-                    startContinuousFastForward()
+                    holdTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+                        if audioPlayer.currentTime < audioPlayer.duration {
+                            audioPlayer.currentTime = min(audioPlayer.duration, audioPlayer.currentTime + 0.5)
+                        }
+                    }
                 }
         )
         .onLongPressGesture(minimumDuration: 0.5, pressing: { pressing in
             if !pressing && isHolding {
-                stopContinuousFastForward()
+                holdTimer?.invalidate()
+                holdTimer = nil
                 isHolding = false
             }
         }, perform: {})
     }
-    
-    private func startContinuousFastForward() {
-        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-            if audioPlayer.currentTime < audioPlayer.duration {
-                let newTime = min(audioPlayer.duration, audioPlayer.currentTime + 0.5)
-                audioPlayer.seek(to: newTime)
-            }
-        }
-    }
-    
-    private func stopContinuousFastForward() {
-        holdTimer?.invalidate()
-        holdTimer = nil
-    }
 }
 
-// MARK: - Volume Slider
 struct VolumeSlider: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
         let volumeView = MPVolumeView(frame: .zero)
@@ -584,7 +538,6 @@ struct VolumeSlider: UIViewRepresentable {
                 let thumbImage = UIGraphicsImageRenderer(size: CGSize(width: thumbSize, height: thumbSize)).image { context in
                     UIColor.white.setFill()
                     context.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize))
-                    context.cgContext.setShadow(offset: CGSize(width: 0, height: 1), blur: 2, color: UIColor.black.withAlphaComponent(0.3).cgColor)
                 }
                 slider.setThumbImage(thumbImage, for: .normal)
                 slider.setThumbImage(thumbImage, for: .highlighted)
@@ -597,7 +550,6 @@ struct VolumeSlider: UIViewRepresentable {
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
 
-// MARK: - Download Banner
 struct DownloadBanner: View {
     @ObservedObject var downloadManager: DownloadManager
     @State private var dotCount = 1
@@ -625,13 +577,9 @@ struct DownloadBanner: View {
         }
         .padding(.horizontal, 16)
         .onAppear {
-            startDotAnimation()
-        }
-    }
-    
-    private func startDotAnimation() {
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            dotCount = (dotCount % 3) + 1
+            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+                dotCount = (dotCount % 3) + 1
+            }
         }
     }
 }

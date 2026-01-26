@@ -40,23 +40,21 @@ class DownloadManager: ObservableObject {
     }
     
     func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String = "Fetching info") {
-        // Start with "Fetching info" then update to actual title via callback
         let activeDownload = ActiveDownload(id: UUID(), videoID: videoID, title: title, progress: 0.0)
         activeDownloads.append(activeDownload)
         
-        // Setup callback to update title in real-time
+        // Set up callback BEFORE starting download
         EmbeddedPython.shared.onTitleFetched = { [weak self] callbackVideoID, callbackTitle in
-            guard let self = self else { return }
-            
             DispatchQueue.main.async {
+                guard let self = self else { return }
                 if let index = self.activeDownloads.firstIndex(where: { $0.videoID == callbackVideoID }) {
                     self.activeDownloads[index] = ActiveDownload(
                         id: self.activeDownloads[index].id,
                         videoID: callbackVideoID,
                         title: callbackTitle,
-                        progress: self.activeDownloads[index].progress
+                        progress: 0.5
                     )
-                    print("📝 [DownloadManager] Updated banner title to: \(callbackTitle)")
+                    print("📝 [DownloadManager] Updated title to: \(callbackTitle)")
                 }
             }
         }
@@ -67,25 +65,18 @@ class DownloadManager: ObservableObject {
             do {
                 let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: url, videoID: videoID)
                 
-                // FIXED: Wait for thumbnail to download before creating Download object
                 var thumbnailPath: URL? = nil
-                var retryCount = 0
-                let maxRetries = 3
-                
-                while thumbnailPath == nil && retryCount < maxRetries {
-                    await Task.sleep(1_000_000_000) // Wait 1 second
+                for attempt in 1...5 {
+                    await Task.sleep(1_000_000_000)
                     thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
-                    retryCount += 1
-                    print("🔄 [DownloadManager] Thumbnail check attempt \(retryCount)/\(maxRetries)")
+                    if thumbnailPath != nil { break }
+                    print("🔄 Thumbnail check \(attempt)/5")
                 }
                 
-                if thumbnailPath == nil {
-                    print("⚠️ [DownloadManager] Thumbnail not found after \(maxRetries) attempts, forcing regeneration...")
-                    if !videoID.isEmpty {
-                        EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
-                        await Task.sleep(2_000_000_000) // Wait 2 seconds for regeneration
-                        thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
-                    }
+                if thumbnailPath == nil && !videoID.isEmpty {
+                    EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
+                    await Task.sleep(2_000_000_000)
+                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                 }
                 
                 let download = Download(
@@ -101,7 +92,7 @@ class DownloadManager: ObservableObject {
                     self.addDownload(download)
                 }
             } catch {
-                print("❌ [DownloadManager] Background download failed: \(error)")
+                print("❌ Background download failed: \(error)")
                 await MainActor.run {
                     self.activeDownloads.removeAll { $0.videoID == videoID }
                 }
