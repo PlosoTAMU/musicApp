@@ -218,8 +218,8 @@ struct NowPlayingView: View {
                             .frame(width: 44, height: 44)
                     }
                 }
-                .padding(.horizontal, 28)
-                .padding(.top, 20)
+                .padding(.horizontal, 24)
+                .padding(.top, 35)
                 
                 Spacer()
                 
@@ -227,9 +227,9 @@ struct NowPlayingView: View {
                     Image(uiImage: thumbnailImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: 320, height: 320)
+                        .frame(width: 290, height: 290)
                         .clipShape(RoundedRectangle(cornerRadius: 20))
-                        .shadow(color: .black.opacity(0.5), radius: 25, y: 12)
+                        .shadow(color: .black.opacity(1), radius: 40, y: 12)
                 } else {
                     RoundedRectangle(cornerRadius: 20)
                         .fill(LinearGradient(
@@ -237,13 +237,13 @@ struct NowPlayingView: View {
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ))
-                        .frame(width: 320, height: 320)
+                        .frame(width: 290, height: 290)
                         .overlay(
                             Image(systemName: "music.note")
                                 .font(.system(size: 80))
                                 .foregroundColor(.white.opacity(0.5))
                         )
-                        .shadow(color: .black.opacity(0.3), radius: 25, y: 12)
+                        .shadow(color: .black.opacity(1), radius: 40, y: 12)
                 }
                 
                 Spacer()
@@ -255,7 +255,7 @@ struct NowPlayingView: View {
                         .foregroundColor(.white)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
+                        .padding(.horizontal, 28)
                     
                     Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
                         .font(.title3)
@@ -263,7 +263,6 @@ struct NowPlayingView: View {
                         .lineLimit(1)
                 }
                 
-                Spacer()
                 
                 VStack(spacing: 2) {
                     Slider(value: $seekValue, in: 0...max(audioPlayer.duration, 1)) { editing in
@@ -329,7 +328,7 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 28)
-                .padding(.top, 12)
+                .padding(.top, 2)
                 
                 VStack(spacing: 10) {
                     HStack(spacing: 10) {
@@ -374,6 +373,8 @@ struct NowPlayingView: View {
                 .padding(.horizontal, 36)
                 .padding(.top, 16)
                 .padding(.bottom, 28)
+                
+                Spacer()
             }
         }
         .onAppear {
