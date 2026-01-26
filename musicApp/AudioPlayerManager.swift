@@ -344,9 +344,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(time * sampleRate)
         
-        // Pause updates
+        // Pause updates to prevent UI fighting
         pauseTimeUpdates()
         
+        // Stop the player (this would trigger the completion handler!)
         player.stop()
         
         if startFrame < file.length {
@@ -355,18 +356,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
             player.scheduleSegment(file, 
                                  startingFrame: startFrame, 
                                  frameCount: remainingFrames, 
-                                 at: nil) { [weak self] in
-                DispatchQueue.main.async {
-                    self?.next()
-                }
-            }
+                                 at: nil,
+                                 completionHandler: nil) // FIX: Set to nil so it doesn't skip to next song
             
             if isPlaying {
                 player.play()
             }
         }
         
-        // CRITICAL FIX: Save the new offset
+        // Save the new offset so the slider works correctly
         self.seekOffset = time
         
         // Update UI immediately
