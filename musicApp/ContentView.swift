@@ -308,7 +308,7 @@ struct NowPlayingView: View {
                 
                 HStack(spacing: 16) {
                     Button { audioPlayer.previous() } label: {
-                        Image(systemName: "rewind")
+                        Image("rewind")
                             .font(.system(size: 32))
                             .foregroundColor(.white)
                             .frame(width: 50, height: 50)
@@ -331,7 +331,7 @@ struct NowPlayingView: View {
                     FastForwardButton(audioPlayer: audioPlayer)
                     
                     Button { audioPlayer.next() } label: {
-                        Image(systemName: "forward")
+                        Image("forward")
                             .font(.system(size: 32))
                             .foregroundColor(.white)
                             .frame(width: 50, height: 50)
