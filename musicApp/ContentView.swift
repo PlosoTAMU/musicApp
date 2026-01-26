@@ -265,17 +265,20 @@ struct NowPlayingView: View {
                 
                 
                 VStack(spacing: 2) {
-                    Slider(value: $seekValue, in: 0...max(audioPlayer.duration, 1)) { editing in
-                        isSeeking = editing
-                        if !editing {
-                            audioPlayer.seek(to: seekValue)
+                    Slider(
+                        value: $seekValue,
+                        in: 0...max(audioPlayer.duration, 1),
+                        onEditingChanged: { editing in
+                            isSeeking = editing
+                            if !editing {
+                                audioPlayer.seek(to: seekValue)
+                            }
                         }
-                    }
+                    )
                     .accentColor(.white)
-                    .disabled(isSeeking && audioPlayer.duration == 0)
                     
                     HStack {
-                        Text(formatTime(seekValue))
+                        Text(formatTime(isSeeking ? seekValue : audioPlayer.currentTime))
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
                         
@@ -284,6 +287,16 @@ struct NowPlayingView: View {
                         Text(formatTime(audioPlayer.duration))
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
+                    }
+                }
+                .padding(.horizontal, 32)
+                .task {
+                    // Continuously sync seekValue with playback when not seeking
+                    while !Task.isCancelled {
+                        if !isSeeking {
+                            seekValue = audioPlayer.currentTime
+                        }
+                        try? await Task.sleep(nanoseconds: 100_000_000) // Update 10 times per second
                     }
                 }
                 .padding(.horizontal, 32)

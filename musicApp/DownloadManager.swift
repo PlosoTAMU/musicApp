@@ -43,18 +43,14 @@ class DownloadManager: ObservableObject {
         let activeDownload = ActiveDownload(id: UUID(), videoID: videoID, title: title, progress: 0.0)
         activeDownloads.append(activeDownload)
         
-        // Set up callback BEFORE starting download
+        // Set callback BEFORE starting
         EmbeddedPython.shared.onTitleFetched = { [weak self] callbackVideoID, callbackTitle in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // Find and update the existing ActiveDownload
                 if let index = self.activeDownloads.firstIndex(where: { $0.videoID == callbackVideoID }) {
-                    self.activeDownloads[index] = ActiveDownload(
-                        id: self.activeDownloads[index].id,
-                        videoID: callbackVideoID,
-                        title: callbackTitle,
-                        progress: 0.5
-                    )
-                    print("📝 [DownloadManager] Updated title to: \(callbackTitle)")
+                    self.activeDownloads[index].title = callbackTitle
+                    print("📝 [DownloadManager] Updated banner to: \(callbackTitle)")
                 }
             }
         }
@@ -67,15 +63,14 @@ class DownloadManager: ObservableObject {
                 
                 var thumbnailPath: URL? = nil
                 for attempt in 1...5 {
-                    await Task.sleep(1_000_000_000)
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
                     thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                     if thumbnailPath != nil { break }
-                    print("🔄 Thumbnail check \(attempt)/5")
                 }
                 
                 if thumbnailPath == nil && !videoID.isEmpty {
                     EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
-                    await Task.sleep(2_000_000_000)
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
                     thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                 }
                 

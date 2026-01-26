@@ -29,7 +29,7 @@ struct Download: Identifiable, Codable {
 struct ActiveDownload: Identifiable {
     let id: UUID
     let videoID: String
-    let title: String
+    var title: String
     var progress: Double
 }
 
