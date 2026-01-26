@@ -470,9 +470,10 @@ struct RewindButton: View {
     
     var body: some View {
         Image("rewind")
-            .font(.system(size: 32))
-            .foregroundColor(.white)
-            .frame(width: 50, height: 50)
+            .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 32, height: 32)
+                .foregroundColor(.white)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
