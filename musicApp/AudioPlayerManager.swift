@@ -334,28 +334,42 @@ class AudioPlayerManager: NSObject, ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
     
-    func seek(to time: TimeInterval) {
+    func seek(to time: Double) {
         guard let file = audioFile,
               let player = playerNode else { return }
         
+        // 1. Calculate the frame position based on time
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(time * sampleRate)
         
-        // Optional: Pause updates to prevent fighting with the timer
-        pauseTimeUpdates() 
+        // 2. Pause the time updates so they don't fight the slider
+        pauseTimeUpdates()
         
-        playerNode?.stop()
+        player.stop()
         
-        if length > 0 {
-            playerNode?.scheduleSegment(file, startingFrame: newSampleTime, frameCount: AVAudioFrameCount(length), at: nil, completionHandler: nil)
+        // 3. Schedule the remaining audio segment
+        if startFrame < file.length {
+            let remainingFrames = AVAudioFrameCount(file.length - startFrame)
+            
+            player.scheduleSegment(file, 
+                                 startingFrame: startFrame, 
+                                 frameCount: remainingFrames, 
+                                 at: nil) { [weak self] in
+                DispatchQueue.main.async {
+                    self?.next()
+                }
+            }
+            
+            if isPlaying {
+                player.play()
+            }
         }
         
-        playerNode?.play()
-        
-        // FIX: Manually update currentTime immediately to prevent UI glitching to 0
+        // 4. FIX: Manually update currentTime immediately to prevent UI glitching to 0
         self.currentTime = time
+        updateNowPlayingInfo()
         
-        // Resume updates
+        // 5. Resume updates
         resumeTimeUpdates()
     }
     
