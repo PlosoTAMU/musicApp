@@ -375,8 +375,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func skip(seconds: Double) {
-        let newTime = max(0, min(currentTime + seconds, duration))
-        seek(to: newTime)
+        let newTime = currentTime + seconds
+        seek(to: newTime) // This reuses your fixed seek() logic which handles offset correctly
     }
     
     // MARK: - Fast Forward / Rewind with 2x speed

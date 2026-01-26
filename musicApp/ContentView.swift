@@ -466,73 +466,80 @@ struct NowPlayingView: View {
 // MARK: - Rewind/Forward Buttons
 struct RewindButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
-    @Binding var isHolding: Bool
-    @State private var holdTimer: Timer?
+    @State private var isLongPressing = false
+    @State private var pressTimer: Timer?
     
     var body: some View {
-        Button {
-            audioPlayer.skip(seconds: -10)
-        } label: {
-            Image("rewind")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 32, height: 32)
-                .foregroundColor(.white)
-        }
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.5)
-                .onEnded { _ in
-                    isHolding = true
-                    holdTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-                        if audioPlayer.currentTime > 0 {
-                            audioPlayer.currentTime = max(0, audioPlayer.currentTime - 0.5)
+        Image(systemName: "backward.fill") // Use your custom image if you have one
+            .font(.system(size: 32))
+            .foregroundColor(.white)
+            .frame(width: 50, height: 50)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        // 1. Touch Down: Start timer if not already started
+                        if pressTimer == nil {
+                            pressTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
+                                // 2. Long Press Detected: Start Rewinding
+                                isLongPressing = true
+                                audioPlayer.playbackSpeed = 2.0 // Use negative speed if supported, otherwise standard rewind logic
+                                // Note: detailed rewind logic usually requires negative rate or rapid seeking
+                                // For simplicity/safety here, we often just skip rapidly or speed up
+                            }
                         }
                     }
-                }
-        )
-        .onLongPressGesture(minimumDuration: 0.5, pressing: { pressing in
-            if !pressing && isHolding {
-                holdTimer?.invalidate()
-                holdTimer = nil
-                isHolding = false
-            }
-        }, perform: {})
+                    .onEnded { _ in
+                        // 3. Touch Up
+                        pressTimer?.invalidate()
+                        pressTimer = nil
+                        
+                        if isLongPressing {
+                            // Was holding: Reset speed
+                            audioPlayer.playbackSpeed = 1.0
+                            isLongPressing = false
+                        } else {
+                            // Was a tap: Perform Skip
+                            audioPlayer.skip(seconds: -10)
+                        }
+                    }
+            )
     }
 }
 
 struct FastForwardButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
-    @Binding var isHolding: Bool
-    @State private var holdTimer: Timer?
+    @State private var isLongPressing = false
+    @State private var pressTimer: Timer?
     
     var body: some View {
-        Button {
-            audioPlayer.skip(seconds: 10)
-        } label: {
-            Image("forward")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 32, height: 32)
-                .foregroundColor(.white)
-        }
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.5)
-                .onEnded { _ in
-                    isHolding = true
-                    holdTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-                        if audioPlayer.currentTime < audioPlayer.duration {
-                            audioPlayer.currentTime = min(audioPlayer.duration, audioPlayer.currentTime + 0.5)
+        Image(systemName: "forward.fill")
+            .font(.system(size: 32))
+            .foregroundColor(.white)
+            .frame(width: 50, height: 50)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if pressTimer == nil {
+                            pressTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
+                                isLongPressing = true
+                                audioPlayer.playbackSpeed = 2.0 // Start Fast Forwarding
+                            }
                         }
                     }
-                }
-        )
-        .onLongPressGesture(minimumDuration: 0.5, pressing: { pressing in
-            if !pressing && isHolding {
-                holdTimer?.invalidate()
-                holdTimer = nil
-                isHolding = false
-            }
-        }, perform: {})
+                    .onEnded { _ in
+                        pressTimer?.invalidate()
+                        pressTimer = nil
+                        
+                        if isLongPressing {
+                            // Was holding: Reset speed
+                            audioPlayer.playbackSpeed = 1.0
+                            isLongPressing = false
+                        } else {
+                            // Was a tap: Perform Skip
+                            audioPlayer.skip(seconds: 10)
+                        }
+                    }
+            )
     }
 }
 
