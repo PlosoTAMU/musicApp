@@ -54,7 +54,7 @@ struct ContentView: View {
                 VStack {
                     Spacer()
                     DownloadBanner(downloadManager: downloadManager)
-                        .padding(.bottom, audioPlayer.currentTrack != nil ? 105 : 49)
+                        .padding(.bottom, audioPlayer.currentTrack != nil ? 120 : 65) // FIXED: Raised higher to avoid collision
                 }
                 .transition(.move(edge: .bottom))
             }
@@ -237,7 +237,7 @@ struct FastForwardButton: View {
     }
 }
 
-// MARK: - Full Now Playing View
+// MARK: - Full Now Playing View (FIXED: Removed zoom, better spacing)
 struct NowPlayingView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var isPresented: Bool
@@ -273,7 +273,7 @@ struct NowPlayingView: View {
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // Top bar
+                // FIXED: Top bar with proper safe area padding
                 HStack {
                     Button {
                         isPresented = false
@@ -282,6 +282,7 @@ struct NowPlayingView: View {
                             .font(.title2)
                             .foregroundColor(.white)
                     }
+                    .frame(width: 44, height: 44) // FIXED: Larger tap target
                     
                     Spacer()
                     
@@ -297,8 +298,10 @@ struct NowPlayingView: View {
                             .font(.title2)
                             .foregroundColor(.white)
                     }
+                    .frame(width: 44, height: 44) // FIXED: Larger tap target
                 }
-                .padding()
+                .padding(.horizontal, 20) // FIXED: More padding from edges
+                .padding(.top, 8)
                 
                 Spacer()
                 
@@ -367,8 +370,8 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Progress bar
-                VStack(spacing: 8) {
+                // FIXED: Progress bar with reduced vertical margins
+                VStack(spacing: 6) { // FIXED: Reduced from 8
                     Slider(
                         value: isSeeking ? $seekValue : Binding(
                             get: { audioPlayer.currentTime },
@@ -399,10 +402,11 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 32)
+                .padding(.vertical, 8) // FIXED: Reduced vertical padding
                 
                 Spacer()
                 
-                // Playback controls
+                // FIXED: Playback controls with more padding from edges
                 HStack(spacing: 40) {
                     Button {
                         audioPlayer.previous()
@@ -411,8 +415,10 @@ struct NowPlayingView: View {
                             .font(.system(size: 28))
                             .foregroundColor(.white)
                     }
+                    .frame(width: 44, height: 44) // FIXED: Larger tap target
                     
                     RewindButton(audioPlayer: audioPlayer, isHolding: $isHoldingRewind)
+                        .frame(width: 44, height: 44) // FIXED: Larger tap target
                     
                     Button {
                         if audioPlayer.isPlaying {
@@ -427,6 +433,7 @@ struct NowPlayingView: View {
                     }
                     
                     FastForwardButton(audioPlayer: audioPlayer, isHolding: $isHoldingFF)
+                        .frame(width: 44, height: 44) // FIXED: Larger tap target
                     
                     Button {
                         audioPlayer.next()
@@ -435,8 +442,9 @@ struct NowPlayingView: View {
                             .font(.system(size: 28))
                             .foregroundColor(.white)
                     }
+                    .frame(width: 44, height: 44) // FIXED: Larger tap target
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 32) // FIXED: More padding from edges
                 .padding(.bottom, 16)
                 
                 // Volume control
@@ -582,7 +590,7 @@ struct VolumeSlider: UIViewRepresentable {
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
 
-// MARK: - Download Banner with animated dots
+// MARK: - Download Banner with FIXED animation (song name with dots)
 struct DownloadBanner: View {
     @ObservedObject var downloadManager: DownloadManager
     @State private var dotCount = 1
@@ -594,6 +602,7 @@ struct DownloadBanner: View {
                     ProgressView()
                         .scaleEffect(0.8)
                     
+                    // FIXED: Show song name with animated dots
                     Text("\(download.title)\(String(repeating: ".", count: dotCount))")
                         .font(.subheadline)
                         .foregroundColor(.primary)

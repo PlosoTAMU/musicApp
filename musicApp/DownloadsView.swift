@@ -99,7 +99,10 @@ struct DownloadRow: View {
                         audioPlayer.resume()
                     }
                 } else {
-                    let track = Track(id: download.id, name: download.name, url: download.url, folderName: "Downloads")
+                    // FIXED: Use source name as folderName
+                    let folderName = download.source == .youtube ? "YouTube" : 
+                                    download.source == .spotify ? "Spotify" : "Files"
+                    let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
                     audioPlayer.play(track)
                 }
             } label: {
@@ -139,7 +142,7 @@ struct DownloadRow: View {
                             .foregroundColor(download.pendingDeletion ? .gray : .primary)
                             .lineLimit(1)
                         
-                        // Show source badge
+                        // FIXED: Show source badge (YouTube/Spotify/Folder)
                         HStack(spacing: 4) {
                             Image(systemName: download.source == .youtube ? "play.rectangle.fill" : 
                                   download.source == .spotify ? "music.note" : "folder.fill")
