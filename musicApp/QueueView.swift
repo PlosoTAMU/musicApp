@@ -54,7 +54,7 @@ struct QueueView: View {
                     }
                 } else {
                     List {
-                        // Always show current track when playing
+                        // Always show current track when playing (NOT in edit mode)
                         Section(header: HStack {
                             Text("Now Playing")
                             Spacer()
@@ -141,7 +141,7 @@ struct QueueView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
-                    .environment(\.editMode, audioPlayer.isPlaylistMode ? .constant(.inactive) : .constant(.active))
+                    .environment(\.editMode, audioPlayer.isPlaylistMode || audioPlayer.queue.isEmpty ? .constant(.inactive) : .constant(.active))
                 }
             }
             .navigationTitle("Queue")

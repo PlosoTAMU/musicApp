@@ -8,6 +8,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var currentPlaylist: [Track] = []
     @Published var queue: [Track] = [] // User-managed queue
     @Published var isPlaylistMode = false // true = playing from playlist, false = playing from queue
+    @Published var isLoopEnabled = false // Loop current song
     @Published var currentIndex: Int = 0
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
@@ -18,6 +19,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         didSet { applyPlaybackSpeed() }
     }
     
+    var savedPlaybackSpeed: Double = 1.0 // Store user's preferred speed
     private var currentPlaybackSessionID = UUID() // Track current playback session
     
     private var audioEngine: AVAudioEngine?
@@ -447,6 +449,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private func applyPlaybackSpeed() {
         timePitchNode?.rate = Float(playbackSpeed)
+        // Save the speed if it's not a temporary change (like 2x fast forward)
+        if playbackSpeed != 2.0 {
+            savedPlaybackSpeed = playbackSpeed
+        }
         updateNowPlayingInfo()
         print("⚡ Playback speed set to: \(playbackSpeed)x")
     }
@@ -454,6 +460,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // MARK: - Playlist Navigation
     
     func next() {
+        // If loop is enabled, replay the current song
+        if isLoopEnabled {
+            seek(to: 0)
+            return
+        }
+        
         if isPlaylistMode {
             // Playing from playlist
             guard !currentPlaylist.isEmpty else { return }

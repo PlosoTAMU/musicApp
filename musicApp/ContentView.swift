@@ -348,6 +348,16 @@ struct NowPlayingView: View {
                 }
                 
                 HStack(spacing: 16) {
+                    // Loop button
+                    Button {
+                        audioPlayer.isLoopEnabled.toggle()
+                    } label: {
+                        Image(systemName: audioPlayer.isLoopEnabled ? "repeat.1" : "repeat")
+                            .font(.system(size: 24))
+                            .foregroundColor(audioPlayer.isLoopEnabled ? .green : .white.opacity(0.6))
+                            .frame(width: 50, height: 50)
+                    }
+                    
                     Button { audioPlayer.previous() } label: {
                         Image(systemName: "backward.fill")
                             .font(.system(size: 32))
@@ -577,8 +587,8 @@ struct FastForwardButton: View {
                         pressTimer = nil
                         
                         if isLongPressing {
-                            // Was holding: Reset speed
-                            audioPlayer.playbackSpeed = 1.0
+                            // Was holding: Restore saved speed
+                            audioPlayer.playbackSpeed = audioPlayer.savedPlaybackSpeed
                             isLongPressing = false
                         } else {
                             // Was a tap: Perform Skip
