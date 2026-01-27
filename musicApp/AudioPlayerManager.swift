@@ -444,7 +444,34 @@ class AudioPlayerManager: NSObject, ObservableObject {
             print("❌ Failed to reactivate audio session: \(error)")
         }
         
-        ensureEngineRunning()
+        // FIXED: Ensure engine is running AND reconnect audio graph
+        guard let engine = audioEngine,
+            let player = playerNode,
+            let file = audioFile,
+            let reverb = reverbNode,
+            let timePitch = timePitchNode else {
+            print("❌ Audio nodes not available")
+            return
+        }
+        
+        // FIXED: Reconnect audio graph if engine stopped
+        if !engine.isRunning {
+            do {
+                let format = file.processingFormat
+                
+                // Reconnect nodes
+                engine.connect(player, to: timePitch, format: format)
+                engine.connect(timePitch, to: reverb, format: format)
+                engine.connect(reverb, to: engine.mainMixerNode, format: format)
+                
+                try engine.start()
+                isEngineRunning = true
+                print("✅ Engine reconnected and started")
+            } catch {
+                print("❌ Failed to restart engine: \(error)")
+                return
+            }
+        }
         
         playerNode?.play()
         DispatchQueue.main.async {
@@ -583,17 +610,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func previous() {
         if isPlaylistMode {
             guard !currentPlaylist.isEmpty else { return }
-            if currentTime > 3 {
-                seek(to: 0)
-            } else {
+            // FIXED: Only restart if less than 3 seconds, otherwise go to previous track
+            if currentTime < 3.0 {
                 currentIndex = (currentIndex - 1 + currentPlaylist.count) % currentPlaylist.count
                 play(currentPlaylist[currentIndex])
+            } else {
+                seek(to: 0)
             }
         } else {
-            // FIXED: Go back in previousQueue
-            if currentTime > 3 {
-                seek(to: 0)
-            } else if !previousQueue.isEmpty {
+            // FIXED: Check previous queue first before restarting
+            if currentTime < 3.0 && !previousQueue.isEmpty {
                 // Move current track to front of queue
                 if let current = currentTrack {
                     queue.insert(current, at: 0)
@@ -603,7 +629,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 let previousTrack = previousQueue.removeLast()
                 play(previousTrack)
             } else {
-                // No previous songs, just restart current
+                // More than 3 seconds in, just restart current song
                 seek(to: 0)
             }
         }

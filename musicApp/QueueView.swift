@@ -52,9 +52,11 @@ struct QueueView: View {
                 } else {
                     List {
                         // FIXED: Show previous songs
+                        // In QueueView, change this section:
                         if !audioPlayer.previousQueue.isEmpty && !audioPlayer.isPlaylistMode {
                             Section(header: Text("Previous")) {
-                                ForEach(audioPlayer.previousQueue.reversed()) { track in
+                                // FIXED: Show in normal order (most recent at bottom)
+                                ForEach(audioPlayer.previousQueue) { track in
                                     QueueTrackRow(
                                         track: track,
                                         downloadManager: downloadManager,
