@@ -6,6 +6,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var isPlaying = false
     @Published var currentTrack: Track?
     @Published var currentPlaylist: [Track] = []
+    @Published var queue: [Track] = [] // User-managed queue
+    @Published var isPlaylistMode = false // true = playing from playlist, false = playing from queue
     @Published var currentIndex: Int = 0
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
@@ -233,6 +235,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             isPlaying = false
         }
         
+        isPlaylistMode = true
         currentPlaylist = shuffle ? tracks.shuffled() : tracks
         currentIndex = 0
         if !currentPlaylist.isEmpty {
@@ -451,19 +454,91 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // MARK: - Playlist Navigation
     
     func next() {
-        guard !currentPlaylist.isEmpty else { return }
-        currentIndex = (currentIndex + 1) % currentPlaylist.count
-        play(currentPlaylist[currentIndex])
+        if isPlaylistMode {
+            // Playing from playlist
+            guard !currentPlaylist.isEmpty else { return }
+            currentIndex = (currentIndex + 1) % currentPlaylist.count
+            play(currentPlaylist[currentIndex])
+        } else {
+            // Playing from queue
+            if !queue.isEmpty {
+                let nextTrack = queue.removeFirst()
+                play(nextTrack)
+            } else {
+                // Queue is empty, stop playback
+                stop()
+            }
+        }
     }
     
     func previous() {
-        guard !currentPlaylist.isEmpty else { return }
-        if currentTime > 3 {
-            seek(to: 0)
+        if isPlaylistMode {
+            guard !currentPlaylist.isEmpty else { return }
+            if currentTime > 3 {
+                seek(to: 0)
+            } else {
+                currentIndex = (currentIndex - 1 + currentPlaylist.count) % currentPlaylist.count
+                play(currentPlaylist[currentIndex])
+            }
         } else {
-            currentIndex = (currentIndex - 1 + currentPlaylist.count) % currentPlaylist.count
-            play(currentPlaylist[currentIndex])
+            // In queue mode, just restart current song
+            if currentTime > 3 {
+                seek(to: 0)
+            } else {
+                seek(to: 0)
+            }
         }
+    }
+    
+    // MARK: - Queue Management
+    
+    var upNextTracks: [Track] {
+        if isPlaylistMode && !currentPlaylist.isEmpty {
+            let nextIndex = currentIndex + 1
+            if nextIndex < currentPlaylist.count {
+                return Array(currentPlaylist[nextIndex...])
+            }
+        }
+        return []
+    }
+    
+    func addToQueue(_ track: Track) {
+        // Switch to queue mode if not already
+        if isPlaylistMode && currentTrack != nil {
+            // Convert current playlist position to queue
+            isPlaylistMode = false
+            // Don't add remaining playlist to queue, just switch modes
+        }
+        
+        queue.append(track)
+        
+        // If nothing is playing, start the queue
+        if currentTrack == nil && !queue.isEmpty {
+            let firstTrack = queue.removeFirst()
+            play(firstTrack)
+        }
+    }
+    
+    func removeFromQueue(at offsets: IndexSet) {
+        queue.remove(atOffsets: offsets)
+    }
+    
+    func moveInQueue(from source: IndexSet, to destination: Int) {
+        queue.move(fromOffsets: source, toOffset: destination)
+    }
+    
+    func clearQueue() {
+        queue.removeAll()
+    }
+    
+    func playFromQueue(_ track: Track) {
+        // Find and remove the track from queue
+        if let index = queue.firstIndex(where: { $0.id == track.id }) {
+            queue.remove(at: index)
+        }
+        
+        isPlaylistMode = false
+        play(track)
     }
     
     // MARK: - Time Updates

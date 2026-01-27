@@ -33,6 +33,14 @@ struct ContentView: View {
                 .tabItem {
                     Label("Playlists", systemImage: "music.note.list")
                 }
+                
+                QueueView(
+                    audioPlayer: audioPlayer,
+                    downloadManager: downloadManager
+                )
+                .tabItem {
+                    Label("Queue", systemImage: "list.number")
+                }
             }
             
             VStack(spacing: 0) {
