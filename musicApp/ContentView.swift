@@ -2,7 +2,6 @@ import SwiftUI
 import AVFoundation
 import MediaPlayer
 
-// MARK: - Main ContentView with TabView
 struct ContentView: View {
     @StateObject private var audioPlayer = AudioPlayerManager()
     @StateObject private var downloadManager = DownloadManager()
@@ -46,7 +45,6 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 Spacer()
                 
-                // Download banner
                 if !downloadManager.activeDownloads.isEmpty {
                     DownloadBanner(downloadManager: downloadManager)
                         .padding(.bottom, 8)
@@ -67,6 +65,12 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showYouTubeDownload) {
             YouTubeDownloadView(downloadManager: downloadManager)
+        }
+        // FIXED: Close now playing when playback ends
+        .onAppear {
+            audioPlayer.onPlaybackEnded = {
+                showNowPlaying = false
+            }
         }
     }
 }

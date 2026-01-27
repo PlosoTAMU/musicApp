@@ -33,8 +33,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var displayLink: CADisplayLink?
     private var seekOffset: TimeInterval = 0
     
-    // FIXED: Track engine state
     private var isEngineRunning = false
+    
+    // FIXED: Callback for when playback ends naturally (no more songs)
+    var onPlaybackEnded: (() -> Void)?
     
     override init() {
         super.init()
@@ -154,7 +156,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
             object: nil
         )
         
-        // FIXED: Listen for engine configuration changes
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleEngineConfigurationChange),
@@ -192,14 +193,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
         switch type {
         case .began:
             print("🎧 Audio interruption began")
-            pause()
+            DispatchQueue.main.async {
+                self.pause()
+            }
         case .ended:
             guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
             
             print("🎧 Audio interruption ended")
             
-            // FIXED: Restart engine before resuming
             if options.contains(.shouldResume) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     self?.ensureEngineRunning()
@@ -211,7 +213,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    // FIXED: Handle Bluetooth connect/disconnect
     @objc private func handleRouteChange(notification: Notification) {
         guard let userInfo = notification.userInfo,
               let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
@@ -224,11 +225,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         switch reason {
         case .oldDeviceUnavailable:
             print("🎧 Audio device disconnected (headphones/bluetooth)")
-            pause()
+            DispatchQueue.main.async {
+                self.pause()
+            }
             
         case .newDeviceAvailable:
             print("🎧 New audio device connected")
-            // FIXED: Restart engine when bluetooth connects
             ensureEngineRunning()
             
         case .categoryChange:
@@ -240,7 +242,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    // FIXED: Handle engine configuration changes (sample rate, channel count, etc.)
+    // FIXED: All UI updates wrapped in DispatchQueue.main.async
     @objc private func handleEngineConfigurationChange(notification: Notification) {
         print("⚙️ Audio engine configuration changed")
         
@@ -248,26 +250,26 @@ class AudioPlayerManager: NSObject, ObservableObject {
               let player = playerNode,
               let currentFile = audioFile else { return }
         
-        // Stop playback
         player.stop()
         isEngineRunning = false
         
-        // Restart engine with new configuration
         do {
             try engine.start()
             isEngineRunning = true
             
-            // If we were playing, resume from where we left off
             if isPlaying {
                 let wasPlaying = isPlaying
-                isPlaying = false
-                
-                // Re-schedule the file
                 let sessionID = currentPlaybackSessionID
+                
+                // FIXED: Update UI on main thread
+                DispatchQueue.main.async {
+                    self.isPlaying = false
+                }
+                
                 player.scheduleFile(currentFile, at: nil) { [weak self] in
                     guard let self = self else { return }
                     DispatchQueue.main.async {
-                        if self.currentPlaybackSessionID == sessionID && self.isPlaying {
+                        if self.currentPlaybackSessionID == sessionID && wasPlaying {
                             self.next()
                         }
                     }
@@ -275,8 +277,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 
                 if wasPlaying {
                     player.play()
-                    isPlaying = true
-                    startTimeUpdates()
+                    DispatchQueue.main.async {
+                        self.isPlaying = true
+                        self.startTimeUpdates()
+                    }
                 }
                 
                 print("✅ Engine restarted after configuration change")
@@ -286,7 +290,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    // FIXED: Ensure engine is running before playing
     private func ensureEngineRunning() {
         guard let engine = audioEngine else { return }
         
@@ -327,15 +330,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
         if isPlaying {
             playerNode?.stop()
             audioEngine?.stop()
-            isPlaying = false
+            DispatchQueue.main.async {
+                self.isPlaying = false
+            }
             isEngineRunning = false
         }
         
-        isPlaylistMode = true
-        currentPlaylist = shuffle ? tracks.shuffled() : tracks
-        currentIndex = 0
-        if !currentPlaylist.isEmpty {
-            play(currentPlaylist[0])
+        DispatchQueue.main.async {
+            self.isPlaylistMode = true
+            self.currentPlaylist = shuffle ? tracks.shuffled() : tracks
+            self.currentIndex = 0
+            if !self.currentPlaylist.isEmpty {
+                self.play(self.currentPlaylist[0])
+            }
         }
     }
     
@@ -346,7 +353,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
         if isPlaying {
             playerNode?.stop()
             audioEngine?.stop()
-            isPlaying = false
+            DispatchQueue.main.async {
+                self.isPlaying = false
+            }
             isEngineRunning = false
         }
         
@@ -380,7 +389,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
             engine.connect(timePitch, to: reverb, format: format)
             engine.connect(reverb, to: engine.mainMixerNode, format: format)
             
-            // FIXED: Ensure engine is running
             ensureEngineRunning()
             
             player.scheduleFile(file, at: nil) { [weak self] in
@@ -394,19 +402,22 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             player.play()
             
-            isPlaying = true
-            currentTrack = track
-            
-            if let index = currentPlaylist.firstIndex(where: { $0.id == track.id }) {
-                currentIndex = index
-            }
-            
             let frameCount = Double(file.length)
             let sampleRate = file.fileFormat.sampleRate
-            duration = frameCount / sampleRate
+            let calculatedDuration = frameCount / sampleRate
             
-            startTimeUpdates()
-            updateNowPlayingInfo()
+            DispatchQueue.main.async {
+                self.isPlaying = true
+                self.currentTrack = track
+                
+                if let index = self.currentPlaylist.firstIndex(where: { $0.id == track.id }) {
+                    self.currentIndex = index
+                }
+                
+                self.duration = calculatedDuration
+                self.startTimeUpdates()
+                self.updateNowPlayingInfo()
+            }
             
             print("▶️ Now playing: \(track.name)")
             
@@ -417,9 +428,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     func pause() {
         playerNode?.pause()
-        isPlaying = false
-        stopTimeUpdates()
-        updateNowPlayingInfo()
+        DispatchQueue.main.async {
+            self.isPlaying = false
+            self.stopTimeUpdates()
+            self.updateNowPlayingInfo()
+        }
     }
     
     func resume() {
@@ -429,80 +442,107 @@ class AudioPlayerManager: NSObject, ObservableObject {
             print("❌ Failed to reactivate audio session: \(error)")
         }
         
-        // FIXED: Ensure engine is running before playing
         ensureEngineRunning()
         
         playerNode?.play()
-        isPlaying = true
-        startTimeUpdates()
-        updateNowPlayingInfo()
+        DispatchQueue.main.async {
+            self.isPlaying = true
+            self.startTimeUpdates()
+            self.updateNowPlayingInfo()
+        }
     }
     
     func stop() {
         playerNode?.stop()
         audioEngine?.stop()
         stopTimeUpdates()
-        isPlaying = false
+        DispatchQueue.main.async {
+            self.isPlaying = false
+            self.currentTrack = nil
+            self.currentTime = 0
+            self.duration = 0
+        }
         isEngineRunning = false
-        currentTrack = nil
-        currentTime = 0
-        duration = 0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
     
+    // FIXED: Clamp seek position to valid range
     func seek(to time: Double) {
         guard let file = audioFile,
               let player = playerNode else { return }
+        
+        // FIXED: Clamp time to valid range [0, duration-1]
+        let clampedTime = max(0, min(time, duration - 1))
         
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
         
         let sampleRate = file.fileFormat.sampleRate
-        let startFrame = AVAudioFramePosition(time * sampleRate)
+        let startFrame = AVAudioFramePosition(clampedTime * sampleRate)
         
         pauseTimeUpdates()
         
         player.stop()
         
-        // FIXED: Ensure engine is running after stop
         ensureEngineRunning()
         
-        if startFrame < file.length {
+        // FIXED: Make sure we don't try to play beyond file length
+        if startFrame < file.length && startFrame >= 0 {
             let remainingFrames = AVAudioFrameCount(file.length - startFrame)
             
-            player.scheduleSegment(file, 
-                                 startingFrame: startFrame, 
-                                 frameCount: remainingFrames, 
-                                 at: nil,
-                                 completionHandler: { [weak self] in
-                                     guard let self = self else { return }
-                                     DispatchQueue.main.async {
-                                         if self.currentPlaybackSessionID == sessionID && self.isPlaying {
-                                             self.next()
+            if remainingFrames > 0 {
+                player.scheduleSegment(file, 
+                                     startingFrame: startFrame, 
+                                     frameCount: remainingFrames, 
+                                     at: nil,
+                                     completionHandler: { [weak self] in
+                                         guard let self = self else { return }
+                                         DispatchQueue.main.async {
+                                             if self.currentPlaybackSessionID == sessionID && self.isPlaying {
+                                                 self.next()
+                                             }
                                          }
-                                     }
-                                 })
-            
-            if isPlaying {
-                player.play()
+                                     })
+                
+                if isPlaying {
+                    player.play()
+                }
+            } else {
+                // FIXED: If no frames left, just go to next song
+                DispatchQueue.main.async {
+                    self.next()
+                }
+                return
             }
+        } else {
+            // FIXED: Seeking beyond file, go to next song
+            DispatchQueue.main.async {
+                self.next()
+            }
+            return
         }
         
-        self.seekOffset = time
-        self.currentTime = time
-        updateNowPlayingInfo()
+        self.seekOffset = clampedTime
+        
+        DispatchQueue.main.async {
+            self.currentTime = clampedTime
+            self.updateNowPlayingInfo()
+        }
         
         resumeTimeUpdates()
     }
     
+    // FIXED: Clamp skip to valid range
     func skip(seconds: Double) {
-        let newTime = currentTime + seconds
+        let newTime = max(0, min(currentTime + seconds, duration - 1))
         seek(to: newTime)
     }
     
     func setPlaybackRate(_ rate: Float) {
         timePitchNode?.rate = rate
-        isPlaying = (rate != 0)
+        DispatchQueue.main.async {
+            self.isPlaying = (rate != 0)
+        }
     }
     
     func startFastForward() {
@@ -537,6 +577,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         print("⚡ Playback speed set to: \(playbackSpeed)x")
     }
     
+    // FIXED: Close now playing view when no more songs
     func next() {
         if isLoopEnabled {
             seek(to: 0)
@@ -544,7 +585,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         if isPlaylistMode {
-            guard !currentPlaylist.isEmpty else { return }
+            guard !currentPlaylist.isEmpty else {
+                DispatchQueue.main.async {
+                    self.stop()
+                    self.onPlaybackEnded?()
+                }
+                return
+            }
             currentIndex = (currentIndex + 1) % currentPlaylist.count
             play(currentPlaylist[currentIndex])
         } else {
@@ -552,7 +599,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 let nextTrack = queue.removeFirst()
                 play(nextTrack)
             } else {
-                stop()
+                // FIXED: No more songs, stop and close now playing
+                DispatchQueue.main.async {
+                    self.stop()
+                    self.onPlaybackEnded?()
+                }
             }
         }
     }
@@ -586,57 +637,75 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func addToQueue(_ track: Track) {
-        queue.append(track)
-        
-        if currentTrack == nil {
-            isPlaylistMode = false
-            let firstTrack = queue.removeFirst()
-            play(firstTrack)
+        DispatchQueue.main.async {
+            self.queue.append(track)
+            
+            if self.currentTrack == nil {
+                self.isPlaylistMode = false
+                let firstTrack = self.queue.removeFirst()
+                self.play(firstTrack)
+            }
         }
     }
     
     func playNext(_ track: Track) {
-        queue.insert(track, at: 0)
-        
-        if currentTrack == nil {
-            isPlaylistMode = false
-            let firstTrack = queue.removeFirst()
-            play(firstTrack)
+        DispatchQueue.main.async {
+            self.queue.insert(track, at: 0)
+            
+            if self.currentTrack == nil {
+                self.isPlaylistMode = false
+                let firstTrack = self.queue.removeFirst()
+                self.play(firstTrack)
+            }
         }
     }
     
     func removeFromQueue(at offsets: IndexSet) {
-        queue.remove(atOffsets: offsets)
+        DispatchQueue.main.async {
+            self.queue.remove(atOffsets: offsets)
+        }
     }
     
     func moveInQueue(from source: IndexSet, to destination: Int) {
-        queue.move(fromOffsets: source, toOffset: destination)
+        DispatchQueue.main.async {
+            self.queue.move(fromOffsets: source, toOffset: destination)
+        }
     }
     
     func clearQueue() {
-        queue.removeAll()
+        DispatchQueue.main.async {
+            self.queue.removeAll()
+        }
     }
     
     func playFromQueue(_ track: Track) {
         if let index = queue.firstIndex(where: { $0.id == track.id }) {
-            queue.remove(at: index)
+            DispatchQueue.main.async {
+                self.queue.remove(at: index)
+            }
         }
         
-        isPlaylistMode = false
-        play(track)
+        DispatchQueue.main.async {
+            self.isPlaylistMode = false
+            self.play(track)
+        }
     }
     
     private func startTimeUpdates() {
         stopTimeUpdates()
         
-        displayLink = CADisplayLink(target: self, selector: #selector(updateTime))
-        displayLink?.preferredFramesPerSecond = 2
-        displayLink?.add(to: .main, forMode: .common)
+        DispatchQueue.main.async {
+            self.displayLink = CADisplayLink(target: self, selector: #selector(self.updateTime))
+            self.displayLink?.preferredFramesPerSecond = 2
+            self.displayLink?.add(to: .main, forMode: .common)
+        }
     }
     
     private func stopTimeUpdates() {
-        displayLink?.invalidate()
-        displayLink = nil
+        DispatchQueue.main.async {
+            self.displayLink?.invalidate()
+            self.displayLink = nil
+        }
     }
     
     func pauseTimeUpdates() {
@@ -660,10 +729,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let sampleRate = file.fileFormat.sampleRate
         let currentSegmentTime = Double(playerTime.sampleTime) / sampleRate
         
-        currentTime = seekOffset + currentSegmentTime
+        let newTime = seekOffset + currentSegmentTime
         
-        if Int(currentTime) % 5 == 0 {
-            updateNowPlayingInfo()
+        // FIXED: Make sure we don't exceed duration
+        DispatchQueue.main.async {
+            self.currentTime = min(newTime, self.duration)
+            
+            if Int(self.currentTime) % 5 == 0 {
+                self.updateNowPlayingInfo()
+            }
         }
     }
     
