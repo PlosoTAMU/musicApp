@@ -164,13 +164,17 @@ struct PlaylistSongRow: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     let playlist: Playlist
     let onTap: () -> Void
+    
     @State private var offset: CGFloat = 0
     @State private var showQueueAdded = false
-    @State private var dragDistance: CGFloat = 0
+    @State private var isSwiping = false
+    
+    private let queueTriggerThreshold: CGFloat = 60
+    private let maxSwipeOffset: CGFloat = 120
     
     var body: some View {
         ZStack(alignment: .leading) {
-            // Background queue button (only visible when swiping)
+            // Background queue action
             if offset > 5 {
                 HStack {
                     Spacer()
@@ -197,57 +201,57 @@ struct PlaylistSongRow: View {
             
             // Main content
             HStack(spacing: 12) {
-                // Thumbnail
-                ZStack {
-                    if let thumbPath = download.thumbnailPath,
-                       let image = UIImage(contentsOfFile: thumbPath) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 48, height: 48)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .foregroundColor(.gray)
-                            )
+                // FIXED: Entire row (thumbnail + name) is tappable
+                HStack(spacing: 12) {
+                    // Thumbnail
+                    ZStack {
+                        if let thumbPath = download.thumbnailPath,
+                           let image = UIImage(contentsOfFile: thumbPath) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 48, height: 48)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        } else {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.gray.opacity(0.3))
+                                .frame(width: 48, height: 48)
+                                .overlay(
+                                    Image(systemName: "music.note")
+                                        .foregroundColor(.gray)
+                                )
+                        }
+                    }
+                    
+                    Text(download.name)
+                        .font(.body)
+                        .lineLimit(1)
+                    
+                    Spacer()
+                    
+                    if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .foregroundColor(.blue)
                     }
                 }
-                
-                Text(download.name)
-                    .font(.body)
-                    .lineLimit(1)
-                
-                Spacer()
-                
-                if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
-                    Image(systemName: "speaker.wave.2.fill")
-                        .foregroundColor(.blue)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard !isSwiping else { return }
+                    onTap()
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(Color.black)
-            .contentShape(Rectangle())
             .offset(x: offset)
-            .onTapGesture {
-                // Only trigger tap if there was minimal horizontal drag
-                if dragDistance < 10 {
-                    onTap()
-                }
-                dragDistance = 0
-            }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
+            .gesture(
+                DragGesture(minimumDistance: 10, coordinateSpace: .local)
                     .onChanged { gesture in
                         let translation = gesture.translation.width
-                        dragDistance = abs(translation)
                         if translation > 0 {
-                            withAnimation(.linear(duration: 0.0)) {
-                                offset = min(translation, 120)
+                            isSwiping = true
+                            withAnimation(.interactiveSpring()) {
+                                offset = min(translation, maxSwipeOffset)
                             }
                         }
                     }
@@ -255,22 +259,18 @@ struct PlaylistSongRow: View {
                         let translation = gesture.translation.width
                         let velocity = gesture.predictedEndTranslation.width - translation
                         
-                        if translation > 60 || velocity > 50 {
-                            // Add to queue
+                        if translation > queueTriggerThreshold || velocity > 50 {
                             let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
                             audioPlayer.addToQueue(track)
                             
-                            // Haptic feedback
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.impactOccurred()
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             
                             showQueueAdded = true
                             
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                offset = 120
+                                offset = maxSwipeOffset
                             }
                             
-                            // Reset
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                                     offset = 0
@@ -281,6 +281,10 @@ struct PlaylistSongRow: View {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                 offset = 0
                             }
+                        }
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            isSwiping = false
                         }
                     }
             )
@@ -300,71 +304,5 @@ struct PlaylistSongRow: View {
             }
         }
         .clipped()
-    }
-}
-
-// MARK: - Select Songs Sheet for adding to playlist
-struct SelectSongsSheet: View {
-    let playlistID: UUID
-    @ObservedObject var playlistManager: PlaylistManager
-    @ObservedObject var downloadManager: DownloadManager
-    let onDismiss: () -> Void
-    @Environment(\.dismiss) var dismiss
-    
-    var body: some View {
-        NavigationView {
-            List {
-                ForEach(downloadManager.sortedDownloads) { download in
-                    Button {
-                        playlistManager.addToPlaylist(playlistID, downloadID: download.id)
-                    } label: {
-                        HStack(spacing: 12) {
-                            ZStack {
-                                if let thumbPath = download.thumbnailPath,
-                                   let image = UIImage(contentsOfFile: thumbPath) {
-                                    Image(uiImage: image)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                        .frame(width: 48, height: 48)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                                } else {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.gray.opacity(0.3))
-                                        .frame(width: 48, height: 48)
-                                        .overlay(
-                                            Image(systemName: "music.note")
-                                                .foregroundColor(.gray)
-                                        )
-                                }
-                            }
-                            
-                            Text(download.name)
-                                .font(.body)
-                                .foregroundColor(.primary)
-                                .lineLimit(1)
-                            
-                            Spacer()
-                            
-                            if let playlist = playlistManager.playlists.first(where: { $0.id == playlistID }),
-                               playlist.trackIDs.contains(download.id) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .navigationTitle("Add Songs")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                        onDismiss()
-                    }
-                }
-            }
-        }
     }
 }

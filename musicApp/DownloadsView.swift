@@ -8,7 +8,7 @@ struct DownloadsView: View {
     @Binding var showYouTubeDownload: Bool
     @State private var showAddToPlaylist: Download?
     @State private var searchText = ""
-
+    
     var filteredDownloads: [Download] {
         if searchText.isEmpty {
             return downloadManager.sortedDownloads
@@ -31,11 +31,9 @@ struct DownloadsView: View {
                         },
                         onDelete: {
                             downloadManager.markForDeletion(download) { deletedDownload in
-                                // Stop playback if this song is playing
                                 if audioPlayer.currentTrack?.id == deletedDownload.id {
                                     audioPlayer.stop()
                                 }
-                                // Remove from all playlists
                                 playlistManager.removeFromAllPlaylists(deletedDownload.id)
                             }
                         }
@@ -93,14 +91,18 @@ struct DownloadRow: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     let onAddToPlaylist: () -> Void
     let onDelete: () -> Void
+    
     @State private var offset: CGFloat = 0
     @State private var showQueueAdded = false
-    @State private var dragStarted = false
-    @State private var dragDistance: CGFloat = 0
+    @State private var isSwiping = false
+    
+    private let swipeThreshold: CGFloat = 15
+    private let queueTriggerThreshold: CGFloat = 60
+    private let maxSwipeOffset: CGFloat = 120
     
     var body: some View {
         ZStack(alignment: .leading) {
-            // Background queue button (only visible when swiping)
+            // Background queue action (visible when swiping right)
             if offset > 5 {
                 HStack {
                     Spacer()
@@ -125,78 +127,70 @@ struct DownloadRow: View {
                 )
             }
             
-            // Main content
+            // Main content row
             HStack(spacing: 12) {
-                ZStack {
-                    if let thumbPath = download.thumbnailPath,
-                       let image = UIImage(contentsOfFile: thumbPath) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .grayscale(download.pendingDeletion ? 1.0 : 0.0)
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 48, height: 48)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            )
-                    }
-                    
-                    if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.black.opacity(0.4))
-                        Image(systemName: "pause.fill")
-                            .foregroundColor(.white)
-                            .font(.system(size: 14))
-                    }
-                }
-                .onTapGesture {
-                    // Only play if there was minimal horizontal drag (< 10 points)
-                    if dragDistance < 10 {
-                        if audioPlayer.currentTrack?.id == download.id {
-                            if audioPlayer.isPlaying {
-                                audioPlayer.pause()
-                            } else {
-                                audioPlayer.resume()
-                            }
+                // FIXED: Tappable area includes thumbnail AND song info
+                HStack(spacing: 12) {
+                    // Thumbnail
+                    ZStack {
+                        if let thumbPath = download.thumbnailPath,
+                           let image = UIImage(contentsOfFile: thumbPath) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 48, height: 48)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .grayscale(download.pendingDeletion ? 1.0 : 0.0)
                         } else {
-                            let folderName = download.source == .youtube ? "YouTube" : 
-                                            download.source == .spotify ? "Spotify" : "Files"
-                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
-                            audioPlayer.play(track)
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.gray.opacity(0.3))
+                                .frame(width: 48, height: 48)
+                                .overlay(
+                                    Image(systemName: "music.note")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                )
+                        }
+                        
+                        if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.black.opacity(0.4))
+                                .frame(width: 48, height: 48)
+                            Image(systemName: "pause.fill")
+                                .foregroundColor(.white)
+                                .font(.system(size: 14))
                         }
                     }
-                    // Reset drag distance
-                    dragDistance = 0
-                }
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(download.name)
-                        .font(.body)
-                        .foregroundColor(download.pendingDeletion ? .gray : .primary)
-                        .lineLimit(1)
+                    .frame(width: 48, height: 48)
                     
-                    HStack(spacing: 4) {
-                        Image(systemName: download.source == .youtube ? "play.rectangle.fill" : 
-                              download.source == .spotify ? "music.note" : "folder.fill")
-                            .font(.system(size: 8))
-                        Text(download.source.rawValue.capitalized)
-                            .font(.system(size: 10))
+                    // Song info
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(download.name)
+                            .font(.body)
+                            .foregroundColor(download.pendingDeletion ? .gray : .primary)
+                            .lineLimit(1)
+                        
+                        HStack(spacing: 4) {
+                            Image(systemName: sourceIcon(for: download.source))
+                                .font(.system(size: 8))
+                            Text(download.source.rawValue.capitalized)
+                                .font(.system(size: 10))
+                        }
+                        .foregroundColor(.secondary)
                     }
-                    .foregroundColor(.secondary)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    // FIXED: Only play if not swiping
+                    guard !isSwiping else { return }
+                    handleTap()
                 }
                 
                 Spacer()
                 
+                // Action buttons (NOT part of tappable play area)
                 if !download.pendingDeletion {
-                    Button {
-                        onAddToPlaylist()
-                    } label: {
+                    Button(action: onAddToPlaylist) {
                         Image(systemName: "plus.circle")
                             .font(.title3)
                             .foregroundColor(.blue)
@@ -204,9 +198,7 @@ struct DownloadRow: View {
                     .buttonStyle(.plain)
                 }
                 
-                Button {
-                    onDelete()
-                } label: {
+                Button(action: onDelete) {
                     Image(systemName: download.pendingDeletion ? "arrow.uturn.backward.circle.fill" : "trash")
                         .font(.body)
                         .foregroundColor(download.pendingDeletion ? .orange : .red)
@@ -217,14 +209,14 @@ struct DownloadRow: View {
             .padding(.vertical, 12)
             .background(Color.black)
             .offset(x: offset)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
+            .gesture(
+                DragGesture(minimumDistance: 10, coordinateSpace: .local)
                     .onChanged { gesture in
                         let translation = gesture.translation.width
-                        dragDistance = abs(translation)
                         if translation > 0 {
-                            withAnimation(.linear(duration: 0.0)) {
-                                offset = min(translation, 120)
+                            isSwiping = true
+                            withAnimation(.interactiveSpring()) {
+                                offset = min(translation, maxSwipeOffset)
                             }
                         }
                     }
@@ -232,39 +224,20 @@ struct DownloadRow: View {
                         let translation = gesture.translation.width
                         let velocity = gesture.predictedEndTranslation.width - translation
                         
-                        if translation > 60 || velocity > 50 {
-                            // Add to queue
-                            let folderName = download.source == .youtube ? "YouTube" : 
-                                            download.source == .spotify ? "Spotify" : "Files"
-                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
-                            audioPlayer.addToQueue(track)
-                            
-                            // Haptic feedback
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.impactOccurred()
-                            
-                            showQueueAdded = true
-                            
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                offset = 120
-                            }
-                            
-                            // Reset
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                    offset = 0
-                                    showQueueAdded = false
-                                }
-                            }
+                        if translation > queueTriggerThreshold || velocity > 50 {
+                            addToQueue()
                         } else {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                offset = 0
-                            }
+                            resetSwipe()
+                        }
+                        
+                        // Reset swiping flag after delay to prevent accidental tap
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            isSwiping = false
                         }
                     }
             )
             
-            // Queue added feedback
+            // Queue added feedback overlay
             if showQueueAdded {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
@@ -279,5 +252,62 @@ struct DownloadRow: View {
             }
         }
         .clipped()
+    }
+    
+    private func handleTap() {
+        guard !download.pendingDeletion else { return }
+        
+        if audioPlayer.currentTrack?.id == download.id {
+            if audioPlayer.isPlaying {
+                audioPlayer.pause()
+            } else {
+                audioPlayer.resume()
+            }
+        } else {
+            let folderName = folderName(for: download.source)
+            let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
+            audioPlayer.play(track)
+        }
+    }
+    
+    private func addToQueue() {
+        let folderName = folderName(for: download.source)
+        let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
+        audioPlayer.addToQueue(track)
+        
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        
+        showQueueAdded = true
+        
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            offset = maxSwipeOffset
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            resetSwipe()
+            showQueueAdded = false
+        }
+    }
+    
+    private func resetSwipe() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            offset = 0
+        }
+    }
+    
+    private func sourceIcon(for source: DownloadSource) -> String {
+        switch source {
+        case .youtube: return "play.rectangle.fill"
+        case .spotify: return "music.note"
+        case .folder: return "folder.fill"
+        }
+    }
+    
+    private func folderName(for source: DownloadSource) -> String {
+        switch source {
+        case .youtube: return "YouTube"
+        case .spotify: return "Spotify"
+        case .folder: return "Files"
+        }
     }
 }
