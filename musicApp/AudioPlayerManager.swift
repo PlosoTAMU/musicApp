@@ -16,6 +16,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         didSet { applyPlaybackSpeed() }
     }
     
+    private var currentPlaybackSessionID = UUID() // Track current playback session
+    
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var audioFile: AVAudioFile?
@@ -239,6 +241,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func play(_ track: Track) {
+        // Create new playback session
+        currentPlaybackSessionID = UUID()
+        let sessionID = currentPlaybackSessionID
+        
         if isPlaying {
             playerNode?.stop()
             audioEngine?.stop()
@@ -284,9 +290,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
             // Schedule file
             player.scheduleFile(file, at: nil) { [weak self] in
                 guard let self = self else { return }
-                // Only move to next song if we're still playing and haven't manually stopped
+                // Only advance if this is still the active playback session
                 DispatchQueue.main.async {
-                    if self.isPlaying && self.currentTrack?.id == track.id {
+                    if self.currentPlaybackSessionID == sessionID && self.isPlaying {
                         self.next()
                     }
                 }
@@ -352,7 +358,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
         guard let file = audioFile,
               let player = playerNode else { return }
         
-        guard let currentTrack = currentTrack else { return }
+        // Invalidate current session to prevent old completion handler from firing
+        currentPlaybackSessionID = UUID()
+        let sessionID = currentPlaybackSessionID
         
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(time * sampleRate)
@@ -366,16 +374,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
         if startFrame < file.length {
             let remainingFrames = AVAudioFrameCount(file.length - startFrame)
             
-            // Schedule with completion handler that respects current track
+            // Schedule segment WITH completion handler for natural playback continuation
             player.scheduleSegment(file, 
                                  startingFrame: startFrame, 
                                  frameCount: remainingFrames, 
                                  at: nil,
                                  completionHandler: { [weak self] in
                                      guard let self = self else { return }
-                                     // Only advance if still playing the same track
+                                     // Only advance if this session is still active
                                      DispatchQueue.main.async {
-                                         if self.isPlaying && self.currentTrack?.id == currentTrack.id {
+                                         if self.currentPlaybackSessionID == sessionID && self.isPlaying {
                                              self.next()
                                          }
                                      }
