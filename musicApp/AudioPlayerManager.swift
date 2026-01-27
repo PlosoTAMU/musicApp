@@ -276,8 +276,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             // Schedule file
             player.scheduleFile(file, at: nil) { [weak self] in
+                guard let self = self else { return }
+                // Only move to next song if we're still playing and haven't manually stopped
                 DispatchQueue.main.async {
-                    self?.next()
+                    if self.isPlaying && self.currentTrack?.id == track.id {
+                        self.next()
+                    }
                 }
             }
             

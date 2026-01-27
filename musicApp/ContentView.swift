@@ -181,6 +181,18 @@ struct NowPlayingView: View {
         )
     }
     
+    // Computed binding for playback speed that rounds to exact decimal values
+    private var speedBinding: Binding<Double> {
+        Binding(
+            get: { audioPlayer.playbackSpeed },
+            set: { newValue in
+                // Round to 1 decimal place for exact values like 1.3
+                let rounded = (newValue * 10).rounded() / 10
+                audioPlayer.playbackSpeed = rounded
+            }
+        )
+    }
+    
     var body: some View {
         ZStack {
             if let bgImage = backgroundImage {
@@ -242,6 +254,13 @@ struct NowPlayingView: View {
                         .frame(width: 290, height: 290)
                         .clipShape(RoundedRectangle(cornerRadius: 20))
                         .shadow(color: .black.opacity(1), radius: 40, y: 12)
+                        .onTapGesture {
+                            if audioPlayer.isPlaying {
+                                audioPlayer.pause()
+                            } else {
+                                audioPlayer.resume()
+                            }
+                        }
                 } else {
                     RoundedRectangle(cornerRadius: 20)
                         .fill(LinearGradient(
@@ -256,6 +275,13 @@ struct NowPlayingView: View {
                                 .foregroundColor(.white.opacity(0.5))
                         )
                         .shadow(color: .black.opacity(1), radius: 40, y: 12)
+                        .onTapGesture {
+                            if audioPlayer.isPlaying {
+                                audioPlayer.pause()
+                            } else {
+                                audioPlayer.resume()
+                            }
+                        }
                 }
                 
                 Spacer()
@@ -268,6 +294,13 @@ struct NowPlayingView: View {
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 28)
+                        .onTapGesture {
+                            if audioPlayer.isPlaying {
+                                audioPlayer.pause()
+                            } else {
+                                audioPlayer.resume()
+                            }
+                        }
                     
                     Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
                         .font(.title3)
@@ -346,7 +379,7 @@ struct NowPlayingView: View {
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
                             .frame(width: 20)
-                        Slider(value: $audioPlayer.playbackSpeed, in: 0.5...2.0)
+                        Slider(value: speedBinding, in: 0.5...2.0)
                             .accentColor(.white)
                         Text(String(format: "%.1fx", audioPlayer.playbackSpeed))
                             .font(.caption)
