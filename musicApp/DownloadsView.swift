@@ -95,7 +95,8 @@ struct DownloadRow: View {
     let onDelete: () -> Void
     @State private var offset: CGFloat = 0
     @State private var showQueueAdded = false
-    @State private var isSwiping = false
+    @State private var dragStarted = false
+    @State private var dragDistance: CGFloat = 0
     
     var body: some View {
         ZStack(alignment: .leading) {
@@ -155,7 +156,8 @@ struct DownloadRow: View {
                     }
                 }
                 .onTapGesture {
-                    if !isSwiping {
+                    // Only play if there was minimal horizontal drag (< 10 points)
+                    if dragDistance < 10 {
                         if audioPlayer.currentTrack?.id == download.id {
                             if audioPlayer.isPlaying {
                                 audioPlayer.pause()
@@ -169,6 +171,8 @@ struct DownloadRow: View {
                             audioPlayer.play(track)
                         }
                     }
+                    // Reset drag distance
+                    dragDistance = 0
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
@@ -214,10 +218,10 @@ struct DownloadRow: View {
             .background(Color.black)
             .offset(x: offset)
             .simultaneousGesture(
-                DragGesture(minimumDistance: 5)
+                DragGesture(minimumDistance: 0)
                     .onChanged { gesture in
-                        isSwiping = true
                         let translation = gesture.translation.width
+                        dragDistance = abs(translation)
                         if translation > 0 {
                             withAnimation(.linear(duration: 0.0)) {
                                 offset = min(translation, 120)
@@ -256,11 +260,6 @@ struct DownloadRow: View {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                 offset = 0
                             }
-                        }
-                        
-                        // Reset swipe state after a short delay
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            isSwiping = false
                         }
                     }
             )

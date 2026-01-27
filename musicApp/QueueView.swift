@@ -116,7 +116,6 @@ struct QueueView: View {
                                     }
                                 }
                                 .listRowSeparator(.hidden)
-                                .environment(\.editMode, .constant(.active))
                             } else {
                                 // Show helpful message when queue is empty but song is playing
                                 Section {
@@ -140,6 +139,7 @@ struct QueueView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
+                    .environment(\.editMode, audioPlayer.queue.isEmpty ? .constant(.inactive) : .constant(.active))
                 }
             }
             .navigationTitle("Queue")

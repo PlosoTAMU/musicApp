@@ -166,7 +166,7 @@ struct PlaylistSongRow: View {
     let onTap: () -> Void
     @State private var offset: CGFloat = 0
     @State private var showQueueAdded = false
-    @State private var isSwiping = false
+    @State private var dragDistance: CGFloat = 0
     
     var body: some View {
         ZStack(alignment: .leading) {
@@ -234,15 +234,17 @@ struct PlaylistSongRow: View {
             .contentShape(Rectangle())
             .offset(x: offset)
             .onTapGesture {
-                if !isSwiping {
+                // Only trigger tap if there was minimal horizontal drag
+                if dragDistance < 10 {
                     onTap()
                 }
+                dragDistance = 0
             }
             .simultaneousGesture(
-                DragGesture(minimumDistance: 5)
+                DragGesture(minimumDistance: 0)
                     .onChanged { gesture in
-                        isSwiping = true
                         let translation = gesture.translation.width
+                        dragDistance = abs(translation)
                         if translation > 0 {
                             withAnimation(.linear(duration: 0.0)) {
                                 offset = min(translation, 120)
@@ -279,11 +281,6 @@ struct PlaylistSongRow: View {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                 offset = 0
                             }
-                        }
-                        
-                        // Reset swipe state after a short delay
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            isSwiping = false
                         }
                     }
             )
