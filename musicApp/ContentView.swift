@@ -59,6 +59,8 @@ struct ContentView: View {
         }
         .fullScreenCover(isPresented: $showNowPlaying) {
             NowPlayingView(audioPlayer: audioPlayer, isPresented: $showNowPlaying)
+                .statusBarHidden(false)
+                .persistentSystemOverlays(.hidden)
         }
         .sheet(isPresented: $showFolderPicker) {
             FolderPicker(downloadManager: downloadManager)
@@ -172,11 +174,11 @@ struct NowPlayingView: View {
     @Binding var isPresented: Bool
     @State private var isSeeking = false
     @State private var seekValue: Double = 0
-    @State private var localSeekPosition: Double = 0 // FIXED: Separate state for slider during seeking
+    @State private var localSeekPosition: Double = 0
     @State private var showPlaylistPicker = false
     @State private var backgroundImage: UIImage?
+    @State private var orientation = UIDeviceOrientation.unknown
     
-    // FIXED: Computed binding that prevents race conditions
     private var sliderBinding: Binding<Double> {
         Binding(
             get: { isSeeking ? localSeekPosition : audioPlayer.currentTime },
@@ -189,12 +191,10 @@ struct NowPlayingView: View {
         )
     }
     
-    // Computed binding for playback speed that rounds to exact decimal values
     private var speedBinding: Binding<Double> {
         Binding(
             get: { audioPlayer.playbackSpeed },
             set: { newValue in
-                // Round to 1 decimal place for exact values like 1.3
                 let rounded = (newValue * 10).rounded() / 10
                 audioPlayer.playbackSpeed = rounded
             }
@@ -309,6 +309,7 @@ struct NowPlayingView: View {
                     Text(audioPlayer.currentTrack?.name ?? "Unknown")
                         .font(.title)
                         .fontWeight(.bold)
+                        .italic()
                         .foregroundColor(.white)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
@@ -332,7 +333,6 @@ struct NowPlayingView: View {
                     Slider(value: sliderBinding, in: 0...max(audioPlayer.duration, 1)) { editing in
                         isSeeking = editing
                         if editing {
-                            // FIX: Initialize local position to current time when drag starts
                             localSeekPosition = audioPlayer.currentTime
                         } else {
                             audioPlayer.seek(to: localSeekPosition)
@@ -441,6 +441,10 @@ struct NowPlayingView: View {
         }
         .onAppear {
             updateBackgroundImage()
+            lockOrientation(.portrait)
+        }
+        .onDisappear {
+            unlockOrientation()
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             updateBackgroundImage()
@@ -511,6 +515,17 @@ struct NowPlayingView: View {
         }
         return image
     }
+    
+    private func lockOrientation(_ orientation: UIInterfaceOrientationMask) {
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: orientation))
+        }
+        AppDelegate.orientationLock = orientation
+    }
+    
+    private func unlockOrientation() {
+        AppDelegate.orientationLock = .all
+    }
 }
 
 // MARK: - Rewind/Forward Buttons
@@ -518,7 +533,7 @@ struct RewindButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @State private var isLongPressing = false
     @State private var pressTimer: Timer?
-    @State private var rewindTimer: Timer? // New timer for the loop
+    @State private var rewindTimer: Timer?
     
     var body: some View {
         Image("rewind")
@@ -530,20 +545,16 @@ struct RewindButton: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
                         if pressTimer == nil {
-                            // 1. Wait 0.4s to detect a hold
                             pressTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
                                 isLongPressing = true
                                 
-                                // 2. Start the Rewind Loop (Simulate 2x-3x rewind)
                                 rewindTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
-                                    // Move back 0.5s every 0.2s
                                     audioPlayer.skip(seconds: -0.5)
                                 }
                             }
                         }
                     }
                     .onEnded { _ in
-                        // Clean up all timers
                         pressTimer?.invalidate()
                         pressTimer = nil
                         
@@ -552,9 +563,7 @@ struct RewindButton: View {
                         
                         if isLongPressing {
                             isLongPressing = false
-                            // Loop stopped, audio continues from new spot naturally
                         } else {
-                            // Was a tap: Perform single Skip
                             audioPlayer.skip(seconds: -10)
                         }
                     }
@@ -566,7 +575,7 @@ struct FastForwardButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @State private var isLongPressing = false
     @State private var pressTimer: Timer?
-    @State private var speedBeforeFF: Double = 1.0 // Store speed before fast forward
+    @State private var speedBeforeFF: Double = 1.0
     
     var body: some View {
         Image("forward")
@@ -580,8 +589,8 @@ struct FastForwardButton: View {
                         if pressTimer == nil {
                             pressTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
                                 isLongPressing = true
-                                speedBeforeFF = audioPlayer.playbackSpeed // Save current speed
-                                audioPlayer.playbackSpeed = 2.0 // Start Fast Forwarding
+                                speedBeforeFF = audioPlayer.playbackSpeed
+                                audioPlayer.playbackSpeed = 2.0
                             }
                         }
                     }
@@ -590,11 +599,9 @@ struct FastForwardButton: View {
                         pressTimer = nil
                         
                         if isLongPressing {
-                            // Was holding: Restore the speed we saved
                             audioPlayer.playbackSpeed = speedBeforeFF
                             isLongPressing = false
                         } else {
-                            // Was a tap: Perform Skip
                             audioPlayer.skip(seconds: 10)
                         }
                     }
@@ -660,5 +667,14 @@ struct DownloadBanner: View {
                 dotCount = (dotCount % 3) + 1
             }
         }
+    }
+}
+
+// MARK: - AppDelegate for orientation lock
+class AppDelegate: NSObject, UIApplicationDelegate {
+    static var orientationLock = UIInterfaceOrientationMask.all
+    
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        return AppDelegate.orientationLock
     }
 }
