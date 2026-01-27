@@ -100,10 +100,10 @@ struct DownloadRow: View {
                     VStack(spacing: 4) {
                         Image(systemName: "text.line.first.and.arrowtriangle.forward")
                             .font(.system(size: 22))
-                            .foregroundColor(.white)
+                            .foregroundColor(Color(red: 0.6, green: 1.0, blue: 0.6))
                         Text("Add to Queue")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(Color(red: 0.6, green: 1.0, blue: 0.6))
                     }
                     .frame(width: 100)
                     .padding(.trailing, 8)
@@ -111,7 +111,7 @@ struct DownloadRow: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(
                     LinearGradient(
-                        colors: [Color.green.opacity(0.8), Color.green],
+                        colors: [Color(red: 0.0, green: 0.4, blue: 0.0), Color(red: 0.0, green: 0.5, blue: 0.0)],
                         startPoint: .leading,
                         endPoint: .trailing
                     )
@@ -208,12 +208,12 @@ struct DownloadRow: View {
             }
             .background(Color(UIColor.systemBackground))
             .offset(x: offset)
+            .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.8), value: offset)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 5)
                     .onChanged { gesture in
                         let translation = gesture.translation.width
                         if translation > 0 {
-                            // Direct 1:1 tracking for immediate responsiveness
                             offset = min(translation, 120)
                         }
                     }
@@ -233,23 +233,15 @@ struct DownloadRow: View {
                             generator.impactOccurred()
                             
                             showQueueAdded = true
-                            
-                            // Quick snap animation
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                                offset = 120
-                            }
+                            offset = 120
                             
                             // Reset
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                                    offset = 0
-                                    showQueueAdded = false
-                                }
+                                offset = 0
+                                showQueueAdded = false
                             }
                         } else {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                offset = 0
-                            }
+                            offset = 0
                         }
                     }
             )
@@ -268,8 +260,8 @@ struct DownloadRow: View {
                 .transition(.opacity)
             }
         }
-        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+        .listRowSeparator(.hidden)
         .clipped()
     }
 }
