@@ -77,6 +77,8 @@ struct PlaylistDetailView: View {
                             audioPlayer.play(track)
                         }
                     )
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                    .listRowBackground(Color.black)
                 }
                 .onMove { source, destination in
                     var trackIDs = playlist.trackIDs
@@ -100,6 +102,9 @@ struct PlaylistDetailView: View {
                     updateTotalDuration()
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.black)
             .environment(\.editMode, .constant(.active))
         }
         .navigationTitle(playlist.name)
@@ -222,7 +227,9 @@ struct PlaylistSongRow: View {
                         .foregroundColor(.blue)
                 }
             }
-            .background(Color(UIColor.systemBackground))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.black)
             .contentShape(Rectangle())
             .offset(x: offset)
             .onTapGesture {
@@ -286,8 +293,6 @@ struct PlaylistSongRow: View {
                 .transition(.opacity)
             }
         }
-        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-        .listRowSeparator(.hidden)
         .clipped()
     }
 }

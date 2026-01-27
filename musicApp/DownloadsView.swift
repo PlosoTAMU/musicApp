@@ -51,8 +51,13 @@ struct DownloadsView: View {
                                 .padding(.trailing, 8)
                         } : nil
                     )
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                    .listRowBackground(Color.black)
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.black)
             .searchable(text: $searchText, prompt: "Search downloads")
             .navigationTitle("Downloads")
             .toolbar {
@@ -206,7 +211,9 @@ struct DownloadRow: View {
                 }
                 .buttonStyle(.plain)
             }
-            .background(Color(UIColor.systemBackground))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.black)
             .offset(x: offset)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 5)
@@ -268,8 +275,6 @@ struct DownloadRow: View {
                 .transition(.opacity)
             }
         }
-        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-        .listRowSeparator(.hidden)
         .clipped()
     }
 }
