@@ -237,6 +237,14 @@ struct NowPlayingView: View {
                     Spacer()
                     
                     Menu {
+                        Button(action: { 
+                            audioPlayer.isLoopEnabled.toggle()
+                        }) {
+                            Label(
+                                audioPlayer.isLoopEnabled ? "Loop: On" : "Loop: Off",
+                                systemImage: audioPlayer.isLoopEnabled ? "repeat.1" : "repeat"
+                            )
+                        }
                         Button(action: { showPlaylistPicker = true }) {
                             Label("Add to Playlist", systemImage: "plus")
                         }
@@ -348,16 +356,6 @@ struct NowPlayingView: View {
                 }
                 
                 HStack(spacing: 16) {
-                    // Loop button
-                    Button {
-                        audioPlayer.isLoopEnabled.toggle()
-                    } label: {
-                        Image(systemName: audioPlayer.isLoopEnabled ? "repeat.1" : "repeat")
-                            .font(.system(size: 24))
-                            .foregroundColor(audioPlayer.isLoopEnabled ? .green : .white.opacity(0.6))
-                            .frame(width: 50, height: 50)
-                    }
-                    
                     Button { audioPlayer.previous() } label: {
                         Image(systemName: "backward.fill")
                             .font(.system(size: 32))
@@ -565,6 +563,7 @@ struct FastForwardButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @State private var isLongPressing = false
     @State private var pressTimer: Timer?
+    @State private var speedBeforeFF: Double = 1.0 // Store speed before fast forward
     
     var body: some View {
         Image("forward")
@@ -578,6 +577,7 @@ struct FastForwardButton: View {
                         if pressTimer == nil {
                             pressTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
                                 isLongPressing = true
+                                speedBeforeFF = audioPlayer.playbackSpeed // Save current speed
                                 audioPlayer.playbackSpeed = 2.0 // Start Fast Forwarding
                             }
                         }
@@ -587,9 +587,17 @@ struct FastForwardButton: View {
                         pressTimer = nil
                         
                         if isLongPressing {
-                            // Was holding: Restore saved speed
-                            audioPlayer.playbackSpeed = audioPlayer.savedPlaybackSpeed
+                            // Was holding: Restore the speed we saved
+                            audioPlayer.playbackSpeed = speedBeforeFF
                             isLongPressing = false
+                        } else {
+                            // Was a tap: Perform Skip
+                            audioPlayer.skip(seconds: 10)
+                        }
+                    }
+            )
+    }
+}
                         } else {
                             // Was a tap: Perform Skip
                             audioPlayer.skip(seconds: 10)

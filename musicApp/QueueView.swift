@@ -106,7 +106,7 @@ struct QueueView: View {
                                             downloadManager: downloadManager,
                                             isPlaying: false,
                                             audioPlayer: audioPlayer,
-                                            showDragHandle: true
+                                            showDragHandle: false
                                         )
                                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                                         .listRowBackground(Color.clear)
@@ -118,6 +118,7 @@ struct QueueView: View {
                                         audioPlayer.removeFromQueue(at: offsets)
                                     }
                                 }
+                                .environment(\.editMode, .constant(.active))
                             } else {
                                 // Show helpful message when queue is empty but song is playing
                                 Section {
@@ -141,7 +142,6 @@ struct QueueView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
-                    .environment(\.editMode, audioPlayer.isPlaylistMode || audioPlayer.queue.isEmpty ? .constant(.inactive) : .constant(.active))
                 }
             }
             .navigationTitle("Queue")
