@@ -7,7 +7,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var currentTrack: Track?
     @Published var currentPlaylist: [Track] = []
     @Published var queue: [Track] = []
-    @Published var previousQueue: [Track] = [] // FIXED: Track previous songs
+    @Published var previousQueue: [Track] = []
     @Published var isPlaylistMode = false
     @Published var isLoopEnabled = false
     @Published var currentIndex: Int = 0
@@ -29,12 +29,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var reverbNode: AVAudioUnitReverb?
     private var timePitchNode: AVAudioUnitTimePitch?
     
-    private var playerObserver: Any?
-    private var timeObserver: Any?
     private var displayLink: CADisplayLink?
     private var seekOffset: TimeInterval = 0
     
-    private var isEngineRunning = false
+    // FIXED: Track if we need to reschedule audio on resume
+    private var needsReschedule = false
+    private var savedCurrentTime: Double = 0
     
     var onPlaybackEnded: (() -> Void)?
     
@@ -63,8 +63,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         reverb.loadFactoryPreset(.largeHall)
         reverb.wetDryMix = 0
-        
-        timePitchNode?.rate = 1.0
+        timePitch.rate = 1.0
         
         print("✅ Audio engine configured")
     }
@@ -141,46 +140,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
             name: AVAudioSession.routeChangeNotification,
             object: nil
         )
-        
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAppWillResignActive),
-            name: UIApplication.willResignActiveNotification,
-            object: nil
-        )
-        
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAppDidBecomeActive),
-            name: UIApplication.didBecomeActiveNotification,
-            object: nil
-        )
-        
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleEngineConfigurationChange),
-            name: .AVAudioEngineConfigurationChange,
-            object: audioEngine
-        )
-    }
-    
-    @objc private func handleAppWillResignActive() {
-        do {
-            try AVAudioSession.sharedInstance().setActive(true, options: [])
-            print("📊 Audio session kept active on background")
-        } catch {
-            print("❌ Failed to keep audio session active: \(error)")
-        }
-    }
-    
-    @objc private func handleAppDidBecomeActive() {
-        do {
-            try AVAudioSession.sharedInstance().setActive(true, options: [])
-            updateNowPlayingInfo()
-            print("📊 Audio session reactivated on foreground")
-        } catch {
-            print("❌ Failed to reactivate audio session: \(error)")
-        }
     }
     
     @objc private func handleInterruption(notification: Notification) {
@@ -193,19 +152,22 @@ class AudioPlayerManager: NSObject, ObservableObject {
         switch type {
         case .began:
             print("🎧 Audio interruption began")
+            // Save current position before pausing
+            savedCurrentTime = currentTime
+            needsReschedule = true
             DispatchQueue.main.async {
-                self.pause()
+                self.isPlaying = false
             }
+            playerNode?.pause()
+            stopTimeUpdates()
+            
         case .ended:
+            print("🎧 Audio interruption ended")
             guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-            
-            print("🎧 Audio interruption ended")
-            
             if options.contains(.shouldResume) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    self?.ensureEngineRunning()
-                    self?.resume()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.resume()
                 }
             }
         @unknown default:
@@ -213,10 +175,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
+    // FIXED: Proper Bluetooth handling
     @objc private func handleRouteChange(notification: Notification) {
         guard let userInfo = notification.userInfo,
-            let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
-            let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
             return
         }
         
@@ -224,87 +187,32 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         switch reason {
         case .oldDeviceUnavailable:
-            print("🎧 Audio device disconnected (headphones/bluetooth)")
+            // Bluetooth/headphones disconnected
+            print("🎧 Audio device disconnected")
+            
+            // Save current position BEFORE stopping
+            savedCurrentTime = currentTime
+            needsReschedule = true
+            
+            // Just pause, don't stop the engine yet
             DispatchQueue.main.async {
-                self.pause()
+                self.isPlaying = false
+                self.stopTimeUpdates()
+                self.updateNowPlayingInfo()
             }
+            playerNode?.pause()
             
         case .newDeviceAvailable:
+            // Bluetooth/headphones connected
             print("🎧 New audio device connected")
-            // FIXED: Don't auto-resume, just ensure engine is ready
-            ensureEngineRunning()
+            // Don't do anything - user will manually resume if they want
+            // The engine will handle the new device automatically
             
         case .categoryChange:
             print("🎧 Audio category changed")
-            ensureEngineRunning()
             
         default:
             break
-        }
-    }
-        
-    // FIXED: All UI updates wrapped in DispatchQueue.main.async
-    @objc private func handleEngineConfigurationChange(notification: Notification) {
-        print("⚙️ Audio engine configuration changed")
-        
-        guard let engine = audioEngine,
-              let player = playerNode,
-              let currentFile = audioFile else { return }
-        
-        player.stop()
-        isEngineRunning = false
-        
-        do {
-            try engine.start()
-            isEngineRunning = true
-            
-            if isPlaying {
-                let wasPlaying = isPlaying
-                let sessionID = currentPlaybackSessionID
-                
-                // FIXED: Update UI on main thread
-                DispatchQueue.main.async {
-                    self.isPlaying = false
-                }
-                
-                player.scheduleFile(currentFile, at: nil) { [weak self] in
-                    guard let self = self else { return }
-                    DispatchQueue.main.async {
-                        if self.currentPlaybackSessionID == sessionID && wasPlaying {
-                            self.next()
-                        }
-                    }
-                }
-                
-                if wasPlaying {
-                    player.play()
-                    DispatchQueue.main.async {
-                        self.isPlaying = true
-                        self.startTimeUpdates()
-                    }
-                }
-                
-                print("✅ Engine restarted after configuration change")
-            }
-        } catch {
-            print("❌ Failed to restart engine after configuration change: \(error)")
-        }
-    }
-    
-    private func ensureEngineRunning() {
-        guard let engine = audioEngine else { return }
-        
-        if !engine.isRunning {
-            print("⚠️ Engine not running, starting...")
-            do {
-                try engine.start()
-                isEngineRunning = true
-                print("✅ Engine started successfully")
-            } catch {
-                print("❌ Failed to start engine: \(error)")
-            }
-        } else {
-            isEngineRunning = true
         }
     }
     
@@ -331,19 +239,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
         if isPlaying {
             playerNode?.stop()
             audioEngine?.stop()
-            DispatchQueue.main.async {
-                self.isPlaying = false
-            }
-            isEngineRunning = false
+            isPlaying = false
         }
         
-        DispatchQueue.main.async {
-            self.isPlaylistMode = true
-            self.currentPlaylist = shuffle ? tracks.shuffled() : tracks
-            self.currentIndex = 0
-            if !self.currentPlaylist.isEmpty {
-                self.play(self.currentPlaylist[0])
-            }
+        isPlaylistMode = true
+        currentPlaylist = shuffle ? tracks.shuffled() : tracks
+        currentIndex = 0
+        previousQueue.removeAll()
+        
+        if !currentPlaylist.isEmpty {
+            play(currentPlaylist[0])
         }
     }
     
@@ -354,14 +259,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         if isPlaying {
             playerNode?.stop()
             audioEngine?.stop()
-            DispatchQueue.main.async {
-                self.isPlaying = false
-            }
-            isEngineRunning = false
+            isPlaying = false
         }
         
         stopTimeUpdates()
         seekOffset = 0
+        needsReschedule = false
         
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: [])
@@ -390,7 +293,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             engine.connect(timePitch, to: reverb, format: format)
             engine.connect(reverb, to: engine.mainMixerNode, format: format)
             
-            ensureEngineRunning()
+            try engine.start()
             
             player.scheduleFile(file, at: nil) { [weak self] in
                 guard let self = self else { return }
@@ -403,22 +306,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             player.play()
             
+            isPlaying = true
+            currentTrack = track
+            
+            if let index = currentPlaylist.firstIndex(where: { $0.id == track.id }) {
+                currentIndex = index
+            }
+            
             let frameCount = Double(file.length)
             let sampleRate = file.fileFormat.sampleRate
-            let calculatedDuration = frameCount / sampleRate
+            duration = frameCount / sampleRate
             
-            DispatchQueue.main.async {
-                self.isPlaying = true
-                self.currentTrack = track
-                
-                if let index = self.currentPlaylist.firstIndex(where: { $0.id == track.id }) {
-                    self.currentIndex = index
-                }
-                
-                self.duration = calculatedDuration
-                self.startTimeUpdates()
-                self.updateNowPlayingInfo()
-            }
+            startTimeUpdates()
+            updateNowPlayingInfo()
             
             print("▶️ Now playing: \(track.name)")
             
@@ -428,115 +328,120 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func pause() {
+        // Save position before pausing
+        savedCurrentTime = currentTime
+        needsReschedule = true
+        
         playerNode?.pause()
-        DispatchQueue.main.async {
-            self.isPlaying = false
-            self.stopTimeUpdates()
-            self.updateNowPlayingInfo()
-        }
+        isPlaying = false
+        stopTimeUpdates()
+        updateNowPlayingInfo()
     }
     
+    // FIXED: Resume with proper engine restart and audio rescheduling
     func resume() {
         guard let engine = audioEngine,
-            let player = playerNode,
-            let file = audioFile,
-            let reverb = reverbNode,
-            let timePitch = timePitchNode else {
-            print("❌ Audio nodes not available")
+              let player = playerNode,
+              let file = audioFile,
+              let reverb = reverbNode,
+              let timePitch = timePitchNode else {
+            print("❌ Audio components not available")
             return
         }
         
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: [])
         } catch {
-            print("❌ Failed to reactivate audio session: \(error)")
+            print("❌ Failed to activate audio session: \(error)")
         }
         
-        // FIXED: Check if engine stopped (Bluetooth disconnect case)
+        // Check if engine needs restart
         if !engine.isRunning {
-            print("⚠️ Engine stopped, reconnecting audio graph...")
+            print("⚠️ Engine not running, restarting...")
             
             do {
                 let format = file.processingFormat
                 
-                // Disconnect all nodes first
+                // Reconnect nodes
                 engine.disconnectNodeInput(player)
                 engine.disconnectNodeInput(timePitch)
                 engine.disconnectNodeInput(reverb)
                 
-                // Reconnect the audio graph
                 engine.connect(player, to: timePitch, format: format)
                 engine.connect(timePitch, to: reverb, format: format)
                 engine.connect(reverb, to: engine.mainMixerNode, format: format)
                 
-                // Start the engine
                 try engine.start()
-                isEngineRunning = true
+                print("✅ Engine restarted")
                 
-                // CRITICAL FIX: Reschedule the audio file from current position
-                let sampleRate = file.fileFormat.sampleRate
-                let currentFrame = AVAudioFramePosition(currentTime * sampleRate)
-                
-                if currentFrame < file.length {
-                    let remainingFrames = AVAudioFrameCount(file.length - currentFrame)
-                    
-                    // Reschedule from where we left off
-                    let sessionID = currentPlaybackSessionID
-                    player.scheduleSegment(file,
-                                        startingFrame: currentFrame,
-                                        frameCount: remainingFrames,
-                                        at: nil,
-                                        completionHandler: { [weak self] in
-                                            guard let self = self else { return }
-                                            DispatchQueue.main.async {
-                                                if self.currentPlaybackSessionID == sessionID && self.isPlaying {
-                                                    self.next()
-                                                }
-                                            }
-                                        })
-                    
-                    // Update seek offset
-                    seekOffset = currentTime
-                }
-                
-                print("✅ Engine reconnected and audio rescheduled from \(currentTime)s")
+                // Force reschedule since engine was stopped
+                needsReschedule = true
             } catch {
-                print("❌ Failed to reconnect audio graph: \(error)")
+                print("❌ Failed to restart engine: \(error)")
                 return
             }
         }
         
-        // Now start playback
-        player.play()
-        
-        DispatchQueue.main.async {
-            self.isPlaying = true
-            self.startTimeUpdates()
-            self.updateNowPlayingInfo()
+        // Reschedule audio from saved position if needed
+        if needsReschedule {
+            print("🔄 Rescheduling audio from \(savedCurrentTime)s")
+            
+            let sessionID = currentPlaybackSessionID
+            let sampleRate = file.fileFormat.sampleRate
+            let startFrame = AVAudioFramePosition(savedCurrentTime * sampleRate)
+            
+            // Stop player to clear old schedule
+            player.stop()
+            
+            if startFrame < file.length && startFrame >= 0 {
+                let remainingFrames = AVAudioFrameCount(file.length - startFrame)
+                
+                player.scheduleSegment(file,
+                                      startingFrame: startFrame,
+                                      frameCount: remainingFrames,
+                                      at: nil) { [weak self] in
+                    guard let self = self else { return }
+                    DispatchQueue.main.async {
+                        if self.currentPlaybackSessionID == sessionID && self.isPlaying {
+                            self.next()
+                        }
+                    }
+                }
+                
+                seekOffset = savedCurrentTime
+                currentTime = savedCurrentTime
+            }
+            
+            needsReschedule = false
         }
+        
+        player.play()
+        isPlaying = true
+        startTimeUpdates()
+        updateNowPlayingInfo()
+        
+        print("▶️ Resumed playback")
     }
     
     func stop() {
         playerNode?.stop()
         audioEngine?.stop()
         stopTimeUpdates()
-        DispatchQueue.main.async {
-            self.isPlaying = false
-            self.currentTrack = nil
-            self.currentTime = 0
-            self.duration = 0
-        }
-        isEngineRunning = false
+        isPlaying = false
+        currentTrack = nil
+        currentTime = 0
+        duration = 0
+        needsReschedule = false
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
     
-    // FIXED: Clamp seek position to valid range
     func seek(to time: Double) {
         guard let file = audioFile,
-              let player = playerNode else { return }
+              let player = playerNode,
+              let engine = audioEngine else { return }
         
-        // FIXED: Clamp time to valid range [0, duration-1]
-        let clampedTime = max(0, min(time, duration - 1))
+        // Clamp to valid range
+        let clampedTime = max(0, min(time, duration - 0.5))
         
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
@@ -544,92 +449,63 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(clampedTime * sampleRate)
         
-        pauseTimeUpdates()
-        
+        stopTimeUpdates()
         player.stop()
         
-        ensureEngineRunning()
+        // Ensure engine is running
+        if !engine.isRunning {
+            do {
+                try engine.start()
+            } catch {
+                print("❌ Failed to start engine for seek: \(error)")
+                return
+            }
+        }
         
-        // FIXED: Make sure we don't try to play beyond file length
         if startFrame < file.length && startFrame >= 0 {
             let remainingFrames = AVAudioFrameCount(file.length - startFrame)
             
             if remainingFrames > 0 {
-                player.scheduleSegment(file, 
-                                     startingFrame: startFrame, 
-                                     frameCount: remainingFrames, 
-                                     at: nil,
-                                     completionHandler: { [weak self] in
-                                         guard let self = self else { return }
-                                         DispatchQueue.main.async {
-                                             if self.currentPlaybackSessionID == sessionID && self.isPlaying {
-                                                 self.next()
-                                             }
-                                         }
-                                     })
+                player.scheduleSegment(file,
+                                      startingFrame: startFrame,
+                                      frameCount: remainingFrames,
+                                      at: nil) { [weak self] in
+                    guard let self = self else { return }
+                    DispatchQueue.main.async {
+                        if self.currentPlaybackSessionID == sessionID && self.isPlaying {
+                            self.next()
+                        }
+                    }
+                }
                 
                 if isPlaying {
                     player.play()
                 }
             } else {
-                // FIXED: If no frames left, just go to next song
                 DispatchQueue.main.async {
                     self.next()
                 }
                 return
             }
-        } else {
-            // FIXED: Seeking beyond file, go to next song
-            DispatchQueue.main.async {
-                self.next()
-            }
-            return
         }
         
-        self.seekOffset = clampedTime
+        seekOffset = clampedTime
+        currentTime = clampedTime
+        savedCurrentTime = clampedTime
+        updateNowPlayingInfo()
         
-        DispatchQueue.main.async {
-            self.currentTime = clampedTime
-            self.updateNowPlayingInfo()
+        if isPlaying {
+            startTimeUpdates()
         }
-        
-        resumeTimeUpdates()
     }
     
-    // FIXED: Clamp skip to valid range
     func skip(seconds: Double) {
-        let newTime = max(0, min(currentTime + seconds, duration - 1))
+        let newTime = max(0, min(currentTime + seconds, duration - 0.5))
         seek(to: newTime)
-    }
-    
-    func setPlaybackRate(_ rate: Float) {
-        timePitchNode?.rate = rate
-        DispatchQueue.main.async {
-            self.isPlaying = (rate != 0)
-        }
-    }
-    
-    func startFastForward() {
-        setPlaybackRate(2.0)
-    }
-    
-    func startRewind() {
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
-            guard let self = self, self.isPlaying else {
-                timer.invalidate()
-                return
-            }
-            self.skip(seconds: -1)
-        }
-    }
-    
-    func resumeNormalSpeed() {
-        setPlaybackRate(Float(playbackSpeed))
     }
     
     private func applyReverb() {
         reverbNode?.wetDryMix = Float(reverbAmount)
-        print("🎚️ Reverb set to: \(reverbAmount)%")
     }
     
     private func applyPlaybackSpeed() {
