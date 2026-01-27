@@ -1,6 +1,73 @@
 import SwiftUI
 import AVFoundation
 
+// MARK: - Select Songs Sheet (MOVED FIRST)
+struct SelectSongsSheet: View {
+    let playlistID: UUID
+    @ObservedObject var playlistManager: PlaylistManager
+    @ObservedObject var downloadManager: DownloadManager
+    let onDismiss: () -> Void
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        NavigationView {
+            List {
+                ForEach(downloadManager.sortedDownloads) { download in
+                    Button {
+                        playlistManager.addToPlaylist(playlistID, downloadID: download.id)
+                    } label: {
+                        HStack(spacing: 12) {
+                            ZStack {
+                                if let thumbPath = download.thumbnailPath,
+                                   let image = UIImage(contentsOfFile: thumbPath) {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 48, height: 48)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                } else {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.gray.opacity(0.3))
+                                        .frame(width: 48, height: 48)
+                                        .overlay(
+                                            Image(systemName: "music.note")
+                                                .foregroundColor(.gray)
+                                        )
+                                }
+                            }
+                            
+                            Text(download.name)
+                                .font(.body)
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            
+                            Spacer()
+                            
+                            if let playlist = playlistManager.playlists.first(where: { $0.id == playlistID }),
+                               playlist.trackIDs.contains(download.id) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle("Add Songs")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                        onDismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Playlist Detail View
 struct PlaylistDetailView: View {
     let playlist: Playlist
     @ObservedObject var playlistManager: PlaylistManager
@@ -10,7 +77,6 @@ struct PlaylistDetailView: View {
     @State private var totalDuration: TimeInterval = 0
     
     var tracks: [Download] {
-        // Get tracks in the order specified by trackIDs
         playlist.trackIDs.compactMap { id in
             downloadManager.getDownload(byID: id)
         }
@@ -18,7 +84,6 @@ struct PlaylistDetailView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Play/Shuffle buttons with total duration
             VStack(spacing: 8) {
                 HStack(spacing: 16) {
                     Button {
@@ -58,14 +123,12 @@ struct PlaylistDetailView: View {
                     }
                 }
                 
-                // Total runtime
                 Text("\(tracks.count) songs • \(formatDuration(totalDuration))")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             .padding()
             
-            // Song list with drag to reorder
             List {
                 ForEach(Array(tracks.enumerated()), id: \.element.id) { index, download in
                     PlaylistSongRow(
@@ -84,11 +147,9 @@ struct PlaylistDetailView: View {
                     var trackIDs = playlist.trackIDs
                     trackIDs.move(fromOffsets: source, toOffset: destination)
                     
-                    // Update playlist with new order
                     if let playlistIndex = playlistManager.playlists.firstIndex(where: { $0.id == playlist.id }) {
                         playlistManager.playlists[playlistIndex].trackIDs = trackIDs
                         playlistManager.objectWillChange.send()
-                        // Force save
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             playlistManager.savePlaylists()
                         }
@@ -174,7 +235,6 @@ struct PlaylistSongRow: View {
     
     var body: some View {
         ZStack(alignment: .leading) {
-            // Background queue action
             if offset > 5 {
                 HStack {
                     Spacer()
@@ -199,11 +259,8 @@ struct PlaylistSongRow: View {
                 )
             }
             
-            // Main content
             HStack(spacing: 12) {
-                // FIXED: Entire row (thumbnail + name) is tappable
                 HStack(spacing: 12) {
-                    // Thumbnail
                     ZStack {
                         if let thumbPath = download.thumbnailPath,
                            let image = UIImage(contentsOfFile: thumbPath) {
@@ -289,7 +346,6 @@ struct PlaylistSongRow: View {
                     }
             )
             
-            // Queue added feedback
             if showQueueAdded {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
