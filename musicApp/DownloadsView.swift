@@ -208,13 +208,14 @@ struct DownloadRow: View {
             }
             .background(Color(UIColor.systemBackground))
             .offset(x: offset)
-            .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.8), value: offset)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 5)
                     .onChanged { gesture in
                         let translation = gesture.translation.width
                         if translation > 0 {
-                            offset = min(translation, 120)
+                            withAnimation(.linear(duration: 0.0)) {
+                                offset = min(translation, 120)
+                            }
                         }
                     }
                     .onEnded { gesture in
@@ -233,15 +234,22 @@ struct DownloadRow: View {
                             generator.impactOccurred()
                             
                             showQueueAdded = true
-                            offset = 120
+                            
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                offset = 120
+                            }
                             
                             // Reset
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                offset = 0
-                                showQueueAdded = false
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                    offset = 0
+                                    showQueueAdded = false
+                                }
                             }
                         } else {
-                            offset = 0
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                offset = 0
+                            }
                         }
                     }
             )
@@ -260,7 +268,7 @@ struct DownloadRow: View {
                 .transition(.opacity)
             }
         }
-        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
         .listRowSeparator(.hidden)
         .clipped()
     }
