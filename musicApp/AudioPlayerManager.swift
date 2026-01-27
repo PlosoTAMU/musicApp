@@ -7,6 +7,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var currentTrack: Track?
     @Published var currentPlaylist: [Track] = []
     @Published var queue: [Track] = []
+    @Published var previousQueue: [Track] = [] // FIXED: Track previous songs
     @Published var isPlaylistMode = false
     @Published var isLoopEnabled = false
     @Published var currentIndex: Int = 0
@@ -35,7 +36,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var isEngineRunning = false
     
-    // FIXED: Callback for when playback ends naturally (no more songs)
     var onPlaybackEnded: (() -> Void)?
     
     override init() {
@@ -215,8 +215,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     @objc private func handleRouteChange(notification: Notification) {
         guard let userInfo = notification.userInfo,
-              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
-              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+            let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+            let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
             return
         }
         
@@ -225,12 +225,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
         switch reason {
         case .oldDeviceUnavailable:
             print("🎧 Audio device disconnected (headphones/bluetooth)")
+            // FIXED: Just pause, don't skip to next
             DispatchQueue.main.async {
                 self.pause()
             }
             
         case .newDeviceAvailable:
             print("🎧 New audio device connected")
+            // FIXED: Don't auto-play, just ensure engine is ready
             ensureEngineRunning()
             
         case .categoryChange:
@@ -241,7 +243,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             break
         }
     }
-    
+        
     // FIXED: All UI updates wrapped in DispatchQueue.main.async
     @objc private func handleEngineConfigurationChange(notification: Notification) {
         print("⚙️ Audio engine configuration changed")
@@ -578,6 +580,36 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     // FIXED: Close now playing view when no more songs
+    func previous() {
+        if isPlaylistMode {
+            guard !currentPlaylist.isEmpty else { return }
+            if currentTime > 3 {
+                seek(to: 0)
+            } else {
+                currentIndex = (currentIndex - 1 + currentPlaylist.count) % currentPlaylist.count
+                play(currentPlaylist[currentIndex])
+            }
+        } else {
+            // FIXED: Go back in previousQueue
+            if currentTime > 3 {
+                seek(to: 0)
+            } else if !previousQueue.isEmpty {
+                // Move current track to front of queue
+                if let current = currentTrack {
+                    queue.insert(current, at: 0)
+                }
+                
+                // Pop last song from previous queue and play it
+                let previousTrack = previousQueue.removeLast()
+                play(previousTrack)
+            } else {
+                // No previous songs, just restart current
+                seek(to: 0)
+            }
+        }
+    }
+    
+    // FIXED: Modified next() to track previous songs
     func next() {
         if isLoopEnabled {
             seek(to: 0)
@@ -595,33 +627,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
             currentIndex = (currentIndex + 1) % currentPlaylist.count
             play(currentPlaylist[currentIndex])
         } else {
+            // FIXED: Add current track to previousQueue before moving to next
+            if let current = currentTrack {
+                previousQueue.append(current)
+            }
+            
             if !queue.isEmpty {
                 let nextTrack = queue.removeFirst()
                 play(nextTrack)
             } else {
-                // FIXED: No more songs, stop and close now playing
                 DispatchQueue.main.async {
                     self.stop()
                     self.onPlaybackEnded?()
                 }
-            }
-        }
-    }
-    
-    func previous() {
-        if isPlaylistMode {
-            guard !currentPlaylist.isEmpty else { return }
-            if currentTime > 3 {
-                seek(to: 0)
-            } else {
-                currentIndex = (currentIndex - 1 + currentPlaylist.count) % currentPlaylist.count
-                play(currentPlaylist[currentIndex])
-            }
-        } else {
-            if currentTime > 3 {
-                seek(to: 0)
-            } else {
-                seek(to: 0)
             }
         }
     }
@@ -636,6 +654,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         return []
     }
     
+    // FIXED: Modified addToQueue to not affect previousQueue
     func addToQueue(_ track: Track) {
         DispatchQueue.main.async {
             self.queue.append(track)
@@ -675,10 +694,17 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func clearQueue() {
         DispatchQueue.main.async {
             self.queue.removeAll()
+            self.previousQueue.removeAll()
         }
     }
     
+    // FIXED: Modified playFromQueue
     func playFromQueue(_ track: Track) {
+        // Add current track to previous
+        if let current = currentTrack {
+            previousQueue.append(current)
+        }
+        
         if let index = queue.firstIndex(where: { $0.id == track.id }) {
             DispatchQueue.main.async {
                 self.queue.remove(at: index)
