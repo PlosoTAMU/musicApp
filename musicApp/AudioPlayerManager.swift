@@ -32,16 +32,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var displayLink: CADisplayLink?
     private var seekOffset: TimeInterval = 0
     
-    // FIXED: Track if we need to reschedule audio on resume
+    // Track state for resume after route change
     private var needsReschedule = false
     private var savedCurrentTime: Double = 0
+    
+    // FIXED: Track if we're handling a route change to prevent false completion triggers
+    private var isHandlingRouteChange = false
     
     var onPlaybackEnded: (() -> Void)?
     
     override init() {
         super.init()
-        setupAudioEngine()
         setupAudioSession()
+        setupAudioEngine()
         setupRemoteControls()
         setupInterruptionHandling()
     }
@@ -68,10 +71,47 @@ class AudioPlayerManager: NSObject, ObservableObject {
         print("✅ Audio engine configured")
     }
     
+    // FIXED: Completely rebuild the audio engine
+    private func rebuildAudioEngine() {
+        print("🔧 Rebuilding audio engine...")
+        
+        // Stop everything
+        playerNode?.stop()
+        audioEngine?.stop()
+        
+        // Detach all nodes
+        if let engine = audioEngine, let player = playerNode, let reverb = reverbNode, let timePitch = timePitchNode {
+            engine.detach(player)
+            engine.detach(reverb)
+            engine.detach(timePitch)
+        }
+        
+        // Create fresh instances
+        audioEngine = AVAudioEngine()
+        playerNode = AVAudioPlayerNode()
+        reverbNode = AVAudioUnitReverb()
+        timePitchNode = AVAudioUnitTimePitch()
+        
+        guard let engine = audioEngine,
+              let player = playerNode,
+              let reverb = reverbNode,
+              let timePitch = timePitchNode else { return }
+        
+        engine.attach(player)
+        engine.attach(reverb)
+        engine.attach(timePitch)
+        
+        reverb.loadFactoryPreset(.largeHall)
+        reverb.wetDryMix = Float(reverbAmount)
+        timePitch.rate = Float(playbackSpeed)
+        
+        print("✅ Audio engine rebuilt")
+    }
+    
     private func setupAudioSession() {
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .default, options: [])
+            try audioSession.setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowBluetoothA2DP])
             try audioSession.setActive(true)
             UIApplication.shared.beginReceivingRemoteControlEvents()
             print("✅ Audio session configured for background playback")
@@ -140,6 +180,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
             name: AVAudioSession.routeChangeNotification,
             object: nil
         )
+        
+        // FIXED: Listen for engine configuration changes
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleEngineConfigurationChange),
+            name: NSNotification.Name.AVAudioEngineConfigurationChange,
+            object: audioEngine
+        )
     }
     
     @objc private func handleInterruption(notification: Notification) {
@@ -152,21 +200,26 @@ class AudioPlayerManager: NSObject, ObservableObject {
         switch type {
         case .began:
             print("🎧 Audio interruption began")
-            // Save current position before pausing
             savedCurrentTime = currentTime
             needsReschedule = true
+            isHandlingRouteChange = true
+            
             DispatchQueue.main.async {
                 self.isPlaying = false
             }
             playerNode?.pause()
             stopTimeUpdates()
             
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.isHandlingRouteChange = false
+            }
+            
         case .ended:
             print("🎧 Audio interruption ended")
             guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
             if options.contains(.shouldResume) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.resume()
                 }
             }
@@ -175,7 +228,34 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    // FIXED: Proper Bluetooth handling
+    // FIXED: Handle engine configuration changes (happens when audio route changes)
+    @objc private func handleEngineConfigurationChange(notification: Notification) {
+        print("⚙️ Audio engine configuration changed")
+        
+        // Mark that we're handling a route change to prevent false completion triggers
+        isHandlingRouteChange = true
+        
+        // Save state
+        let wasPlaying = isPlaying
+        savedCurrentTime = currentTime
+        needsReschedule = true
+        
+        DispatchQueue.main.async {
+            self.isPlaying = false
+            self.stopTimeUpdates()
+        }
+        
+        // Give time for the system to stabilize, then allow normal operation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.isHandlingRouteChange = false
+            
+            // If we were playing before the config change, the user will need to manually resume
+            if wasPlaying {
+                print("ℹ️ Audio was playing before config change. User can resume manually.")
+            }
+        }
+    }
+    
     @objc private func handleRouteChange(notification: Notification) {
         guard let userInfo = notification.userInfo,
               let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
@@ -187,26 +267,37 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         switch reason {
         case .oldDeviceUnavailable:
-            // Bluetooth/headphones disconnected
-            print("🎧 Audio device disconnected")
+            print("🎧 Audio device disconnected (Bluetooth/headphones)")
             
-            // Save current position BEFORE stopping
+            // FIXED: Mark that we're handling route change BEFORE saving state
+            isHandlingRouteChange = true
+            
+            // Save current position
             savedCurrentTime = currentTime
             needsReschedule = true
             
-            // Just pause, don't stop the engine yet
+            // Pause playback
+            playerNode?.pause()
+            
             DispatchQueue.main.async {
                 self.isPlaying = false
                 self.stopTimeUpdates()
                 self.updateNowPlayingInfo()
             }
-            playerNode?.pause()
+            
+            // Allow normal operation after a delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.isHandlingRouteChange = false
+            }
             
         case .newDeviceAvailable:
-            // Bluetooth/headphones connected
             print("🎧 New audio device connected")
-            // Don't do anything - user will manually resume if they want
-            // The engine will handle the new device automatically
+            // FIXED: Mark as handling route change to prevent completion handler issues
+            isHandlingRouteChange = true
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.isHandlingRouteChange = false
+            }
             
         case .categoryChange:
             print("🎧 Audio category changed")
