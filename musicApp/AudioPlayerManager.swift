@@ -437,13 +437,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func resume() {
-        do {
-            try AVAudioSession.sharedInstance().setActive(true, options: [])
-        } catch {
-            print("❌ Failed to reactivate audio session: \(error)")
-        }
-        
-        // FIXED: Ensure engine is running AND reconnect audio graph
         guard let engine = audioEngine,
             let player = playerNode,
             let file = audioFile,
@@ -453,26 +446,69 @@ class AudioPlayerManager: NSObject, ObservableObject {
             return
         }
         
-        // FIXED: Reconnect audio graph if engine stopped
+        do {
+            try AVAudioSession.sharedInstance().setActive(true, options: [])
+        } catch {
+            print("❌ Failed to reactivate audio session: \(error)")
+        }
+        
+        // FIXED: Check if engine stopped (Bluetooth disconnect case)
         if !engine.isRunning {
+            print("⚠️ Engine stopped, reconnecting audio graph...")
+            
             do {
                 let format = file.processingFormat
                 
-                // Reconnect nodes
+                // Disconnect all nodes first
+                engine.disconnectNodeInput(player)
+                engine.disconnectNodeInput(timePitch)
+                engine.disconnectNodeInput(reverb)
+                
+                // Reconnect the audio graph
                 engine.connect(player, to: timePitch, format: format)
                 engine.connect(timePitch, to: reverb, format: format)
                 engine.connect(reverb, to: engine.mainMixerNode, format: format)
                 
+                // Start the engine
                 try engine.start()
                 isEngineRunning = true
-                print("✅ Engine reconnected and started")
+                
+                // CRITICAL FIX: Reschedule the audio file from current position
+                let sampleRate = file.fileFormat.sampleRate
+                let currentFrame = AVAudioFramePosition(currentTime * sampleRate)
+                
+                if currentFrame < file.length {
+                    let remainingFrames = AVAudioFrameCount(file.length - currentFrame)
+                    
+                    // Reschedule from where we left off
+                    let sessionID = currentPlaybackSessionID
+                    player.scheduleSegment(file,
+                                        startingFrame: currentFrame,
+                                        frameCount: remainingFrames,
+                                        at: nil,
+                                        completionHandler: { [weak self] in
+                                            guard let self = self else { return }
+                                            DispatchQueue.main.async {
+                                                if self.currentPlaybackSessionID == sessionID && self.isPlaying {
+                                                    self.next()
+                                                }
+                                            }
+                                        })
+                    
+                    // Update seek offset
+                    seekOffset = currentTime
+                }
+                
+                print("✅ Engine reconnected and audio rescheduled from \(currentTime)s")
             } catch {
-                print("❌ Failed to restart engine: \(error)")
+                print("❌ Failed to reconnect audio graph: \(error)")
                 return
             }
         }
         
-        playerNode?.play()
+        // Now start playback
+        player.play()
+        
         DispatchQueue.main.async {
             self.isPlaying = true
             self.startTimeUpdates()
