@@ -245,6 +245,9 @@ struct NowPlayingView: View {
                                 systemImage: audioPlayer.isLoopEnabled ? "repeat.1" : "repeat"
                             )
                         }
+                        
+                        Divider()
+                        
                         Button(action: { showPlaylistPicker = true }) {
                             Label("Add to Playlist", systemImage: "plus")
                         }

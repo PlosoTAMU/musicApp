@@ -73,8 +73,7 @@ struct QueueView: View {
                                 track: audioPlayer.currentTrack!,
                                 downloadManager: downloadManager,
                                 isPlaying: true,
-                                audioPlayer: audioPlayer,
-                                showDragHandle: false
+                                audioPlayer: audioPlayer
                             )
                             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                             .listRowBackground(Color.clear)
@@ -89,8 +88,7 @@ struct QueueView: View {
                                             track: track,
                                             downloadManager: downloadManager,
                                             isPlaying: false,
-                                            audioPlayer: audioPlayer,
-                                            showDragHandle: false
+                                            audioPlayer: audioPlayer
                                         )
                                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                                         .listRowBackground(Color.clear)
@@ -105,8 +103,7 @@ struct QueueView: View {
                                             track: track,
                                             downloadManager: downloadManager,
                                             isPlaying: false,
-                                            audioPlayer: audioPlayer,
-                                            showDragHandle: false
+                                            audioPlayer: audioPlayer
                                         )
                                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                                         .listRowBackground(Color.clear)
@@ -118,6 +115,7 @@ struct QueueView: View {
                                         audioPlayer.removeFromQueue(at: offsets)
                                     }
                                 }
+                                .listRowSeparator(.hidden)
                                 .environment(\.editMode, .constant(.active))
                             } else {
                                 // Show helpful message when queue is empty but song is playing
@@ -166,7 +164,6 @@ struct QueueTrackRow: View {
     @ObservedObject var downloadManager: DownloadManager
     let isPlaying: Bool
     @ObservedObject var audioPlayer: AudioPlayerManager
-    let showDragHandle: Bool
     
     var body: some View {
         HStack(spacing: 12) {
@@ -214,13 +211,6 @@ struct QueueTrackRow: View {
             }
             
             Spacer()
-            
-            // Show drag handle only for queue items (not for now playing or playlist)
-            if showDragHandle {
-                Image(systemName: "line.3.horizontal")
-                    .foregroundColor(.secondary)
-                    .font(.caption)
-            }
         }
         .contentShape(Rectangle())
         .onTapGesture {
