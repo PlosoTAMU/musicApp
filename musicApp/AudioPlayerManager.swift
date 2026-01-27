@@ -225,14 +225,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
         switch reason {
         case .oldDeviceUnavailable:
             print("🎧 Audio device disconnected (headphones/bluetooth)")
-            // FIXED: Just pause, don't skip to next
             DispatchQueue.main.async {
                 self.pause()
             }
             
         case .newDeviceAvailable:
             print("🎧 New audio device connected")
-            // FIXED: Don't auto-play, just ensure engine is ready
+            // FIXED: Don't auto-resume, just ensure engine is ready
             ensureEngineRunning()
             
         case .categoryChange:
@@ -610,26 +609,21 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func previous() {
         if isPlaylistMode {
             guard !currentPlaylist.isEmpty else { return }
-            // FIXED: Only restart if less than 3 seconds, otherwise go to previous track
-            if currentTime < 3.0 {
-                currentIndex = (currentIndex - 1 + currentPlaylist.count) % currentPlaylist.count
-                play(currentPlaylist[currentIndex])
-            } else {
-                seek(to: 0)
-            }
+
+            currentIndex = (currentIndex - 1 + currentPlaylist.count) % currentPlaylist.count
+            play(currentPlaylist[currentIndex])
+
         } else {
-            // FIXED: Check previous queue first before restarting
-            if currentTime < 3.0 && !previousQueue.isEmpty {
-                // Move current track to front of queue
+            // If we have a previous queue, always go back
+            if !previousQueue.isEmpty {
                 if let current = currentTrack {
                     queue.insert(current, at: 0)
                 }
-                
-                // Pop last song from previous queue and play it
+
                 let previousTrack = previousQueue.removeLast()
                 play(previousTrack)
             } else {
-                // More than 3 seconds in, just restart current song
+                // No previous track available — restart current
                 seek(to: 0)
             }
         }
