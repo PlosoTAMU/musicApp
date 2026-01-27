@@ -76,6 +76,8 @@ struct QueueView: View {
                                 audioPlayer: audioPlayer,
                                 showDragHandle: false
                             )
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                            .listRowBackground(Color.clear)
                         }
                         
                         // Show queue or playlist
@@ -90,6 +92,8 @@ struct QueueView: View {
                                             audioPlayer: audioPlayer,
                                             showDragHandle: false
                                         )
+                                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                                        .listRowBackground(Color.clear)
                                     }
                                 }
                             }
@@ -104,6 +108,8 @@ struct QueueView: View {
                                             audioPlayer: audioPlayer,
                                             showDragHandle: true
                                         )
+                                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                                        .listRowBackground(Color.clear)
                                     }
                                     .onMove { source, destination in
                                         audioPlayer.moveInQueue(from: source, to: destination)
@@ -128,10 +134,13 @@ struct QueueView: View {
                                     }
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 20)
+                                    .listRowBackground(Color.clear)
                                 }
                             }
                         }
                     }
+                    .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
                     .environment(\.editMode, audioPlayer.isPlaylistMode ? .constant(.inactive) : .constant(.active))
                 }
             }

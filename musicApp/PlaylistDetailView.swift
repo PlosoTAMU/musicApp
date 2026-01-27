@@ -153,6 +153,144 @@ struct PlaylistDetailView: View {
     }
 }
 
+// MARK: - Playlist Song Row with Swipe to Queue
+struct PlaylistSongRow: View {
+    let download: Download
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    let playlist: Playlist
+    let onTap: () -> Void
+    @State private var offset: CGFloat = 0
+    @State private var showQueueAdded = false
+    
+    var body: some View {
+        ZStack(alignment: .leading) {
+            // Background queue button (only visible when swiping)
+            if offset > 5 {
+                HStack {
+                    Spacer()
+                    VStack(spacing: 4) {
+                        Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                            .font(.system(size: 22))
+                            .foregroundColor(.white)
+                        Text("Add to Queue")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                    .frame(width: 100)
+                    .padding(.trailing, 8)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    LinearGradient(
+                        colors: [Color.green.opacity(0.8), Color.green],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+            }
+            
+            // Main content
+            HStack(spacing: 12) {
+                // Thumbnail
+                ZStack {
+                    if let thumbPath = download.thumbnailPath,
+                       let image = UIImage(contentsOfFile: thumbPath) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 48, height: 48)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 48, height: 48)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .foregroundColor(.gray)
+                            )
+                    }
+                }
+                
+                Text(download.name)
+                    .font(.body)
+                    .lineLimit(1)
+                
+                Spacer()
+                
+                if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .foregroundColor(.blue)
+                }
+            }
+            .background(Color(UIColor.systemBackground))
+            .contentShape(Rectangle())
+            .offset(x: offset)
+            .onTapGesture {
+                onTap()
+            }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 5)
+                    .onChanged { gesture in
+                        let translation = gesture.translation.width
+                        if translation > 0 {
+                            offset = min(translation, 120)
+                        }
+                    }
+                    .onEnded { gesture in
+                        let translation = gesture.translation.width
+                        let velocity = gesture.predictedEndTranslation.width - translation
+                        
+                        if translation > 60 || velocity > 50 {
+                            // Add to queue
+                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+                            audioPlayer.addToQueue(track)
+                            
+                            // Haptic feedback
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.impactOccurred()
+                            
+                            showQueueAdded = true
+                            
+                            // Quick snap animation
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                                offset = 120
+                            }
+                            
+                            // Reset
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                    offset = 0
+                                    showQueueAdded = false
+                                }
+                            }
+                        } else {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                                offset = 0
+                            }
+                        }
+                    }
+            )
+            
+            // Queue added feedback
+            if showQueueAdded {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text("Queued")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.green)
+                }
+                .padding(.leading, 12)
+                .transition(.opacity)
+            }
+        }
+        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+        .listRowBackground(Color.clear)
+        .clipped()
+    }
+}
+
 // MARK: - Select Songs Sheet for adding to playlist
 struct SelectSongsSheet: View {
     let playlistID: UUID
@@ -216,134 +354,5 @@ struct SelectSongsSheet: View {
                 }
             }
         }
-    }
-}
-
-// MARK: - Playlist Song Row with Swipe to Queue
-struct PlaylistSongRow: View {
-    let download: Download
-    @ObservedObject var audioPlayer: AudioPlayerManager
-    let playlist: Playlist
-    let onTap: () -> Void
-    @State private var offset: CGFloat = 0
-    @State private var showQueueAdded = false
-    
-    var body: some View {
-        ZStack(alignment: .leading) {
-            // Background queue button (only visible when swiping)
-            if offset > 0 {
-                HStack {
-                    Spacer()
-                    VStack {
-                        Image(systemName: "text.line.first.and.arrowtriangle.forward")
-                            .font(.title3)
-                            .foregroundColor(.white)
-                        Text("Queue")
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                    }
-                    .frame(width: 80)
-                    .padding(.trailing, 16)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.green)
-            }
-            
-            // Main content
-            HStack(spacing: 12) {
-                // Thumbnail
-                ZStack {
-                    if let thumbPath = download.thumbnailPath,
-                       let image = UIImage(contentsOfFile: thumbPath) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 48, height: 48)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .foregroundColor(.gray)
-                            )
-                    }
-                }
-                
-                Text(download.name)
-                    .font(.body)
-                    .lineLimit(1)
-                
-                Spacer()
-                
-                if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
-                    Image(systemName: "speaker.wave.2.fill")
-                        .foregroundColor(.blue)
-                }
-            }
-            .background(Color(UIColor.systemBackground))
-            .contentShape(Rectangle())
-            .offset(x: offset)
-            .onTapGesture {
-                onTap()
-            }
-            .gesture(
-                DragGesture()
-                    .onChanged { gesture in
-                        // Smoother tracking with resistance
-                        let translation = gesture.translation.width
-                        if translation > 0 {
-                            offset = min(translation * 0.8, 100)
-                        }
-                    }
-                    .onEnded { gesture in
-                        let velocity = gesture.predictedEndLocation.x - gesture.location.x
-                        
-                        if offset > 50 || velocity > 100 {
-                            // Add to queue
-                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
-                            audioPlayer.addToQueue(track)
-                            
-                            // Haptic feedback
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.impactOccurred()
-                            
-                            showQueueAdded = true
-                            
-                            // Animate feedback
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                offset = 100
-                            }
-                            
-                            // Reset after delay
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                    offset = 0
-                                    showQueueAdded = false
-                                }
-                            }
-                        } else {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                offset = 0
-                            }
-                        }
-                    }
-            )
-            
-            // Queue added feedback
-            if showQueueAdded {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text("Added to Queue")
-                        .font(.caption)
-                        .foregroundColor(.green)
-                }
-                .padding(.leading, 8)
-                .transition(.opacity)
-            }
-        }
-        .clipped() // Prevent green background from showing outside bounds
     }
 }

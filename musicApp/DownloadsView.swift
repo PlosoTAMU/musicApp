@@ -94,22 +94,28 @@ struct DownloadRow: View {
     var body: some View {
         ZStack(alignment: .leading) {
             // Background queue button (only visible when swiping)
-            if offset > 0 {
+            if offset > 5 {
                 HStack {
                     Spacer()
-                    VStack {
+                    VStack(spacing: 4) {
                         Image(systemName: "text.line.first.and.arrowtriangle.forward")
-                            .font(.title3)
+                            .font(.system(size: 22))
                             .foregroundColor(.white)
-                        Text("Queue")
-                            .font(.caption2)
+                        Text("Add to Queue")
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(.white)
                     }
-                    .frame(width: 80)
-                    .padding(.trailing, 16)
+                    .frame(width: 100)
+                    .padding(.trailing, 8)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.green)
+                .background(
+                    LinearGradient(
+                        colors: [Color.green.opacity(0.8), Color.green],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
             }
             
             // Main content
@@ -122,7 +128,6 @@ struct DownloadRow: View {
                             audioPlayer.resume()
                         }
                     } else {
-                        // FIXED: Use source name as folderName
                         let folderName = download.source == .youtube ? "YouTube" : 
                                         download.source == .spotify ? "Spotify" : "Files"
                         let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
@@ -165,7 +170,6 @@ struct DownloadRow: View {
                                 .foregroundColor(download.pendingDeletion ? .gray : .primary)
                                 .lineLimit(1)
                             
-                            // FIXED: Show source badge (YouTube/Spotify/Folder)
                             HStack(spacing: 4) {
                                 Image(systemName: download.source == .youtube ? "play.rectangle.fill" : 
                                       download.source == .spotify ? "music.note" : "folder.fill")
@@ -202,23 +206,22 @@ struct DownloadRow: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.vertical, 4)
             .background(Color(UIColor.systemBackground))
             .offset(x: offset)
-            .gesture(
-                DragGesture()
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 5)
                     .onChanged { gesture in
-                        // Smoother tracking with resistance
                         let translation = gesture.translation.width
                         if translation > 0 {
-                            // Apply slight resistance for smoother feel
-                            offset = min(translation * 0.8, 100)
+                            // Direct 1:1 tracking for immediate responsiveness
+                            offset = min(translation, 120)
                         }
                     }
                     .onEnded { gesture in
-                        let velocity = gesture.predictedEndLocation.x - gesture.location.x
+                        let translation = gesture.translation.width
+                        let velocity = gesture.predictedEndTranslation.width - translation
                         
-                        if offset > 50 || velocity > 100 {
+                        if translation > 60 || velocity > 50 {
                             // Add to queue
                             let folderName = download.source == .youtube ? "YouTube" : 
                                             download.source == .spotify ? "Spotify" : "Files"
@@ -231,20 +234,20 @@ struct DownloadRow: View {
                             
                             showQueueAdded = true
                             
-                            // Animate feedback
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                offset = 100
+                            // Quick snap animation
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                                offset = 120
                             }
                             
-                            // Reset after delay
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            // Reset
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                                     offset = 0
                                     showQueueAdded = false
                                 }
                             }
                         } else {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                                 offset = 0
                             }
                         }
@@ -256,14 +259,17 @@ struct DownloadRow: View {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
-                    Text("Added to Queue")
-                        .font(.caption)
+                    Text("Queued")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
                         .foregroundColor(.green)
                 }
-                .padding(.leading, 8)
+                .padding(.leading, 12)
                 .transition(.opacity)
             }
         }
-        .clipped() // Prevent green background from showing outside bounds
+        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+        .listRowBackground(Color.clear)
+        .clipped()
     }
 }
