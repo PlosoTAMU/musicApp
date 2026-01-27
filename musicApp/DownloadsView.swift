@@ -125,7 +125,35 @@ struct DownloadRow: View {
             
             // Main content
             HStack(spacing: 12) {
-                Button {
+                ZStack {
+                    if let thumbPath = download.thumbnailPath,
+                       let image = UIImage(contentsOfFile: thumbPath) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 48, height: 48)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .grayscale(download.pendingDeletion ? 1.0 : 0.0)
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 48, height: 48)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            )
+                    }
+                    
+                    if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.black.opacity(0.4))
+                        Image(systemName: "pause.fill")
+                            .foregroundColor(.white)
+                            .font(.system(size: 14))
+                    }
+                }
+                .onTapGesture {
                     if audioPlayer.currentTrack?.id == download.id {
                         if audioPlayer.isPlaying {
                             audioPlayer.pause()
@@ -138,56 +166,23 @@ struct DownloadRow: View {
                         let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
                         audioPlayer.play(track)
                     }
-                } label: {
-                    HStack(spacing: 12) {
-                        ZStack {
-                            if let thumbPath = download.thumbnailPath,
-                               let image = UIImage(contentsOfFile: thumbPath) {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 48, height: 48)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    .grayscale(download.pendingDeletion ? 1.0 : 0.0)
-                            } else {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.gray.opacity(0.3))
-                                    .frame(width: 48, height: 48)
-                                    .overlay(
-                                        Image(systemName: "music.note")
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
-                                    )
-                            }
-                            
-                            if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.black.opacity(0.4))
-                                Image(systemName: "pause.fill")
-                                    .foregroundColor(.white)
-                                    .font(.system(size: 14))
-                            }
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(download.name)
-                                .font(.body)
-                                .foregroundColor(download.pendingDeletion ? .gray : .primary)
-                                .lineLimit(1)
-                            
-                            HStack(spacing: 4) {
-                                Image(systemName: download.source == .youtube ? "play.rectangle.fill" : 
-                                      download.source == .spotify ? "music.note" : "folder.fill")
-                                    .font(.system(size: 8))
-                                Text(download.source.rawValue.capitalized)
-                                    .font(.system(size: 10))
-                            }
-                            .foregroundColor(.secondary)
-                        }
-                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(download.pendingDeletion)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(download.name)
+                        .font(.body)
+                        .foregroundColor(download.pendingDeletion ? .gray : .primary)
+                        .lineLimit(1)
+                    
+                    HStack(spacing: 4) {
+                        Image(systemName: download.source == .youtube ? "play.rectangle.fill" : 
+                              download.source == .spotify ? "music.note" : "folder.fill")
+                            .font(.system(size: 8))
+                        Text(download.source.rawValue.capitalized)
+                            .font(.system(size: 10))
+                    }
+                    .foregroundColor(.secondary)
+                }
                 
                 Spacer()
                 
