@@ -224,6 +224,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func loadPlaylist(_ tracks: [Track], shuffle: Bool = false) {
+        // Stop current playback completely to avoid completion handler race conditions
+        if isPlaying {
+            playerNode?.stop()
+            audioEngine?.stop()
+            isPlaying = false
+        }
+        
         currentPlaylist = shuffle ? tracks.shuffled() : tracks
         currentIndex = 0
         if !currentPlaylist.isEmpty {
@@ -345,23 +352,34 @@ class AudioPlayerManager: NSObject, ObservableObject {
         guard let file = audioFile,
               let player = playerNode else { return }
         
+        guard let currentTrack = currentTrack else { return }
+        
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(time * sampleRate)
         
         // Pause updates to prevent UI fighting
         pauseTimeUpdates()
         
-        // Stop the player (this would trigger the completion handler!)
+        // Stop the player
         player.stop()
         
         if startFrame < file.length {
             let remainingFrames = AVAudioFrameCount(file.length - startFrame)
             
+            // Schedule with completion handler that respects current track
             player.scheduleSegment(file, 
                                  startingFrame: startFrame, 
                                  frameCount: remainingFrames, 
                                  at: nil,
-                                 completionHandler: nil) // FIX: Set to nil so it doesn't skip to next song
+                                 completionHandler: { [weak self] in
+                                     guard let self = self else { return }
+                                     // Only advance if still playing the same track
+                                     DispatchQueue.main.async {
+                                         if self.isPlaying && self.currentTrack?.id == currentTrack.id {
+                                             self.next()
+                                         }
+                                     }
+                                 })
             
             if isPlaying {
                 player.play()
