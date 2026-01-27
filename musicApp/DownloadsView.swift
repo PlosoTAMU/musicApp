@@ -95,6 +95,7 @@ struct DownloadRow: View {
     let onDelete: () -> Void
     @State private var offset: CGFloat = 0
     @State private var showQueueAdded = false
+    @State private var isSwiping = false
     
     var body: some View {
         ZStack(alignment: .leading) {
@@ -125,69 +126,66 @@ struct DownloadRow: View {
             
             // Main content
             HStack(spacing: 12) {
-                Button {
-                    if audioPlayer.currentTrack?.id == download.id {
-                        if audioPlayer.isPlaying {
-                            audioPlayer.pause()
-                        } else {
-                            audioPlayer.resume()
-                        }
+                ZStack {
+                    if let thumbPath = download.thumbnailPath,
+                       let image = UIImage(contentsOfFile: thumbPath) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 48, height: 48)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .grayscale(download.pendingDeletion ? 1.0 : 0.0)
                     } else {
-                        let folderName = download.source == .youtube ? "YouTube" : 
-                                        download.source == .spotify ? "Spotify" : "Files"
-                        let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
-                        audioPlayer.play(track)
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 48, height: 48)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            )
                     }
-                } label: {
-                    HStack(spacing: 12) {
-                        ZStack {
-                            if let thumbPath = download.thumbnailPath,
-                               let image = UIImage(contentsOfFile: thumbPath) {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 48, height: 48)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    .grayscale(download.pendingDeletion ? 1.0 : 0.0)
+                    
+                    if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.black.opacity(0.4))
+                        Image(systemName: "pause.fill")
+                            .foregroundColor(.white)
+                            .font(.system(size: 14))
+                    }
+                }
+                .onTapGesture {
+                    if !isSwiping {
+                        if audioPlayer.currentTrack?.id == download.id {
+                            if audioPlayer.isPlaying {
+                                audioPlayer.pause()
                             } else {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.gray.opacity(0.3))
-                                    .frame(width: 48, height: 48)
-                                    .overlay(
-                                        Image(systemName: "music.note")
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
-                                    )
+                                audioPlayer.resume()
                             }
-                            
-                            if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.black.opacity(0.4))
-                                Image(systemName: "pause.fill")
-                                    .foregroundColor(.white)
-                                    .font(.system(size: 14))
-                            }
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(download.name)
-                                .font(.body)
-                                .foregroundColor(download.pendingDeletion ? .gray : .primary)
-                                .lineLimit(1)
-                            
-                            HStack(spacing: 4) {
-                                Image(systemName: download.source == .youtube ? "play.rectangle.fill" : 
-                                      download.source == .spotify ? "music.note" : "folder.fill")
-                                    .font(.system(size: 8))
-                                Text(download.source.rawValue.capitalized)
-                                    .font(.system(size: 10))
-                            }
-                            .foregroundColor(.secondary)
+                        } else {
+                            let folderName = download.source == .youtube ? "YouTube" : 
+                                            download.source == .spotify ? "Spotify" : "Files"
+                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
+                            audioPlayer.play(track)
                         }
                     }
                 }
-                .buttonStyle(.plain)
-                .disabled(download.pendingDeletion)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(download.name)
+                        .font(.body)
+                        .foregroundColor(download.pendingDeletion ? .gray : .primary)
+                        .lineLimit(1)
+                    
+                    HStack(spacing: 4) {
+                        Image(systemName: download.source == .youtube ? "play.rectangle.fill" : 
+                              download.source == .spotify ? "music.note" : "folder.fill")
+                            .font(.system(size: 8))
+                        Text(download.source.rawValue.capitalized)
+                            .font(.system(size: 10))
+                    }
+                    .foregroundColor(.secondary)
+                }
                 
                 Spacer()
                 
@@ -218,6 +216,7 @@ struct DownloadRow: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 5)
                     .onChanged { gesture in
+                        isSwiping = true
                         let translation = gesture.translation.width
                         if translation > 0 {
                             withAnimation(.linear(duration: 0.0)) {
@@ -257,6 +256,11 @@ struct DownloadRow: View {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                 offset = 0
                             }
+                        }
+                        
+                        // Reset swipe state after a short delay
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            isSwiping = false
                         }
                     }
             )
