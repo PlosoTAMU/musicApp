@@ -601,14 +601,6 @@ struct FastForwardButton: View {
             )
     }
 }
-                        } else {
-                            // Was a tap: Perform Skip
-                            audioPlayer.skip(seconds: 10)
-                        }
-                    }
-            )
-    }
-}
 
 struct VolumeSlider: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
