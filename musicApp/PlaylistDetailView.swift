@@ -1,7 +1,6 @@
 import SwiftUI
 import AVFoundation
 
-// MARK: - Select Songs Sheet (MOVED FIRST)
 struct SelectSongsSheet: View {
     let playlistID: UUID
     @ObservedObject var playlistManager: PlaylistManager
@@ -67,7 +66,6 @@ struct SelectSongsSheet: View {
     }
 }
 
-// MARK: - Playlist Detail View
 struct PlaylistDetailView: View {
     let playlist: Playlist
     @ObservedObject var playlistManager: PlaylistManager
@@ -219,7 +217,6 @@ struct PlaylistDetailView: View {
     }
 }
 
-// MARK: - Playlist Song Row with Swipe to Queue
 struct PlaylistSongRow: View {
     let download: Download
     @ObservedObject var audioPlayer: AudioPlayerManager
@@ -232,6 +229,11 @@ struct PlaylistSongRow: View {
     
     private let queueTriggerThreshold: CGFloat = 60
     private let maxSwipeOffset: CGFloat = 120
+    
+    // FIXED: Check if currently playing
+    private var isCurrentlyPlaying: Bool {
+        audioPlayer.currentTrack?.id == download.id
+    }
     
     var body: some View {
         ZStack(alignment: .leading) {
@@ -280,13 +282,16 @@ struct PlaylistSongRow: View {
                         }
                     }
                     
+                    // FIXED: Bold + Italic when playing
                     Text(download.name)
                         .font(.body)
+                        .fontWeight(isCurrentlyPlaying ? .bold : .regular)
+                        .italic(isCurrentlyPlaying)
                         .lineLimit(1)
                     
                     Spacer()
                     
-                    if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
+                    if isCurrentlyPlaying && audioPlayer.isPlaying {
                         Image(systemName: "speaker.wave.2.fill")
                             .foregroundColor(.blue)
                     }

@@ -96,13 +96,16 @@ struct DownloadRow: View {
     @State private var showQueueAdded = false
     @State private var isSwiping = false
     
-    private let swipeThreshold: CGFloat = 15
     private let queueTriggerThreshold: CGFloat = 60
     private let maxSwipeOffset: CGFloat = 120
     
+    // FIXED: Check if this is the currently playing track
+    private var isCurrentlyPlaying: Bool {
+        audioPlayer.currentTrack?.id == download.id
+    }
+    
     var body: some View {
         ZStack(alignment: .leading) {
-            // Background queue action (visible when swiping right)
             if offset > 5 {
                 HStack {
                     Spacer()
@@ -127,11 +130,8 @@ struct DownloadRow: View {
                 )
             }
             
-            // Main content row
             HStack(spacing: 12) {
-                // FIXED: Tappable area includes thumbnail AND song info
                 HStack(spacing: 12) {
-                    // Thumbnail
                     ZStack {
                         if let thumbPath = download.thumbnailPath,
                            let image = UIImage(contentsOfFile: thumbPath) {
@@ -152,7 +152,7 @@ struct DownloadRow: View {
                                 )
                         }
                         
-                        if audioPlayer.currentTrack?.id == download.id && audioPlayer.isPlaying {
+                        if isCurrentlyPlaying && audioPlayer.isPlaying {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(Color.black.opacity(0.4))
                                 .frame(width: 48, height: 48)
@@ -163,10 +163,12 @@ struct DownloadRow: View {
                     }
                     .frame(width: 48, height: 48)
                     
-                    // Song info
                     VStack(alignment: .leading, spacing: 2) {
+                        // FIXED: Bold + Italic when playing
                         Text(download.name)
                             .font(.body)
+                            .fontWeight(isCurrentlyPlaying ? .bold : .regular)
+                            .italic(isCurrentlyPlaying)
                             .foregroundColor(download.pendingDeletion ? .gray : .primary)
                             .lineLimit(1)
                         
@@ -181,14 +183,12 @@ struct DownloadRow: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    // FIXED: Only play if not swiping
                     guard !isSwiping else { return }
                     handleTap()
                 }
                 
                 Spacer()
                 
-                // Action buttons (NOT part of tappable play area)
                 if !download.pendingDeletion {
                     Button(action: onAddToPlaylist) {
                         Image(systemName: "plus.circle")
@@ -230,14 +230,12 @@ struct DownloadRow: View {
                             resetSwipe()
                         }
                         
-                        // Reset swiping flag after delay to prevent accidental tap
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                             isSwiping = false
                         }
                     }
             )
             
-            // Queue added feedback overlay
             if showQueueAdded {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")

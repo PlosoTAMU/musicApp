@@ -7,7 +7,6 @@ struct QueueView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                // Mode indicator
                 if audioPlayer.currentTrack != nil {
                     HStack(spacing: 8) {
                         Image(systemName: audioPlayer.isPlaylistMode ? "music.note.list" : "line.3.horizontal")
@@ -19,7 +18,6 @@ struct QueueView: View {
                         
                         Spacer()
                         
-                        // Song count
                         if audioPlayer.isPlaylistMode {
                             Text("\(audioPlayer.upNextTracks.count + 1) songs")
                                 .font(.caption)
@@ -36,7 +34,6 @@ struct QueueView: View {
                 }
                 
                 if audioPlayer.currentTrack == nil {
-                    // Empty state when nothing is playing
                     VStack(spacing: 16) {
                         Spacer()
                         Image(systemName: "music.note.list")
@@ -54,7 +51,6 @@ struct QueueView: View {
                     }
                 } else {
                     List {
-                        // Always show current track when playing (NOT in edit mode)
                         Section(header: HStack {
                             Text("Now Playing")
                             Spacer()
@@ -79,7 +75,6 @@ struct QueueView: View {
                             .listRowBackground(Color.clear)
                         }
                         
-                        // Show queue or playlist
                         if audioPlayer.isPlaylistMode {
                             if !audioPlayer.upNextTracks.isEmpty {
                                 Section(header: Text("Up Next from Playlist")) {
@@ -117,7 +112,6 @@ struct QueueView: View {
                                 }
                                 .listRowSeparator(.hidden)
                             } else {
-                                // Show helpful message when queue is empty but song is playing
                                 Section {
                                     VStack(spacing: 8) {
                                         Image(systemName: "arrow.right.circle")
@@ -165,9 +159,13 @@ struct QueueTrackRow: View {
     let isPlaying: Bool
     @ObservedObject var audioPlayer: AudioPlayerManager
     
+    // FIXED: Check if currently playing
+    private var isCurrentlyPlaying: Bool {
+        audioPlayer.currentTrack?.id == track.id
+    }
+    
     var body: some View {
         HStack(spacing: 12) {
-            // Thumbnail
             ZStack {
                 if let download = downloadManager.getDownload(byID: track.id),
                    let thumbPath = download.thumbnailPath,
@@ -198,9 +196,11 @@ struct QueueTrackRow: View {
             }
             
             VStack(alignment: .leading, spacing: 2) {
+                // FIXED: Bold + Italic when playing
                 Text(track.name)
                     .font(.body)
-                    .fontWeight(isPlaying ? .semibold : .regular)
+                    .fontWeight(isCurrentlyPlaying ? .bold : .regular)
+                    .italic(isCurrentlyPlaying)
                     .foregroundColor(isPlaying ? .blue : .primary)
                     .lineLimit(1)
                 
@@ -217,7 +217,6 @@ struct QueueTrackRow: View {
             if !isPlaying {
                 audioPlayer.playFromQueue(track)
             } else {
-                // Tapping current song toggles play/pause
                 if audioPlayer.isPlaying {
                     audioPlayer.pause()
                 } else {
