@@ -503,17 +503,23 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func addToQueue(_ track: Track) {
-        // Switch to queue mode if not already
-        if isPlaylistMode && currentTrack != nil {
-            // Convert current playlist position to queue
-            isPlaylistMode = false
-            // Don't add remaining playlist to queue, just switch modes
-        }
-        
         queue.append(track)
         
         // If nothing is playing, start the queue
-        if currentTrack == nil && !queue.isEmpty {
+        if currentTrack == nil {
+            isPlaylistMode = false
+            let firstTrack = queue.removeFirst()
+            play(firstTrack)
+        }
+    }
+    
+    func playNext(_ track: Track) {
+        // Insert at beginning of queue
+        queue.insert(track, at: 0)
+        
+        // If nothing is playing, start immediately
+        if currentTrack == nil {
+            isPlaylistMode = false
             let firstTrack = queue.removeFirst()
             play(firstTrack)
         }

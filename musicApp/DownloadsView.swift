@@ -93,22 +93,24 @@ struct DownloadRow: View {
     
     var body: some View {
         ZStack(alignment: .leading) {
-            // Background queue button
-            HStack {
-                Spacer()
-                VStack {
-                    Image(systemName: "text.line.first.and.arrowtriangle.forward")
-                        .font(.title3)
-                        .foregroundColor(.white)
-                    Text("Queue")
-                        .font(.caption2)
-                        .foregroundColor(.white)
+            // Background queue button (only visible when swiping)
+            if offset > 0 {
+                HStack {
+                    Spacer()
+                    VStack {
+                        Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                            .font(.title3)
+                            .foregroundColor(.white)
+                        Text("Queue")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                    }
+                    .frame(width: 80)
+                    .padding(.trailing, 16)
                 }
-                .frame(width: 80)
-                .padding(.trailing, 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.green)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.green)
             
             // Main content
             HStack(spacing: 12) {
@@ -206,33 +208,43 @@ struct DownloadRow: View {
             .gesture(
                 DragGesture()
                     .onChanged { gesture in
-                        if gesture.translation.width > 0 && gesture.translation.width < 100 {
-                            offset = gesture.translation.width
+                        // Smoother tracking with resistance
+                        let translation = gesture.translation.width
+                        if translation > 0 {
+                            // Apply slight resistance for smoother feel
+                            offset = min(translation * 0.8, 100)
                         }
                     }
                     .onEnded { gesture in
-                        if gesture.translation.width > 60 {
+                        let velocity = gesture.predictedEndLocation.x - gesture.location.x
+                        
+                        if offset > 50 || velocity > 100 {
                             // Add to queue
                             let folderName = download.source == .youtube ? "YouTube" : 
                                             download.source == .spotify ? "Spotify" : "Files"
                             let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
                             audioPlayer.addToQueue(track)
+                            
+                            // Haptic feedback
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.impactOccurred()
+                            
                             showQueueAdded = true
                             
                             // Animate feedback
-                            withAnimation(.spring(response: 0.3)) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                 offset = 100
                             }
                             
                             // Reset after delay
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                withAnimation(.spring(response: 0.3)) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                                     offset = 0
                                     showQueueAdded = false
                                 }
                             }
                         } else {
-                            withAnimation(.spring(response: 0.3)) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                 offset = 0
                             }
                         }
@@ -252,5 +264,6 @@ struct DownloadRow: View {
                 .transition(.opacity)
             }
         }
+        .clipped() // Prevent green background from showing outside bounds
     }
 }
