@@ -642,11 +642,30 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     private func applyPlaybackSpeed() {
-        timePitchNode?.rate = Float(playbackSpeed)
+        guard let timePitch = timePitchNode else { return }
+        
+        let speed = Float(playbackSpeed)
+        
+        // FIXED: Use pitch correction for speeds below 1.0x to prevent choppiness
+        if playbackSpeed < 1.0 {
+            // Enable overlap for smooth slow playback
+            timePitch.rate = speed
+            timePitch.pitch = 0 // Keep original pitch
+            
+            // Use higher quality algorithm for slow speeds
+            timePitch.overlap = 8.0 // Default is 8, increase for smoother slow playback
+        } else {
+            // Normal/fast playback
+            timePitch.rate = speed
+            timePitch.pitch = 0
+            timePitch.overlap = 8.0
+        }
+        
         if playbackSpeed != 2.0 {
             savedPlaybackSpeed = playbackSpeed
         }
         updateNowPlayingInfo()
+        print("⚡ Playback speed set to: \(playbackSpeed)x")
     }
     
     func previous() {

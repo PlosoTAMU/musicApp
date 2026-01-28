@@ -79,74 +79,101 @@ struct ContentView: View {
 struct MiniPlayerBar: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var showNowPlaying: Bool
+    @State private var backgroundImage: UIImage?
     
     var body: some View {
-        HStack(spacing: 12) {
-            Button {
-                showNowPlaying = true
-            } label: {
-                HStack(spacing: 12) {
-                    ZStack {
-                        if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
-                            Image(uiImage: thumbnailPath)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 48, height: 48)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                        } else {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.gray.opacity(0.3))
-                                .frame(width: 48, height: 48)
-                                .overlay(
-                                    Image(systemName: "music.note")
-                                        .foregroundColor(.gray)
-                                )
+        ZStack {
+            // FIXED: Blurred background like NowPlayingView
+            if let bgImage = backgroundImage {
+                Image(uiImage: bgImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(height: 65)
+                    .blur(radius: 30)
+                    .clipped()
+            } else {
+                LinearGradient(
+                    colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.2)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(height: 65)
+            }
+            
+            // Darkening overlay for readability
+            Color.black.opacity(0.3)
+                .frame(height: 65)
+            
+            HStack(spacing: 12) {
+                Button {
+                    showNowPlaying = true
+                } label: {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
+                                Image(uiImage: thumbnailPath)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 48, height: 48)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            } else {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.gray.opacity(0.3))
+                                    .frame(width: 48, height: 48)
+                                    .overlay(
+                                        Image(systemName: "music.note")
+                                            .foregroundColor(.gray)
+                                    )
+                            }
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .lineLimit(1)
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.3), radius: 2)
+                            
+                            Text(audioPlayer.currentTrack?.folderName ?? "")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.8))
+                                .lineLimit(1)
+                                .shadow(color: .black.opacity(0.3), radius: 2)
                         }
                     }
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .lineLimit(1)
-                            .foregroundColor(.primary)
-                        
-                        Text(audioPlayer.currentTrack?.folderName ?? "")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                
+                Spacer()
+                
+                Button {
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
+                    } else {
+                        audioPlayer.resume()
                     }
+                } label: {
+                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title2)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.3), radius: 2)
                 }
-            }
-            .buttonStyle(.plain)
-            
-            Spacer()
-            
-            Button {
-                if audioPlayer.isPlaying {
-                    audioPlayer.pause()
-                } else {
-                    audioPlayer.resume()
+                .buttonStyle(.plain)
+                
+                Button {
+                    audioPlayer.next()
+                } label: {
+                    Image(systemName: "forward.fill")
+                        .font(.title3)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.3), radius: 2)
                 }
-            } label: {
-                Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title2)
-                    .foregroundColor(.primary)
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            
-            Button {
-                audioPlayer.next()
-            } label: {
-                Image(systemName: "forward.fill")
-                    .font(.title3)
-                    .foregroundColor(.primary)
-            }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
         .overlay(
             Rectangle()
                 .fill(Color.gray.opacity(0.3))
@@ -154,6 +181,51 @@ struct MiniPlayerBar: View {
             alignment: .top
         )
         .padding(.bottom, 49)
+        .onChange(of: audioPlayer.currentTrack?.id) { _ in
+            updateBackgroundImage()
+        }
+        .onAppear {
+            updateBackgroundImage()
+        }
+    }
+    
+    private func updateBackgroundImage() {
+        guard let track = audioPlayer.currentTrack else {
+            backgroundImage = nil
+            return
+        }
+        
+        let thumbnailsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Thumbnails", isDirectory: true)
+        let filename = track.url.lastPathComponent
+        let thumbnailPath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+        
+        guard FileManager.default.fileExists(atPath: thumbnailPath.path),
+              let originalImage = UIImage(contentsOfFile: thumbnailPath.path) else {
+            backgroundImage = nil
+            return
+        }
+        
+        // Crop to fit mini player aspect ratio (wide)
+        let targetAspect: CGFloat = 4.0 // Wide aspect for mini player
+        let imageAspect = originalImage.size.width / originalImage.size.height
+        
+        var cropRect: CGRect
+        if imageAspect > targetAspect {
+            let newWidth = originalImage.size.height * targetAspect
+            let x = (originalImage.size.width - newWidth) / 2
+            cropRect = CGRect(x: x, y: 0, width: newWidth, height: originalImage.size.height)
+        } else {
+            let newHeight = originalImage.size.width / targetAspect
+            let y = (originalImage.size.height - newHeight) / 2
+            cropRect = CGRect(x: 0, y: y, width: originalImage.size.width, height: newHeight)
+        }
+        
+        if let cgImage = originalImage.cgImage?.cropping(to: cropRect) {
+            backgroundImage = UIImage(cgImage: cgImage)
+        } else {
+            backgroundImage = originalImage
+        }
     }
     
     private func getThumbnailImage(for track: Track?) -> UIImage? {
