@@ -344,46 +344,29 @@ class DownloadManager: ObservableObject {
         var needsSave = false
         
         for (index, download) in downloads.enumerated() {
-            // Check if thumbnail path exists and is valid
+            // Check if thumbnail path exists and file is valid
             if let thumbPath = download.thumbnailPath {
-                if !FileManager.default.fileExists(atPath: thumbPath) || UIImage(contentsOfFile: thumbPath) == nil {
-                    print("⚠️ [DownloadManager] Invalid thumbnail for: \(download.name), regenerating...")
+                if !FileManager.default.fileExists(atPath: thumbPath) {
+                    print("⚠️ [DownloadManager] Missing thumbnail file for: \(download.name)")
+                    downloads[index].thumbnailPath = nil
+                    needsSave = true
                     
-                    // Try to regenerate thumbnail
+                    // Try to regenerate if we have videoID
                     if let videoID = download.videoID, !videoID.isEmpty {
                         EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID)
-                        
-                        // Update path after potential regeneration
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                            if let newPath = EmbeddedPython.shared.getThumbnailPath(for: download.url) {
-                                self.downloads[index].thumbnailPath = newPath.path
-                                self.saveDownloads()
-                                self.objectWillChange.send()
-                            }
-                        }
-                    } else {
-                        downloads[index].thumbnailPath = nil
-                        needsSave = true
                     }
                 }
+                // REMOVED: UIImage validation check - if file exists, trust it
             } else if let videoID = download.videoID, !videoID.isEmpty {
                 // No thumbnail path but has videoID - try to generate
                 print("🔄 [DownloadManager] No thumbnail for: \(download.name), attempting to generate...")
                 EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID)
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    if let newPath = EmbeddedPython.shared.getThumbnailPath(for: download.url) {
-                        self.downloads[index].thumbnailPath = newPath.path
-                        self.saveDownloads()
-                        self.objectWillChange.send()
-                    }
-                }
             }
         }
         
         if needsSave {
             saveDownloads()
-            print("✅ [DownloadManager] Thumbnail validation complete, changes saved")
+            print("✅ [DownloadManager] Thumbnail validation complete")
         } else {
             print("✅ [DownloadManager] All thumbnails valid")
         }
