@@ -133,8 +133,10 @@ struct DownloadRow: View {
             HStack(spacing: 12) {
                 HStack(spacing: 12) {
                     ZStack {
-                        if let thumbPath = download.thumbnailPath,
-                           let image = UIImage(contentsOfFile: thumbPath) {
+                        if let thumbFilename = download.thumbnailPath {
+                            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                            let fullPath = documentsPath.appendingPathComponent("Thumbnails").appendingPathComponent(thumbFilename).path
+                            if let image = UIImage(contentsOfFile: fullPath) {
                             Image(uiImage: image)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)

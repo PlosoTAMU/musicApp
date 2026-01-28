@@ -134,11 +134,17 @@ class DownloadManager: ObservableObject {
                 try FileManager.default.moveItem(at: download.url, to: targetURL)
                 print("✅ [DownloadManager] Moved file to Music directory: \(targetURL.lastPathComponent)")
                 
+                // FIXED: Store only the FILENAME, not full path
+                var thumbnailFilename: String? = nil
+                if let thumbPath = download.thumbnailPath {
+                    thumbnailFilename = URL(fileURLWithPath: thumbPath).lastPathComponent
+                }
+                
                 finalDownload = Download(
                     id: download.id,
                     name: download.name,
                     url: targetURL,
-                    thumbnailPath: download.thumbnailPath,
+                    thumbnailPath: thumbnailFilename,  // Just filename now
                     videoID: download.videoID,
                     source: download.source
                 )
@@ -146,13 +152,39 @@ class DownloadManager: ObservableObject {
                 print("❌ [DownloadManager] Failed to move file: \(error)")
                 finalDownload = download
             }
+        } else {
+            // FIXED: Also convert existing full path to filename
+            if let thumbPath = download.thumbnailPath {
+                let thumbnailFilename = URL(fileURLWithPath: thumbPath).lastPathComponent
+                finalDownload = Download(
+                    id: download.id,
+                    name: download.name,
+                    url: download.url,
+                    thumbnailPath: thumbnailFilename,
+                    videoID: download.videoID,
+                    source: download.source
+                )
+            }
         }
         
         downloads.append(finalDownload)
         saveDownloads()
-        objectWillChange.send() // FIXED: Force UI update
+        objectWillChange.send()
     }
     
+    func getThumbnailFullPath(for download: Download) -> String? {
+        guard let thumbnailFilename = download.thumbnailPath else { return nil }
+        
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let thumbnailsDir = documentsPath.appendingPathComponent("Thumbnails", isDirectory: true)
+        let fullPath = thumbnailsDir.appendingPathComponent(thumbnailFilename).path
+        
+        if FileManager.default.fileExists(atPath: fullPath) {
+            return fullPath
+        }
+        return nil
+    }
+
     func markForDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
         guard let index = downloads.firstIndex(where: { $0.id == download.id }) else { return }
         
@@ -341,53 +373,31 @@ class DownloadManager: ObservableObject {
     // FIXED: Validate and regenerate missing thumbnails on boot
     private func validateAndFixThumbnails() {
         print("🔍 [DownloadManager] Validating thumbnails...")
-        var needsSave = false
+        
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let thumbnailsDir = documentsPath.appendingPathComponent("Thumbnails", isDirectory: true)
         
         for (index, download) in downloads.enumerated() {
-            // Check if thumbnail path exists and is valid
-            if let thumbPath = download.thumbnailPath {
-                if !FileManager.default.fileExists(atPath: thumbPath) || UIImage(contentsOfFile: thumbPath) == nil {
-                    print("⚠️ [DownloadManager] Invalid thumbnail for: \(download.name), regenerating...")
+            if let thumbnailFilename = download.thumbnailPath {
+                // FIXED: Construct full path at runtime
+                let fullPath = thumbnailsDir.appendingPathComponent(thumbnailFilename).path
+                
+                if !FileManager.default.fileExists(atPath: fullPath) {
+                    print("⚠️ [DownloadManager] Missing thumbnail for: \(download.name)")
                     
-                    // Try to regenerate thumbnail
                     if let videoID = download.videoID, !videoID.isEmpty {
                         EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID)
-                        
-                        // Update path after potential regeneration
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                            if let newPath = EmbeddedPython.shared.getThumbnailPath(for: download.url) {
-                                print("✅ [DownloadManager] Regenerated thumbnail for: \(download.name)")
-                                self.downloads[index].thumbnailPath = newPath.path
-                                self.saveDownloads()
-                                self.objectWillChange.send()
-                            }
-                        }
-                    } else {
-                        downloads[index].thumbnailPath = nil
-                        needsSave = true
                     }
+                } else {
+                    print("✅ [DownloadManager] Thumbnail found for: \(download.name)")
                 }
             } else if let videoID = download.videoID, !videoID.isEmpty {
-                // No thumbnail path but has videoID - try to generate
-                print("🔄 [DownloadManager] No thumbnail for: \(download.name), attempting to generate...")
+                print("🔄 [DownloadManager] No thumbnail for: \(download.name), generating...")
                 EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID)
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    if let newPath = EmbeddedPython.shared.getThumbnailPath(for: download.url) {
-                        self.downloads[index].thumbnailPath = newPath.path
-                        self.saveDownloads()
-                        self.objectWillChange.send()
-                    }
-                }
             }
         }
         
-        if needsSave {
-            saveDownloads()
-            print("✅ [DownloadManager] Thumbnail validation complete, changes saved")
-        } else {
-            print("✅ [DownloadManager] All thumbnails valid")
-        }
+        print("✅ [DownloadManager] Thumbnail validation complete")
     }
     
     private func getMetadataFileURL() -> URL {
