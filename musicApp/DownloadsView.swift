@@ -133,10 +133,8 @@ struct DownloadRow: View {
             HStack(spacing: 12) {
                 HStack(spacing: 12) {
                     ZStack {
-                        if let thumbFilename = download.thumbnailPath {
-                            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                            let fullPath = documentsPath.appendingPathComponent("Thumbnails").appendingPathComponent(thumbFilename).path
-                            if let image = UIImage(contentsOfFile: fullPath) {
+                        if let thumbPath = download.resolvedThumbnailPath,
+                            let image = UIImage(contentsOfFile: thumbPath) {
                             Image(uiImage: image)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
@@ -309,5 +307,13 @@ struct DownloadRow: View {
         case .spotify: return "Spotify"
         case .folder: return "Files"
         }
+    }
+}
+// Add to Download struct or as extension
+extension Download {
+    var resolvedThumbnailPath: String? {
+        guard let filename = thumbnailPath else { return nil }
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsPath.appendingPathComponent("Thumbnails").appendingPathComponent(filename).path
     }
 }
