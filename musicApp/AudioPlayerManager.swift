@@ -20,6 +20,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
         didSet { applyPlaybackSpeed() }
     }
     
+    // FIXED: Dedicated high-priority audio thread
+    private let audioQueue = DispatchQueue(
+        label: "com.musicapp.audioplayback",
+        qos: .userInteractive,
+        attributes: [],
+        autoreleaseFrequency: .workItem
+    )
+    
     var savedPlaybackSpeed: Double = 1.0
     private var currentPlaybackSessionID = UUID()
     
@@ -35,11 +43,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var needsReschedule = false
     private var savedCurrentTime: Double = 0
     
-    // CRITICAL FIX: Track route changes to prevent false completion triggers
     private var isHandlingRouteChange = false
     private var routeChangeTimestamp: Date?
     
-    // Store current track URL for re-opening after route change
     private var currentTrackURL: URL?
     
     var onPlaybackEnded: (() -> Void)?
@@ -147,7 +153,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
             object: nil
         )
         
-        // CRITICAL: Listen for engine configuration changes
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleEngineConfigurationChange),
@@ -170,11 +175,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
             needsReschedule = true
             isHandlingRouteChange = true
             
+            audioQueue.async {
+                self.playerNode?.pause()
+            }
+            
             DispatchQueue.main.async {
                 self.isPlaying = false
+                self.stopTimeUpdates()
             }
-            playerNode?.pause()
-            stopTimeUpdates()
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 self.isHandlingRouteChange = false
@@ -194,11 +202,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    // CRITICAL FIX: Handle engine configuration changes (Bluetooth connect/disconnect)
     @objc private func handleEngineConfigurationChange(notification: Notification) {
         print("⚙️ Audio engine configuration changed")
         
-        // CRITICAL: Invalidate session ID to prevent completion handler from calling next()
         currentPlaybackSessionID = UUID()
         
         isHandlingRouteChange = true
@@ -208,15 +214,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
         savedCurrentTime = currentTime
         needsReschedule = true
         
-        // Stop player but don't trigger next()
-        playerNode?.stop()
+        audioQueue.async {
+            self.playerNode?.stop()
+        }
         
         DispatchQueue.main.async {
             self.isPlaying = false
             self.stopTimeUpdates()
         }
         
-        // Give system time to stabilize
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             self.isHandlingRouteChange = false
             
@@ -239,7 +245,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         case .oldDeviceUnavailable:
             print("🎧 Audio device disconnected (Bluetooth/headphones)")
             
-            // CRITICAL: Invalidate session ID immediately
             currentPlaybackSessionID = UUID()
             isHandlingRouteChange = true
             routeChangeTimestamp = Date()
@@ -247,7 +252,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
             savedCurrentTime = currentTime
             needsReschedule = true
             
-            playerNode?.stop()
+            audioQueue.async {
+                self.playerNode?.stop()
+            }
             
             DispatchQueue.main.async {
                 self.isPlaying = false
@@ -262,7 +269,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         case .newDeviceAvailable:
             print("🎧 New audio device connected")
             
-            // CRITICAL: Invalidate session ID to prevent false completion
             currentPlaybackSessionID = UUID()
             isHandlingRouteChange = true
             routeChangeTimestamp = Date()
@@ -302,65 +308,178 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func loadPlaylist(_ tracks: [Track], shuffle: Bool = false) {
-        if isPlaying {
-            playerNode?.stop()
-            audioEngine?.stop()
-            isPlaying = false
-        }
-        
-        isPlaylistMode = true
-        currentPlaylist = shuffle ? tracks.shuffled() : tracks
-        currentIndex = 0
-        previousQueue.removeAll()
-        
-        if !currentPlaylist.isEmpty {
-            play(currentPlaylist[0])
+        audioQueue.async {
+            self.playerNode?.stop()
+            self.audioEngine?.stop()
+            
+            DispatchQueue.main.async {
+                self.isPlaying = false
+                self.isPlaylistMode = true
+                self.currentPlaylist = shuffle ? tracks.shuffled() : tracks
+                self.currentIndex = 0
+                self.previousQueue.removeAll()
+                
+                if !self.currentPlaylist.isEmpty {
+                    self.play(self.currentPlaylist[0])
+                }
+            }
         }
     }
     
     func play(_ track: Track) {
-        // CRITICAL: Create new session ID to invalidate any old completion handlers
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
         
-        if isPlaying {
-            playerNode?.stop()
-            audioEngine?.stop()
-            isPlaying = false
+        audioQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            self.playerNode?.stop()
+            self.audioEngine?.stop()
+            
+            DispatchQueue.main.async {
+                self.isPlaying = false
+                self.stopTimeUpdates()
+                self.seekOffset = 0
+                self.needsReschedule = false
+                self.isHandlingRouteChange = false
+            }
+            
+            do {
+                try AVAudioSession.sharedInstance().setActive(true, options: [])
+                
+                guard let trackURL = track.resolvedURL() else {
+                    print("❌ Could not resolve track URL")
+                    return
+                }
+                
+                _ = trackURL.startAccessingSecurityScopedResource()
+                
+                self.currentTrackURL = trackURL
+                
+                self.audioFile = try AVAudioFile(forReading: trackURL)
+                
+                guard let file = self.audioFile,
+                      let engine = self.audioEngine,
+                      let player = self.playerNode,
+                      let reverb = self.reverbNode,
+                      let timePitch = self.timePitchNode else {
+                    print("❌ Audio nodes not configured")
+                    return
+                }
+                
+                let format = file.processingFormat
+                
+                engine.disconnectNodeInput(player)
+                engine.disconnectNodeInput(timePitch)
+                engine.disconnectNodeInput(reverb)
+                
+                engine.connect(player, to: timePitch, format: format)
+                engine.connect(timePitch, to: reverb, format: format)
+                engine.connect(reverb, to: engine.mainMixerNode, format: format)
+                
+                if !engine.isRunning {
+                    try engine.start()
+                }
+                
+                player.scheduleFile(file, at: nil) { [weak self] in
+                    guard let self = self else { return }
+                    
+                    DispatchQueue.main.async {
+                        if self.currentPlaybackSessionID == sessionID &&
+                           !self.isHandlingRouteChange &&
+                           self.isPlaying {
+                            self.next()
+                        } else {
+                            print("⚠️ Completion handler ignored (sessionID: \(sessionID == self.currentPlaybackSessionID), routeChange: \(self.isHandlingRouteChange), playing: \(self.isPlaying))")
+                        }
+                    }
+                }
+                
+                player.play()
+                
+                let frameCount = Double(file.length)
+                let sampleRate = file.fileFormat.sampleRate
+                let calculatedDuration = frameCount / sampleRate
+                
+                DispatchQueue.main.async {
+                    self.isPlaying = true
+                    self.currentTrack = track
+                    self.savedCurrentTime = 0
+                    self.duration = calculatedDuration
+                    
+                    if let index = self.currentPlaylist.firstIndex(where: { $0.id == track.id }) {
+                        self.currentIndex = index
+                    }
+                    
+                    self.startTimeUpdates()
+                    self.updateNowPlayingInfo()
+                }
+                
+                print("▶️ Now playing: \(track.name)")
+                
+            } catch {
+                print("❌ Playback error: \(error)")
+            }
+        }
+    }
+    
+    func pause() {
+        savedCurrentTime = currentTime
+        needsReschedule = true
+        
+        audioQueue.async {
+            self.playerNode?.pause()
+            
+            DispatchQueue.main.async {
+                self.isPlaying = false
+                self.stopTimeUpdates()
+                self.updateNowPlayingInfo()
+            }
+        }
+    }
+    
+    func resume() {
+        guard let track = currentTrack,
+              let trackURL = currentTrackURL ?? track.resolvedURL() else {
+            print("❌ No track to resume")
+            return
         }
         
-        stopTimeUpdates()
-        seekOffset = 0
-        needsReschedule = false
-        isHandlingRouteChange = false
-        
-        do {
-            try AVAudioSession.sharedInstance().setActive(true, options: [])
+        audioQueue.async { [weak self] in
+            guard let self = self else { return }
             
-            guard let trackURL = track.resolvedURL() else {
-                print("❌ Could not resolve track URL")
+            do {
+                try AVAudioSession.sharedInstance().setActive(true, options: [])
+            } catch {
+                print("❌ Failed to activate audio session: \(error)")
+            }
+            
+            guard let engine = self.audioEngine,
+                  let player = self.playerNode,
+                  let reverb = self.reverbNode,
+                  let timePitch = self.timePitchNode else {
+                print("❌ Audio components not available")
                 return
             }
             
-            _ = trackURL.startAccessingSecurityScopedResource()
+            do {
+                _ = trackURL.startAccessingSecurityScopedResource()
+                self.audioFile = try AVAudioFile(forReading: trackURL)
+            } catch {
+                print("❌ Failed to re-open audio file: \(error)")
+                return
+            }
             
-            // Store URL for potential re-open after route change
-            currentTrackURL = trackURL
-            
-            audioFile = try AVAudioFile(forReading: trackURL)
-            
-            guard let file = audioFile,
-                  let engine = audioEngine,
-                  let player = playerNode,
-                  let reverb = reverbNode,
-                  let timePitch = timePitchNode else {
-                print("❌ Audio nodes not configured")
+            guard let file = self.audioFile else {
+                print("❌ Audio file not available")
                 return
             }
             
             let format = file.processingFormat
             
-            // Disconnect and reconnect to handle format changes
+            player.stop()
+            engine.stop()
+            
             engine.disconnectNodeInput(player)
             engine.disconnectNodeInput(timePitch)
             engine.disconnectNodeInput(reverb)
@@ -369,240 +488,32 @@ class AudioPlayerManager: NSObject, ObservableObject {
             engine.connect(timePitch, to: reverb, format: format)
             engine.connect(reverb, to: engine.mainMixerNode, format: format)
             
-            if !engine.isRunning {
-                try engine.start()
-            }
-            
-            player.scheduleFile(file, at: nil) { [weak self] in
-                guard let self = self else { return }
-                
-                // CRITICAL: Check BOTH session ID AND route change flag
-                DispatchQueue.main.async {
-                    // Only call next() if:
-                    // 1. Session ID matches (no new track started)
-                    // 2. Not handling a route change
-                    // 3. Actually playing
-                    if self.currentPlaybackSessionID == sessionID &&
-                       !self.isHandlingRouteChange &&
-                       self.isPlaying {
-                        self.next()
-                    } else {
-                        print("⚠️ Completion handler ignored (sessionID: \(sessionID == self.currentPlaybackSessionID), routeChange: \(self.isHandlingRouteChange), playing: \(self.isPlaying))")
-                    }
-                }
-            }
-            
-            player.play()
-            
-            isPlaying = true
-            currentTrack = track
-            savedCurrentTime = 0
-            
-            if let index = currentPlaylist.firstIndex(where: { $0.id == track.id }) {
-                currentIndex = index
-            }
-            
-            let frameCount = Double(file.length)
-            let sampleRate = file.fileFormat.sampleRate
-            duration = frameCount / sampleRate
-            
-            startTimeUpdates()
-            updateNowPlayingInfo()
-            
-            print("▶️ Now playing: \(track.name)")
-            
-        } catch {
-            print("❌ Playback error: \(error)")
-        }
-    }
-    
-    func pause() {
-        savedCurrentTime = currentTime
-        needsReschedule = true
-        
-        playerNode?.pause()
-        isPlaying = false
-        stopTimeUpdates()
-        updateNowPlayingInfo()
-    }
-    
-    // CRITICAL FIX: Complete rewrite of resume() to handle Bluetooth properly
-    func resume() {
-        guard let track = currentTrack,
-              let trackURL = currentTrackURL ?? track.resolvedURL() else {
-            print("❌ No track to resume")
-            return
-        }
-        
-        do {
-            try AVAudioSession.sharedInstance().setActive(true, options: [])
-        } catch {
-            print("❌ Failed to activate audio session: \(error)")
-        }
-        
-        guard let engine = audioEngine,
-              let player = playerNode,
-              let reverb = reverbNode,
-              let timePitch = timePitchNode else {
-            print("❌ Audio components not available")
-            return
-        }
-        
-        // CRITICAL: Always re-open the audio file after route change
-        // This handles sample rate changes from Bluetooth
-        do {
-            _ = trackURL.startAccessingSecurityScopedResource()
-            audioFile = try AVAudioFile(forReading: trackURL)
-        } catch {
-            print("❌ Failed to re-open audio file: \(error)")
-            return
-        }
-        
-        guard let file = audioFile else {
-            print("❌ Audio file not available")
-            return
-        }
-        
-        let format = file.processingFormat
-        
-        // CRITICAL: Stop player and engine completely
-        player.stop()
-        engine.stop()
-        
-        // Reconnect with potentially new format
-        engine.disconnectNodeInput(player)
-        engine.disconnectNodeInput(timePitch)
-        engine.disconnectNodeInput(reverb)
-        
-        engine.connect(player, to: timePitch, format: format)
-        engine.connect(timePitch, to: reverb, format: format)
-        engine.connect(reverb, to: engine.mainMixerNode, format: format)
-        
-        // Start engine
-        do {
-            try engine.start()
-            print("✅ Engine started with format: \(format)")
-        } catch {
-            print("❌ Failed to start engine: \(error)")
-            return
-        }
-        
-        // Create new session ID
-        currentPlaybackSessionID = UUID()
-        let sessionID = currentPlaybackSessionID
-        
-        // Calculate start position
-        let resumeTime = needsReschedule ? savedCurrentTime : currentTime
-        let sampleRate = file.fileFormat.sampleRate
-        let startFrame = AVAudioFramePosition(max(0, resumeTime) * sampleRate)
-        
-        print("🔄 Resuming from \(resumeTime)s (frame: \(startFrame))")
-        
-        if startFrame < file.length && startFrame >= 0 {
-            let remainingFrames = AVAudioFrameCount(file.length - startFrame)
-            
-            player.scheduleSegment(file,
-                                  startingFrame: startFrame,
-                                  frameCount: remainingFrames,
-                                  at: nil) { [weak self] in
-                guard let self = self else { return }
-                DispatchQueue.main.async {
-                    if self.currentPlaybackSessionID == sessionID &&
-                       !self.isHandlingRouteChange &&
-                       self.isPlaying {
-                        self.next()
-                    }
-                }
-            }
-            
-            seekOffset = resumeTime
-            currentTime = resumeTime
-        } else {
-            // Start from beginning if position is invalid
-            player.scheduleFile(file, at: nil) { [weak self] in
-                guard let self = self else { return }
-                DispatchQueue.main.async {
-                    if self.currentPlaybackSessionID == sessionID &&
-                       !self.isHandlingRouteChange &&
-                       self.isPlaying {
-                        self.next()
-                    }
-                }
-            }
-            seekOffset = 0
-            currentTime = 0
-        }
-        
-        player.play()
-        
-        needsReschedule = false
-        isPlaying = true
-        startTimeUpdates()
-        updateNowPlayingInfo()
-        
-        print("▶️ Resumed playback")
-    }
-    
-    func stop() {
-        // Invalidate session to prevent any pending completion handlers
-        currentPlaybackSessionID = UUID()
-        
-        playerNode?.stop()
-        audioEngine?.stop()
-        stopTimeUpdates()
-        
-        DispatchQueue.main.async {
-            self.isPlaying = false
-            self.currentTrack = nil
-            self.currentTime = 0
-            self.duration = 0
-            self.needsReschedule = false
-            self.savedCurrentTime = 0
-        }
-        
-        currentTrackURL = nil
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-    }
-    
-    func seek(to time: Double) {
-        guard let file = audioFile,
-              let player = playerNode,
-              let engine = audioEngine else { return }
-        
-        // Clamp to valid range
-        let clampedTime = max(0, min(time, duration - 0.5))
-        
-        // Invalidate old session
-        currentPlaybackSessionID = UUID()
-        let sessionID = currentPlaybackSessionID
-        
-        let sampleRate = file.fileFormat.sampleRate
-        let startFrame = AVAudioFramePosition(clampedTime * sampleRate)
-        
-        stopTimeUpdates()
-        player.stop()
-        
-        // Ensure engine is running
-        if !engine.isRunning {
             do {
                 try engine.start()
+                print("✅ Engine started with format: \(format)")
             } catch {
-                print("❌ Failed to start engine for seek: \(error)")
+                print("❌ Failed to start engine: \(error)")
                 return
             }
-        }
-        
-        if startFrame < file.length && startFrame >= 0 {
-            let remainingFrames = AVAudioFrameCount(file.length - startFrame)
             
-            if remainingFrames > 0 {
+            self.currentPlaybackSessionID = UUID()
+            let sessionID = self.currentPlaybackSessionID
+            
+            let resumeTime = self.needsReschedule ? self.savedCurrentTime : self.currentTime
+            let sampleRate = file.fileFormat.sampleRate
+            let startFrame = AVAudioFramePosition(max(0, resumeTime) * sampleRate)
+            
+            print("🔄 Resuming from \(resumeTime)s (frame: \(startFrame))")
+            
+            if startFrame < file.length && startFrame >= 0 {
+                let remainingFrames = AVAudioFrameCount(file.length - startFrame)
+                
                 player.scheduleSegment(file,
                                       startingFrame: startFrame,
                                       frameCount: remainingFrames,
                                       at: nil) { [weak self] in
                     guard let self = self else { return }
                     DispatchQueue.main.async {
-                        // CRITICAL: Check all conditions before calling next()
                         if self.currentPlaybackSessionID == sessionID &&
                            !self.isHandlingRouteChange &&
                            self.isPlaying {
@@ -611,24 +522,135 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     }
                 }
                 
-                if isPlaying {
-                    player.play()
+                self.seekOffset = resumeTime
+                
+                DispatchQueue.main.async {
+                    self.currentTime = resumeTime
                 }
             } else {
-                DispatchQueue.main.async {
-                    self.next()
+                player.scheduleFile(file, at: nil) { [weak self] in
+                    guard let self = self else { return }
+                    DispatchQueue.main.async {
+                        if self.currentPlaybackSessionID == sessionID &&
+                           !self.isHandlingRouteChange &&
+                           self.isPlaying {
+                            self.next()
+                        }
+                    }
                 }
-                return
+                self.seekOffset = 0
+                DispatchQueue.main.async {
+                    self.currentTime = 0
+                }
+            }
+            
+            player.play()
+            
+            DispatchQueue.main.async {
+                self.needsReschedule = false
+                self.isPlaying = true
+                self.startTimeUpdates()
+                self.updateNowPlayingInfo()
+            }
+            
+            print("▶️ Resumed playback")
+        }
+    }
+    
+    func stop() {
+        currentPlaybackSessionID = UUID()
+        
+        audioQueue.async {
+            self.playerNode?.stop()
+            self.audioEngine?.stop()
+            
+            DispatchQueue.main.async {
+                self.stopTimeUpdates()
+                self.isPlaying = false
+                self.currentTrack = nil
+                self.currentTime = 0
+                self.duration = 0
+                self.needsReschedule = false
+                self.savedCurrentTime = 0
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             }
         }
         
-        seekOffset = clampedTime
-        currentTime = clampedTime
-        savedCurrentTime = clampedTime
-        updateNowPlayingInfo()
+        currentTrackURL = nil
+    }
+    
+    func seek(to time: Double) {
+        guard let file = audioFile else { return }
         
-        if isPlaying {
-            startTimeUpdates()
+        let clampedTime = max(0, min(time, duration - 0.5))
+        
+        currentPlaybackSessionID = UUID()
+        let sessionID = currentPlaybackSessionID
+        
+        DispatchQueue.main.async {
+            self.stopTimeUpdates()
+        }
+        
+        audioQueue.async { [weak self] in
+            guard let self = self,
+                  let player = self.playerNode,
+                  let engine = self.audioEngine,
+                  let file = self.audioFile else { return }
+            
+            let sampleRate = file.fileFormat.sampleRate
+            let startFrame = AVAudioFramePosition(clampedTime * sampleRate)
+            
+            player.stop()
+            
+            if !engine.isRunning {
+                do {
+                    try engine.start()
+                } catch {
+                    print("❌ Failed to start engine for seek: \(error)")
+                    return
+                }
+            }
+            
+            if startFrame < file.length && startFrame >= 0 {
+                let remainingFrames = AVAudioFrameCount(file.length - startFrame)
+                
+                if remainingFrames > 0 {
+                    player.scheduleSegment(file,
+                                          startingFrame: startFrame,
+                                          frameCount: remainingFrames,
+                                          at: nil) { [weak self] in
+                        guard let self = self else { return }
+                        DispatchQueue.main.async {
+                            if self.currentPlaybackSessionID == sessionID &&
+                               !self.isHandlingRouteChange &&
+                               self.isPlaying {
+                                self.next()
+                            }
+                        }
+                    }
+                    
+                    if self.isPlaying {
+                        player.play()
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self.next()
+                    }
+                    return
+                }
+            }
+            
+            self.seekOffset = clampedTime
+            
+            DispatchQueue.main.async {
+                self.currentTime = clampedTime
+                self.savedCurrentTime = clampedTime
+                self.updateNowPlayingInfo()
+                
+                if self.isPlaying {
+                    self.startTimeUpdates()
+                }
+            }
         }
     }
     
@@ -638,34 +660,37 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     private func applyReverb() {
-        reverbNode?.wetDryMix = Float(reverbAmount)
+        audioQueue.async {
+            self.reverbNode?.wetDryMix = Float(self.reverbAmount)
+        }
     }
     
     private func applyPlaybackSpeed() {
-        guard let timePitch = timePitchNode else { return }
-        
-        let speed = Float(playbackSpeed)
-        
-        // FIXED: Use pitch correction for speeds below 1.0x to prevent choppiness
-        if playbackSpeed < 1.0 {
-            // Enable overlap for smooth slow playback
-            timePitch.rate = speed
-            timePitch.pitch = 0 // Keep original pitch
+        audioQueue.async {
+            guard let timePitch = self.timePitchNode else { return }
             
-            // Use higher quality algorithm for slow speeds
-            timePitch.overlap = 8.0 // Default is 8, increase for smoother slow playback
-        } else {
-            // Normal/fast playback
-            timePitch.rate = speed
-            timePitch.pitch = 0
-            timePitch.overlap = 8.0
+            let speed = Float(self.playbackSpeed)
+            
+            if self.playbackSpeed < 1.0 {
+                timePitch.rate = speed
+                timePitch.pitch = 0
+                timePitch.overlap = 8.0
+            } else {
+                timePitch.rate = speed
+                timePitch.pitch = 0
+                timePitch.overlap = 8.0
+            }
+            
+            if self.playbackSpeed != 2.0 {
+                self.savedPlaybackSpeed = self.playbackSpeed
+            }
+            
+            DispatchQueue.main.async {
+                self.updateNowPlayingInfo()
+            }
+            
+            print("⚡ Playback speed set to: \(self.playbackSpeed)x")
         }
-        
-        if playbackSpeed != 2.0 {
-            savedPlaybackSpeed = playbackSpeed
-        }
-        updateNowPlayingInfo()
-        print("⚡ Playback speed set to: \(playbackSpeed)x")
     }
     
     func previous() {
