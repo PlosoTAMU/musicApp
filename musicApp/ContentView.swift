@@ -342,41 +342,18 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                    Image(uiImage: thumbnailImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 290, height: 290)
-                        .clipShape(RoundedRectangle(cornerRadius: 20))
-                        .shadow(color: .black.opacity(1), radius: 40, y: 12)
-                        .onTapGesture {
-                            if audioPlayer.isPlaying {
-                                audioPlayer.pause()
-                            } else {
-                                audioPlayer.resume()
-                            }
-                        }
-                } else {
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(LinearGradient(
-                            colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ))
-                        .frame(width: 290, height: 290)
-                        .overlay(
-                            Image(systemName: "music.note")
-                                .font(.system(size: 80))
-                                .foregroundColor(.white.opacity(0.5))
-                        )
-                        .shadow(color: .black.opacity(1), radius: 40, y: 12)
-                        .onTapGesture {
-                            if audioPlayer.isPlaying {
-                                audioPlayer.pause()
-                            } else {
-                                audioPlayer.resume()
-                            }
-                        }
+                AudioVisualizerView(
+                    thumbnailImage: getThumbnailImage(for: audioPlayer.currentTrack),
+                    audioLevels: audioPlayer.audioLevels,
+                    averageLevel: audioPlayer.averageLevel,
+                    isPlaying: audioPlayer.isPlaying
+                )
+                .onTapGesture {
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
+                    } else {
+                        audioPlayer.resume()
+                    }
                 }
                 
                 Spacer()

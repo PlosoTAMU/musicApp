@@ -19,6 +19,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var playbackSpeed: Double = 1.0 {
         didSet { applyPlaybackSpeed() }
     }
+    // Add these properties at the top of the class
+    @Published var audioLevels: [Float] = Array(repeating: 0.0, count: 8) // 8 frequency bands
+    @Published var averageLevel: Float = 0.0
+
+    private var levelTimer: Timer?
     
     // FIXED: Dedicated high-priority audio thread
     private let audioQueue = DispatchQueue(
@@ -89,6 +94,65 @@ class AudioPlayerManager: NSObject, ObservableObject {
             print("✅ Audio session configured for background playback")
         } catch {
             print("❌ Failed to setup audio session: \(error)")
+        }
+    }
+    private func installAudioTap() {
+        guard let player = playerNode else { return }
+        
+        // Remove existing tap if any
+        player.removeTap(onBus: 0)
+        
+        let format = player.outputFormat(forBus: 0)
+        let bufferSize: AVAudioFrameCount = 1024
+        
+        player.installTap(onBus: 0, bufferSize: bufferSize, format: format) { [weak self] buffer, _ in
+            guard let self = self else { return }
+            
+            guard let channelData = buffer.floatChannelData?[0] else { return }
+            let frames = buffer.frameLength
+            
+            // Calculate RMS (root mean square) for overall level
+            var sum: Float = 0
+            for i in 0..<Int(frames) {
+                let sample = channelData[i]
+                sum += sample * sample
+            }
+            let rms = sqrt(sum / Float(frames))
+            let avgLevel = min(1.0, rms * 5) // Scale up for visibility
+            
+            // Simple frequency band approximation
+            let bandCount = 8
+            var bands: [Float] = Array(repeating: 0.0, count: bandCount)
+            let framesPerBand = Int(frames) / bandCount
+            
+            for band in 0..<bandCount {
+                var bandSum: Float = 0
+                let startFrame = band * framesPerBand
+                let endFrame = min(startFrame + framesPerBand, Int(frames))
+                
+                for i in startFrame..<endFrame {
+                    let sample = abs(channelData[i])
+                    bandSum += sample
+                }
+                
+                bands[band] = min(1.0, (bandSum / Float(framesPerBand)) * 8)
+            }
+            
+            DispatchQueue.main.async {
+                // Smooth the transition
+                for i in 0..<bandCount {
+                    self.audioLevels[i] = self.audioLevels[i] * 0.7 + bands[i] * 0.3
+                }
+                self.averageLevel = self.averageLevel * 0.7 + avgLevel * 0.3
+            }
+        }
+    }
+
+    private func removeAudioTap() {
+        playerNode?.removeTap(onBus: 0)
+        DispatchQueue.main.async {
+            self.audioLevels = Array(repeating: 0.0, count: 8)
+            self.averageLevel = 0.0
         }
     }
     
@@ -396,6 +460,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 }
                 
                 player.play()
+                installAudioTap()
                 
                 let frameCount = Double(file.length)
                 let sampleRate = file.fileFormat.sampleRate
@@ -436,6 +501,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 self.updateNowPlayingInfo()
             }
         }
+        removeAudioTap()
     }
     
     func resume() {
@@ -545,6 +611,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
             
             player.play()
+            installAudioTap()
             
             DispatchQueue.main.async {
                 self.needsReschedule = false
@@ -558,6 +625,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func stop() {
+        removeAudioTap()
         currentPlaybackSessionID = UUID()
         
         audioQueue.async {
