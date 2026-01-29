@@ -68,11 +68,61 @@ struct ContentView: View {
         }
         // FIXED: Close now playing when playback ends
         .onAppear {
+            processIncomingShares()
+            
+            // FIXED: Close now playing when playback ends
             audioPlayer.onPlaybackEnded = {
                 showNowPlaying = false
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            processIncomingShares()
+        }
+        .onOpenURL { url in
+            // Handle ploso://import URL scheme
+            if url.scheme == "ploso" {
+                processIncomingShares()
+            }
+        }
     }
+
+    private func processIncomingShares() {
+        let urls = IncomingShareQueue.drain()
+        
+        guard !urls.isEmpty else { return }
+        
+        print("📥 Processing \(urls.count) shared URLs")
+        
+        for urlString in urls {
+            // Extract video ID
+            let videoID = extractYoutubeId(from: urlString) ?? ""
+            
+            // Check for duplicates
+            if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) != nil {
+                print("⚠️ Skipping duplicate: \(videoID)")
+                continue
+            }
+            
+            // Start download
+            downloadManager.startBackgroundDownload(
+                url: urlString,
+                videoID: videoID,
+                source: .youtube,
+                title: "Downloading from share..."
+            )
+        }
+    }
+
+    private func extractYoutubeId(from url: String) -> String? {
+        guard let urlComponents = URLComponents(string: url) else { return nil }
+        
+        if url.contains("youtu.be") {
+            return urlComponents.path.replacingOccurrences(of: "/", with: "")
+        } else {
+            return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
+        }
+    }
+
 }
 
 // MARK: - Mini Player Bar
