@@ -1,7 +1,7 @@
 import Foundation
 
 enum IncomingShareQueue {
-    static let appGroupID = "group.com.yourcompany.ploso" // Change to match YOUR app group
+    static let appGroupID = "group.com.ploso.ploso" // Change to match YOUR app group
     static let queueFilename = "incoming_urls.json"
 
     static func enqueue(_ urlString: String) {
