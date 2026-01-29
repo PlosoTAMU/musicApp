@@ -309,11 +309,3 @@ struct DownloadRow: View {
         }
     }
 }
-// Add to Download struct or as extension
-extension Download {
-    var resolvedThumbnailPath: String? {
-        guard let filename = thumbnailPath else { return nil }
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documentsPath.appendingPathComponent("Thumbnails").appendingPathComponent(filename).path
-    }
-}
