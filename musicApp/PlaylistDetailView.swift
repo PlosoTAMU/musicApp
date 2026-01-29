@@ -165,7 +165,7 @@ struct PlaylistDetailView: View {
             .scrollContentBackground(.hidden)
             .background(Color.black)
             .environment(\.editMode, .constant(.active))
-            .scrollIndicators(.visible) // FIXED: Add scroll bar
+            .scrollIndicators(.visible)
         }
         .navigationTitle(playlist.name)
         .navigationBarTitleDisplayMode(.inline)
