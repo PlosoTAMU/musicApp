@@ -56,6 +56,7 @@ struct DownloadsView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color.black)
+            .scrollIndicators(.visible)
             .searchable(text: $searchText, prompt: "Search downloads")
             .navigationTitle("Downloads")
             .toolbar {

@@ -42,6 +42,10 @@ struct PlaylistsView: View {
             }
             .id(refreshID)
             .navigationTitle("Playlists")
+            .background(Color.black)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .scrollIndicators(.visible) // FIXED: Add scroll bar
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {

@@ -18,7 +18,6 @@ final class ShareViewController: UIViewController {
             .compactMap { $0.attachments }
             .flatMap { $0 }
 
-        // We want either a URL item or plain text containing a URL.
         let urlType = UTType.url.identifier
         let textType = UTType.plainText.identifier
 
@@ -48,7 +47,11 @@ final class ShareViewController: UIViewController {
         group.notify(queue: .main) {
             if let urlString = foundURL {
                 IncomingShareQueue.enqueue(urlString)
-                self.pingMainApp() // optional but nice
+                
+                // FIXED: Open main app immediately
+                if let appURL = URL(string: "pulsor://import") {
+                    self.openURL(appURL)
+                }
             }
             self.finish()
         }
@@ -58,29 +61,18 @@ final class ShareViewController: UIViewController {
         extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
     }
 
-    private func pingMainApp() {
-        // Optional: wake the app to process immediately.
-        // Requires URL scheme in main app.
-        let schemeURL = URL(string: "ploso://import")!
-        _ = openURL(schemeURL)
-    }
-
-    private func openURL(_ url: URL) -> Bool {
+    @objc private func openURL(_ url: URL) {
         var responder: UIResponder? = self
-        while responder != nil {
-            if let app = responder as? UIApplication {
-                app.performSelector(onMainThread: #selector(UIApplication.open(_:options:completionHandler:)),
-                                    with: [url, [:], nil],
-                                    waitUntilDone: false)
-                return true
+        while let currentResponder = responder {
+            if let application = currentResponder as? UIApplication {
+                application.open(url, options: [:], completionHandler: nil)
+                return
             }
-            responder = responder?.next
+            responder = currentResponder.next
         }
-        return false
     }
 
     private static func firstURLString(in text: String) -> String? {
-        // very simple detector; good enough for YouTube shares
         let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
         let range = NSRange(text.startIndex..., in: text)
         return detector?.matches(in: text, options: [], range: range)

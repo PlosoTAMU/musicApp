@@ -157,6 +157,7 @@ struct QueueView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
+                    .scrollIndicators(.visible)
                     .environment(\.editMode, audioPlayer.queue.isEmpty ? .constant(.inactive) : .constant(.active))
                 }
             }
