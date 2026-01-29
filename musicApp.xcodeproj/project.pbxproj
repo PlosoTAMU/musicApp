@@ -120,6 +120,13 @@
 			);
 			target = BFA75ACA2F2AFCC3007D334F /* shareToPulsor */;
 		};
+		BFA75ADF2F2AFF54007D334F /* Exceptions for "musicApp" folder in "shareToPulsor" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				IncomingShareQueue.swift,
+			);
+			target = BFA75ACA2F2AFCC3007D334F /* shareToPulsor */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -135,6 +142,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				BF5A35C32F218F4E0044F80A /* Exceptions for "musicApp" folder in "musicApp" target */,
+				BFA75ADF2F2AFF54007D334F /* Exceptions for "musicApp" folder in "shareToPulsor" target */,
 			);
 			path = musicApp;
 			sourceTree = "<group>";
@@ -479,6 +487,7 @@
 		BFA75AD72F2AFCC4007D334F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = shareToPulsor/shareToPulsor.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 74JNGCVVMG;
@@ -505,6 +514,7 @@
 		BFA75AD82F2AFCC4007D334F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = shareToPulsor/shareToPulsor.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 74JNGCVVMG;
@@ -660,6 +670,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = musicApp/Info.plist;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -695,6 +706,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = musicApp/Info.plist;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
