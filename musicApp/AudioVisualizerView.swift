@@ -143,34 +143,38 @@ struct CircularVisualizerView: View {
             let radius: CGFloat = min(geometry.size.width, geometry.size.height) / 2 - 20
             
             ZStack {
-                ForEach(0..<levels.count, id: \.self) { index in
-                    let angle = (Double(index) / Double(levels.count)) * 2 * .pi - .pi / 2
-                    let level = CGFloat(levels[index])
-                    let barLength = isPlaying ? 20 + level * 60 : 20
-                    
-                    Rectangle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.9),
-                                    Color.white.opacity(0.4)
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: barLength, height: 6)
-                        .cornerRadius(3)
-                        .shadow(color: .white.opacity(0.4), radius: 3)
-                        .offset(x: radius + barLength / 2)
-                        .rotationEffect(.radians(angle))
-                        .position(center)
-                        .animation(
-                            .spring(response: 0.15, dampingFraction: 0.6),
-                            value: level
-                        )
+                ForEach(Array(levels.enumerated()), id: \.offset) { index, level in
+                    visualizerBar(index: index, level: level, center: center, radius: radius)
                 }
             }
         }
+    }
+    
+    private func visualizerBar(index: Int, level: Float, center: CGPoint, radius: CGFloat) -> some View {
+        let angle = (Double(index) / Double(levels.count)) * 2 * .pi - .pi / 2
+        let levelCG = CGFloat(level)
+        let barLength = isPlaying ? 20 + levelCG * 60 : 20
+        
+        return Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.9),
+                        Color.white.opacity(0.4)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(width: barLength, height: 6)
+            .cornerRadius(3)
+            .shadow(color: .white.opacity(0.4), radius: 3)
+            .offset(x: radius + barLength / 2)
+            .rotationEffect(.radians(angle))
+            .position(center)
+            .animation(
+                .spring(response: 0.15, dampingFraction: 0.6),
+                value: levelCG
+            )
     }
 }
