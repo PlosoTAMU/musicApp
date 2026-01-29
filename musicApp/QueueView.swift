@@ -188,7 +188,7 @@ struct QueueTrackRow: View {
         HStack(spacing: 12) {
             ZStack {
                 if let download = downloadManager.getDownload(byID: track.id),
-                   let thumbPath = download.thumbnailPath,
+                   let thumbPath = download.resolvedThumbnailPath,
                    let image = UIImage(contentsOfFile: thumbPath) {
                     Image(uiImage: image)
                         .resizable()

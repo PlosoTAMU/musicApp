@@ -373,30 +373,38 @@ class DownloadManager: ObservableObject {
     // FIXED: Validate and regenerate missing thumbnails on boot
     private func validateAndFixThumbnails() {
         print("🔍 [DownloadManager] Validating thumbnails...")
+        var needsSave = false
         
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let thumbnailsDir = documentsPath.appendingPathComponent("Thumbnails", isDirectory: true)
         
         for (index, download) in downloads.enumerated() {
-            if let thumbnailFilename = download.thumbnailPath {
-                // FIXED: Construct full path at runtime
-                let fullPath = thumbnailsDir.appendingPathComponent(thumbnailFilename).path
-                
-                if !FileManager.default.fileExists(atPath: fullPath) {
+            // FIXED: Use resolvedThumbnailPath instead of raw thumbnailPath
+            if let resolvedPath = download.resolvedThumbnailPath {
+                if FileManager.default.fileExists(atPath: resolvedPath) {
+                    print("✅ [DownloadManager] Thumbnail found for: \(download.name)")
+                    
+                    // FIXED: Migrate old absolute paths to just filename
+                    if let oldPath = download.thumbnailPath, oldPath.contains("/") {
+                        downloads[index].thumbnailPath = (oldPath as NSString).lastPathComponent
+                        needsSave = true
+                    }
+                } else {
                     print("⚠️ [DownloadManager] Missing thumbnail for: \(download.name)")
                     
                     if let videoID = download.videoID, !videoID.isEmpty {
                         EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID)
                     }
-                } else {
-                    print("✅ [DownloadManager] Thumbnail found for: \(download.name)")
                 }
             } else if let videoID = download.videoID, !videoID.isEmpty {
-                print("🔄 [DownloadManager] No thumbnail for: \(download.name), generating...")
+                print("🔄 [DownloadManager] No thumbnail path for: \(download.name), generating...")
                 EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID)
             }
         }
         
+        if needsSave {
+            saveDownloads()
+        }
         print("✅ [DownloadManager] Thumbnail validation complete")
     }
     

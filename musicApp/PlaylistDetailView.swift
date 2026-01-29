@@ -17,7 +17,7 @@ struct SelectSongsSheet: View {
                     } label: {
                         HStack(spacing: 12) {
                             ZStack {
-                                if let thumbPath = download.thumbnailPath,
+                                if let thumbPath = download.resolvedThumbnailPath,
                                    let image = UIImage(contentsOfFile: thumbPath) {
                                     Image(uiImage: image)
                                         .resizable()
