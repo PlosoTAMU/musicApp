@@ -3,9 +3,13 @@ import UniformTypeIdentifiers
 
 final class ShareViewController: UIViewController {
     
+    private let containerView = UIView()
+    private let activityIndicator = UIActivityIndicatorView(style: .large)
+    private let statusLabel = UILabel()
+    
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor.black.withAlphaComponent(0.3)
+        setupUI()
     }
     
     override func viewDidAppear(_ animated: Bool) {
@@ -13,8 +17,57 @@ final class ShareViewController: UIViewController {
         handleSharedItems()
     }
     
+    private func setupUI() {
+        // Semi-transparent background
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.4)
+        
+        // Container card
+        containerView.backgroundColor = UIColor.systemBackground
+        containerView.layer.cornerRadius = 16
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(containerView)
+        
+        // Activity indicator
+        activityIndicator.color = .label
+        activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+        activityIndicator.startAnimating()
+        containerView.addSubview(activityIndicator)
+        
+        // Status label
+        statusLabel.text = "Opening Pulsor..."
+        statusLabel.textColor = .label
+        statusLabel.font = .systemFont(ofSize: 16, weight: .medium)
+        statusLabel.textAlignment = .center
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(statusLabel)
+        
+        NSLayoutConstraint.activate([
+            containerView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            containerView.widthAnchor.constraint(equalToConstant: 200),
+            containerView.heightAnchor.constraint(equalToConstant: 120),
+            
+            activityIndicator.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
+            activityIndicator.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 24),
+            
+            statusLabel.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
+            statusLabel.topAnchor.constraint(equalTo: activityIndicator.bottomAnchor, constant: 16),
+            statusLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+            statusLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16)
+        ])
+        
+        // Tap outside to dismiss
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
+        view.addGestureRecognizer(tapGesture)
+    }
+    
+    @objc private func backgroundTapped() {
+        completeExtension()
+    }
+    
     private func handleSharedItems() {
         guard let extensionItems = extensionContext?.inputItems as? [NSExtensionItem] else {
+            updateStatus("No items found")
             openAppAndFinish(withURL: nil)
             return
         }
@@ -52,9 +105,17 @@ final class ShareViewController: UIViewController {
         group.notify(queue: .main) { [weak self] in
             if let urlString = foundURL {
                 IncomingShareQueue.enqueue(urlString)
-                print("✅ Saved URL to shared container: \(urlString)")
+                self?.updateStatus("Opening Pulsor...")
+            } else {
+                self?.updateStatus("No URL found")
             }
             self?.openAppAndFinish(withURL: foundURL)
+        }
+    }
+    
+    private func updateStatus(_ text: String) {
+        DispatchQueue.main.async {
+            self.statusLabel.text = text
         }
     }
     
@@ -68,28 +129,32 @@ final class ShareViewController: UIViewController {
             components.queryItems = [URLQueryItem(name: "url", value: encoded)]
         }
         
-        guard let openURL = components.url else {
-            completeExtension()
+        guard let url = components.url else {
+            updateStatus("Failed to create URL")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.completeExtension()
+            }
             return
         }
         
-        print("🚀 Attempting to open: \(openURL.absoluteString)")
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.tryOpenURL(openURL)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.openURL(url)
         }
     }
     
-    private func tryOpenURL(_ url: URL) {
+    private func openURL(_ url: URL) {
         extensionContext?.open(url) { [weak self] success in
-            print(success ? "✅ Opened app successfully" : "❌ Failed to open app")
-            
-            if !success {
-                self?.openURLViaResponderChain(url)
-            }
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self?.completeExtension()
+            DispatchQueue.main.async {
+                if success {
+                    self?.updateStatus("✓ Opening...")
+                } else {
+                    self?.updateStatus("Opening app...")
+                    self?.openURLViaResponderChain(url)
+                }
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self?.completeExtension()
+                }
             }
         }
     }
@@ -101,12 +166,10 @@ final class ShareViewController: UIViewController {
         while let current = responder {
             if current.responds(to: selector) {
                 current.perform(selector, with: url)
-                print("✅ Opened via responder chain")
                 return
             }
             responder = current.next
         }
-        print("❌ Responder chain fallback failed")
     }
     
     private func completeExtension() {
