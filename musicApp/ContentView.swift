@@ -82,17 +82,15 @@ struct ContentView: View {
             print("📥 App opened with URL: \(url)")
             
             if url.scheme == "pulsor" {
-                // Process queued URLs
                 processIncomingShares()
                 
-                // Also handle direct URL parameter
                 if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-                let urlParam = components.queryItems?.first(where: { $0.name == "url" })?.value,
-                let decodedURL = urlParam.removingPercentEncoding {
+                   let urlParam = components.queryItems?.first(where: { $0.name == "url" })?.value,
+                   let decodedURL = urlParam.removingPercentEncoding {
                     
                     print("📥 Direct URL from share: \(decodedURL)")
                     
-                    let videoID = extractYoutubeId(from: decodedURL) ?? ""
+                    let videoID = Self.extractYoutubeId(from: decodedURL) ?? ""
                     
                     if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) == nil {
                         downloadManager.startBackgroundDownload(
@@ -105,39 +103,41 @@ struct ContentView: View {
                 }
             }
         }
-
-        private func processIncomingShares() {
-            let urls = IncomingShareQueue.drain()
+    }
+    
+    // ✅ FIXED: Moved outside body, made static helper functions
+    private func processIncomingShares() {
+        let urls = IncomingShareQueue.drain()
+        
+        guard !urls.isEmpty else { return }
+        
+        print("📥 Processing \(urls.count) shared URLs")
+        
+        for urlString in urls {
+            let videoID = Self.extractYoutubeId(from: urlString) ?? ""
             
-            guard !urls.isEmpty else { return }
-            
-            print("📥 Processing \(urls.count) shared URLs")
-            
-            for urlString in urls {
-                let videoID = extractYoutubeId(from: urlString) ?? ""
-                
-                if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) != nil {
-                    print("⚠️ Skipping duplicate: \(videoID)")
-                    continue
-                }
-                
-                downloadManager.startBackgroundDownload(
-                    url: urlString,
-                    videoID: videoID,
-                    source: .youtube,
-                    title: "Downloading from share..."
-                )
+            if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) != nil {
+                print("⚠️ Skipping duplicate: \(videoID)")
+                continue
             }
+            
+            downloadManager.startBackgroundDownload(
+                url: urlString,
+                videoID: videoID,
+                source: .youtube,
+                title: "Downloading from share..."
+            )
         }
-
-        private func extractYoutubeId(from url: String) -> String? {
-            guard let urlComponents = URLComponents(string: url) else { return nil }
-            
-            if url.contains("youtu.be") {
-                return urlComponents.path.replacingOccurrences(of: "/", with: "")
-            } else {
-                return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
-            }
+    }
+    
+    // ✅ FIXED: Made static so it can be called from onOpenURL
+    private static func extractYoutubeId(from url: String) -> String? {
+        guard let urlComponents = URLComponents(string: url) else { return nil }
+        
+        if url.contains("youtu.be") {
+            return urlComponents.path.replacingOccurrences(of: "/", with: "")
+        } else {
+            return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
         }
     }
 }
