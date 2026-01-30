@@ -139,7 +139,7 @@ struct ContentView: View {
                 return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
             }
         }
-
+    }
 }
 
 // MARK: - Mini Player Bar
