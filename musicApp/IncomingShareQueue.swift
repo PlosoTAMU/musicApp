@@ -2,7 +2,7 @@ import Foundation
 
 enum IncomingShareQueue {
     // MUST match the App Group you created
-    static let appGroupID = "Ploso.musicApp.share"
+    static let appGroupID = "group.Ploso.musicApp.share"
     static let queueFilename = "incoming_urls.json"
     
     static func enqueue(_ urlString: String) {
