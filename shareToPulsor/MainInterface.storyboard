@@ -11,7 +11,7 @@
         <!--Share View Controller-->
         <scene sceneID="OgK-i7-YMc">
             <objects>
-                <viewController id="lEc-aR-NtD" customClass="ShareViewController" sceneMemberID="viewController">
+                <viewController id="lEc-aR-NtD" customClass="ShareViewController" customModule="ShareToPulsor" customModuleProvider="target" sceneMemberID="viewController">
                     <view key="view" contentMode="scaleToFill" id="pTS-rl-Qck">
                         <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
