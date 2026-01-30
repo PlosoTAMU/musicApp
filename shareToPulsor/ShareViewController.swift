@@ -7,10 +7,16 @@ final class ShareViewController: UIViewController {
         super.viewDidAppear(animated)
         handleSharedItems()
     }
+    
+    // Make the view transparent so it looks like it closes instantly
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+    }
 
     private func handleSharedItems() {
         guard let extensionItems = extensionContext?.inputItems as? [NSExtensionItem] else {
-            finish()
+            openMainAppAndFinish(withURL: nil)
             return
         }
 
@@ -44,32 +50,41 @@ final class ShareViewController: UIViewController {
             }
         }
 
-        group.notify(queue: .main) {
+        group.notify(queue: .main) { [weak self] in
             if let urlString = foundURL {
                 IncomingShareQueue.enqueue(urlString)
-                
-                // FIXED: Open main app immediately
-                if let appURL = URL(string: "pulsor://import") {
-                    self.openURL(appURL)
-                }
             }
-            self.finish()
+            self?.openMainAppAndFinish(withURL: foundURL)
         }
+    }
+
+    // FIXED: Use the correct API to open main app from extension
+    private func openMainAppAndFinish(withURL urlString: String?) {
+        // Encode the URL if we have one, so the app can start downloading immediately
+        var urlScheme = "pulsor://import"
+        if let urlString = urlString,
+           let encoded = urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            urlScheme = "pulsor://import?url=\(encoded)"
+        }
+        
+        guard let url = URL(string: urlScheme) else {
+            finish()
+            return
+        }
+        
+        // THIS IS THE KEY FIX: Use extensionContext's open method
+        extensionContext?.open(url, completionHandler: { [weak self] success in
+            if success {
+                print("✅ Successfully opened main app")
+            } else {
+                print("❌ Failed to open main app")
+            }
+            self?.finish()
+        })
     }
 
     private func finish() {
         extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
-    }
-
-    @objc private func openURL(_ url: URL) {
-        var responder: UIResponder? = self
-        while let currentResponder = responder {
-            if let application = currentResponder as? UIApplication {
-                application.open(url, options: [:], completionHandler: nil)
-                return
-            }
-            responder = currentResponder.next
-        }
     }
 
     private static func firstURLString(in text: String) -> String? {

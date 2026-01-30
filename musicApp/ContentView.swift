@@ -79,9 +79,31 @@ struct ContentView: View {
             processIncomingShares()
         }
         .onOpenURL { url in
-            // Handle ploso://import URL scheme
-            if url.scheme == "ploso" {
+            print("📥 App opened with URL: \(url)")
+            
+            // Handle pulsor://import?url=ENCODED_URL
+            if url.scheme == "pulsor" {
+                // First process any queued URLs
                 processIncomingShares()
+                
+                // Also check if URL was passed directly
+                if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                let urlParam = components.queryItems?.first(where: { $0.name == "url" })?.value,
+                let decodedURL = urlParam.removingPercentEncoding {
+                    
+                    print("📥 Direct URL from share: \(decodedURL)")
+                    
+                    let videoID = extractYoutubeId(from: decodedURL) ?? ""
+                    
+                    if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) == nil {
+                        downloadManager.startBackgroundDownload(
+                            url: decodedURL,
+                            videoID: videoID,
+                            source: .youtube,
+                            title: "Downloading..."
+                        )
+                    }
+                }
             }
         }
     }
