@@ -13,6 +13,10 @@
 		<string>MainInterface</string>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.share-services</string>
+		<key>LSApplicationQueriesSchemes</key>
+		<array>
+			<string>pulsor</string>
+		</array>
 	</dict>
 </dict>
 </plist>

@@ -10,7 +10,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.ploso.ploso</string>
+			<string>com.ploso.pulsor</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>pulsor</string>
