@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- THIS MUST BE AT ROOT LEVEL, NOT INSIDE NSExtension -->
+    <!-- MUST be at root level, NOT inside NSExtension -->
     <key>LSApplicationQueriesSchemes</key>
     <array>
         <string>pulsor</string>

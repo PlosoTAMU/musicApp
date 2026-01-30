@@ -55,13 +55,13 @@ final class ShareViewController: UIViewController {
     }
     
     private func completeAndOpenApp(urlString: String?) {
-        // STEP 1: Save URL to shared container (app group)
+        // Step 1: Save URL to shared container (this ALWAYS works)
         if let urlString = urlString {
             IncomingShareQueue.enqueue(urlString)
-            print("✅ Enqueued: \(urlString)")
+            print("✅ Enqueued URL: \(urlString)")
         }
         
-        // STEP 2: Build the custom URL scheme
+        // Step 2: Build custom URL scheme
         var components = URLComponents()
         components.scheme = "pulsor"
         components.host = "import"
@@ -76,26 +76,25 @@ final class ShareViewController: UIViewController {
             return
         }
         
-        // STEP 3: Open URL using the only reliable method for share extensions
-        openURLInApp(openURL)
+        // Step 3: Open app using the ONLY method that works for share extensions
+        openURL(openURL)
     }
     
-    private func openURLInApp(_ url: URL) {
-        // This is the ONLY reliable way to open a URL from a share extension
+    // THIS is the only reliable way to open a URL from a Share Extension
+    private func openURL(_ url: URL) {
         var responder: UIResponder? = self as UIResponder
         let selector = sel_registerName("openURL:")
         
         while responder != nil {
             if responder!.responds(to: selector) {
-                // Found a responder that can open URLs
-                _ = responder!.perform(selector, with: url)
+                responder!.perform(selector, with: url)
                 break
             }
             responder = responder?.next
         }
         
-        // Complete the extension after a brief delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        // Complete extension after brief delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.extensionContext?.completeRequest(returningItems: nil)
         }
     }
