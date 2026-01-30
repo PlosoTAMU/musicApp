@@ -1,28 +1,30 @@
 import Foundation
 
 enum IncomingShareQueue {
-    static let appGroupID = "group.com.ploso.ploso" // Change to match YOUR app group
+    // IMPORTANT: This MUST match in both main app AND share extension
+    static let appGroupID = "group.com.ploso.ploso"
     static let queueFilename = "incoming_urls.json"
-
+    
     static func enqueue(_ urlString: String) {
-        guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) else {
-            print("❌ Failed to get app group container")
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupID
+        ) else {
+            print("❌ Failed to get app group container - check entitlements!")
             return
         }
-
+        
         let fileURL = container.appendingPathComponent(queueFilename)
-
+        
         var existing: [String] = []
         if let data = try? Data(contentsOf: fileURL),
            let decoded = try? JSONDecoder().decode([String].self, from: data) {
             existing = decoded
         }
-
-        // Add if not duplicate
+        
         if !existing.contains(urlString) {
             existing.append(urlString)
         }
-
+        
         if let data = try? JSONEncoder().encode(existing) {
             try? data.write(to: fileURL, options: .atomic)
             print("✅ Enqueued URL: \(urlString)")
@@ -30,18 +32,24 @@ enum IncomingShareQueue {
     }
     
     static func drain() -> [String] {
-        guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) else {
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupID
+        ) else {
+            print("❌ Failed to get app group container for drain")
             return []
         }
+        
         let fileURL = container.appendingPathComponent(queueFilename)
-
+        
         guard let data = try? Data(contentsOf: fileURL),
               let decoded = try? JSONDecoder().decode([String].self, from: data) else {
             return []
         }
-
-        // Clear queue
+        
+        // Clear the queue
         try? FileManager.default.removeItem(at: fileURL)
+        
+        print("📤 Drained \(decoded.count) URLs")
         return decoded
     }
 }

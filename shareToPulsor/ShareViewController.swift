@@ -5,31 +5,30 @@ final class ShareViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        // Make background transparent so popup is minimal
         view.backgroundColor = UIColor.black.withAlphaComponent(0.3)
     }
-
+    
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         handleSharedItems()
     }
-
+    
     private func handleSharedItems() {
         guard let extensionItems = extensionContext?.inputItems as? [NSExtensionItem] else {
-            openAppAndFinish(withURL: nil)
+            completeAndOpenApp(urlString: nil)
             return
         }
-
+        
         let providers = extensionItems
             .compactMap { $0.attachments }
             .flatMap { $0 }
-
+        
         let urlType = UTType.url.identifier
         let textType = UTType.plainText.identifier
-
+        
         let group = DispatchGroup()
         var foundURL: String?
-
+        
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(urlType) {
                 group.enter()
@@ -49,19 +48,22 @@ final class ShareViewController: UIViewController {
                 }
             }
         }
-
+        
         group.notify(queue: .main) { [weak self] in
-            if let urlString = foundURL {
-                IncomingShareQueue.enqueue(urlString)
-            }
-            self?.openAppAndFinish(withURL: foundURL)
+            self?.completeAndOpenApp(urlString: foundURL)
         }
     }
-
-    private func openAppAndFinish(withURL urlString: String?) {
-        // Build URL with the shared link as parameter
+    
+    private func completeAndOpenApp(urlString: String?) {
+        // STEP 1: Save URL to shared container (app group)
+        if let urlString = urlString {
+            IncomingShareQueue.enqueue(urlString)
+            print("✅ Enqueued: \(urlString)")
+        }
+        
+        // STEP 2: Build the custom URL scheme
         var components = URLComponents()
-        components.scheme = "pulsor"  // CHANGE THIS to match your URL scheme
+        components.scheme = "pulsor"
         components.host = "import"
         
         if let urlString = urlString,
@@ -69,52 +71,35 @@ final class ShareViewController: UIViewController {
             components.queryItems = [URLQueryItem(name: "url", value: encoded)]
         }
         
-        guard let url = components.url else {
-            completeExtension()
+        guard let openURL = components.url else {
+            extensionContext?.completeRequest(returningItems: nil)
             return
         }
         
-        // CRITICAL: Use a small delay to let the UI settle
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.openURL(url)
-        }
+        // STEP 3: Open URL using the only reliable method for share extensions
+        openURLInApp(openURL)
     }
     
-    private func openURL(_ url: URL) {
-        // Method 1: Try extensionContext.open (works on iOS 13+)
-        extensionContext?.open(url) { [weak self] success in
-            if success {
-                print("✅ Opened app via extensionContext")
-            } else {
-                print("❌ extensionContext.open failed, trying fallback")
-                // Method 2: Fallback using responder chain
-                self?.openURLViaResponderChain(url)
-            }
-            
-            // Complete after a short delay to ensure URL opens
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self?.completeExtension()
-            }
-        }
-    }
-    
-    private func openURLViaResponderChain(_ url: URL) {
-        let selector = NSSelectorFromString("openURL:")
-        var responder: UIResponder? = self
+    private func openURLInApp(_ url: URL) {
+        // This is the ONLY reliable way to open a URL from a share extension
+        var responder: UIResponder? = self as UIResponder
+        let selector = sel_registerName("openURL:")
         
-        while let current = responder {
-            if current.responds(to: selector) {
-                current.perform(selector, with: url)
-                return
+        while responder != nil {
+            if responder!.responds(to: selector) {
+                // Found a responder that can open URLs
+                _ = responder!.perform(selector, with: url)
+                break
             }
-            responder = current.next
+            responder = responder?.next
+        }
+        
+        // Complete the extension after a brief delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.extensionContext?.completeRequest(returningItems: nil)
         }
     }
-
-    private func completeExtension() {
-        extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
-    }
-
+    
     private static func extractURL(from text: String) -> String? {
         let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
         let range = NSRange(text.startIndex..., in: text)
