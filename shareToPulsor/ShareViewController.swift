@@ -15,7 +15,7 @@ final class ShareViewController: UIViewController {
     
     private func handleSharedItems() {
         guard let extensionItems = extensionContext?.inputItems as? [NSExtensionItem] else {
-            completeAndOpenApp(urlString: nil)
+            openAppAndFinish(withURL: nil)
             return
         }
         
@@ -50,18 +50,15 @@ final class ShareViewController: UIViewController {
         }
         
         group.notify(queue: .main) { [weak self] in
-            self?.completeAndOpenApp(urlString: foundURL)
+            if let urlString = foundURL {
+                IncomingShareQueue.enqueue(urlString)
+            }
+            self?.openAppAndFinish(withURL: foundURL)
         }
     }
     
-    private func completeAndOpenApp(urlString: String?) {
-        // Step 1: Save URL to shared container (this ALWAYS works)
-        if let urlString = urlString {
-            IncomingShareQueue.enqueue(urlString)
-            print("✅ Enqueued URL: \(urlString)")
-        }
-        
-        // Step 2: Build custom URL scheme
+    private func openAppAndFinish(withURL urlString: String?) {
+        // Build URL with the shared link as parameter
         var components = URLComponents()
         components.scheme = "pulsor"
         components.host = "import"
@@ -72,31 +69,49 @@ final class ShareViewController: UIViewController {
         }
         
         guard let openURL = components.url else {
-            extensionContext?.completeRequest(returningItems: nil)
+            completeExtension()
             return
         }
         
-        // Step 3: Open app using the ONLY method that works for share extensions
-        openURL(openURL)
+        // CRITICAL: Use a small delay to let the UI settle
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.tryOpenURL(openURL)  // ✅ Changed from openURL(url) to tryOpenURL(openURL)
+        }
     }
     
-    // THIS is the only reliable way to open a URL from a Share Extension
-    private func openURL(_ url: URL) {
-        var responder: UIResponder? = self as UIResponder
-        let selector = sel_registerName("openURL:")
-        
-        while responder != nil {
-            if responder!.responds(to: selector) {
-                responder!.perform(selector, with: url)
-                break
+    private func tryOpenURL(_ url: URL) {  // ✅ Renamed function to avoid conflict
+        // Method 1: Try extensionContext.open (works on iOS 13+)
+        extensionContext?.open(url) { [weak self] success in
+            if success {
+                print("✅ Opened app via extensionContext")
+            } else {
+                print("❌ extensionContext.open failed, trying fallback")
+                // Method 2: Fallback using responder chain
+                self?.openURLViaResponderChain(url)
             }
-            responder = responder?.next
+            
+            // Complete after a short delay to ensure URL opens
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self?.completeExtension()
+            }
         }
+    }
+    
+    private func openURLViaResponderChain(_ url: URL) {
+        let selector = NSSelectorFromString("openURL:")
+        var responder: UIResponder? = self
         
-        // Complete extension after brief delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.extensionContext?.completeRequest(returningItems: nil)
+        while let current = responder {
+            if current.responds(to: selector) {
+                current.perform(selector, with: url)
+                return
+            }
+            responder = current.next
         }
+    }
+    
+    private func completeExtension() {
+        extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
     }
     
     private static func extractURL(from text: String) -> String? {
