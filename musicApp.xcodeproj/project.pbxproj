@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		BF1938442F2079030067A7A8 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BFB82D972F203CDD005AC5A2 /* Python.xcframework */; };
 		BF1938452F2079030067A7A8 /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BFB82D972F203CDD005AC5A2 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BF20D2662F2D74B500ACD1B3 /* ShareToPulsor.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BFDA0F372F2D6997008E3F67 /* ShareToPulsor.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BF33574B2F1F0CD200C362AD /* ffmpegkit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */; };
 		BF33574C2F1F0CD200C362AD /* ffmpegkit.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		BF33574D2F1F0CD300C362AD /* libavcodec.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782112F1ECD7E0056E8CB /* libavcodec.xcframework */; };
@@ -27,11 +28,17 @@
 		BF33575A2F1F0CDB00C362AD /* libswscale.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		BF5779242F1EB4630056E8CB /* python-stdlib in Resources */ = {isa = PBXBuildFile; fileRef = BF5779232F1EB45D0056E8CB /* python-stdlib */; };
 		BF5781D02F1EB4D70056E8CB /* yt_dlp in Resources */ = {isa = PBXBuildFile; fileRef = BF5781CF2F1EB4D20056E8CB /* yt_dlp */; };
-		BFDA0F412F2D6997008E3F67 /* ShareToPulsor.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BFDA0F372F2D6997008E3F67 /* ShareToPulsor.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		BFDA0F3F2F2D6997008E3F67 /* PBXContainerItemProxy */ = {
+		BF20D2672F2D74B500ACD1B3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BFFDD5E72F1C47850032409D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BFDA0F362F2D6997008E3F67;
+			remoteInfo = ShareToPulsor;
+		};
+		BF20D26A2F2D74C000ACD1B3 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = BFFDD5E72F1C47850032409D /* Project object */;
 			proxyType = 1;
@@ -55,6 +62,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		BF20D2692F2D74B500ACD1B3 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				BF20D2662F2D74B500ACD1B3 /* ShareToPulsor.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		BF5765212F1EB3D00056E8CB /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -72,17 +90,6 @@
 				BF33574C2F1F0CD200C362AD /* ffmpegkit.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		BFA75ADA2F2AFCC4007D334F /* Embed Foundation Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				BFDA0F412F2D6997008E3F67 /* ShareToPulsor.appex in Embed Foundation Extensions */,
-			);
-			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -113,28 +120,36 @@
 			);
 			target = BFFDD5EE2F1C47850032409D /* musicApp */;
 		};
-		BFDA0F452F2D6997008E3F67 /* Exceptions for "ShareToPulsor" folder in "ShareToPulsor" target */ = {
+		BFDA0F4A2F2D6D4E008E3F67 /* Exceptions for "musicApp" folder in "ShareToPulsor" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Info.plist,
+				IncomingShareQueue.swift,
 			);
 			target = BFDA0F362F2D6997008E3F67 /* ShareToPulsor */;
 		};
-		BFDA0F482F2D6AEF008E3F67 /* Exceptions for "ShareToPulsor" folder in "musicApp" target */ = {
+		BFDA0F522F2D70C2008E3F67 /* Exceptions for "ShareToPulsor" folder in "musicApp" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				ShareViewController.swift,
 			);
 			target = BFFDD5EE2F1C47850032409D /* musicApp */;
 		};
+		BFDA0F532F2D70C2008E3F67 /* Exceptions for "ShareToPulsor" folder in "ShareToPulsor" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				MainInterface.storyboard,
+				ShareViewController.swift,
+			);
+			target = BFDA0F362F2D6997008E3F67 /* ShareToPulsor */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		BFDA0F382F2D6997008E3F67 /* ShareToPulsor */ = {
+		BFDA0F4F2F2D70B9008E3F67 /* ShareToPulsor */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				BFDA0F482F2D6AEF008E3F67 /* Exceptions for "ShareToPulsor" folder in "musicApp" target */,
-				BFDA0F452F2D6997008E3F67 /* Exceptions for "ShareToPulsor" folder in "ShareToPulsor" target */,
+				BFDA0F522F2D70C2008E3F67 /* Exceptions for "ShareToPulsor" folder in "musicApp" target */,
+				BFDA0F532F2D70C2008E3F67 /* Exceptions for "ShareToPulsor" folder in "ShareToPulsor" target */,
 			);
 			path = ShareToPulsor;
 			sourceTree = "<group>";
@@ -143,6 +158,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				BF5A35C32F218F4E0044F80A /* Exceptions for "musicApp" folder in "musicApp" target */,
+				BFDA0F4A2F2D6D4E008E3F67 /* Exceptions for "musicApp" folder in "ShareToPulsor" target */,
 			);
 			path = musicApp;
 			sourceTree = "<group>";
@@ -200,6 +216,13 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		BF20D2652F2D74B500ACD1B3 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		BFFDD5E62F1C47850032409D = {
 			isa = PBXGroup;
 			children = (
@@ -209,7 +232,7 @@
 				BFFDD5F12F1C47850032409D /* musicApp */,
 				BFFDD6042F1C478D0032409D /* musicAppTests */,
 				BFFDD60E2F1C478D0032409D /* musicAppUITests */,
-				BFDA0F382F2D6997008E3F67 /* ShareToPulsor */,
+				BFDA0F4F2F2D70B9008E3F67 /* ShareToPulsor */,
 				BFFDD5F02F1C47850032409D /* Products */,
 				BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */,
 				BF5782112F1ECD7E0056E8CB /* libavcodec.xcframework */,
@@ -219,6 +242,7 @@
 				BF5782152F1ECD7E0056E8CB /* libavutil.xcframework */,
 				BF5782162F1ECD7E0056E8CB /* libswresample.xcframework */,
 				BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */,
+				BF20D2652F2D74B500ACD1B3 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -248,9 +272,6 @@
 			);
 			dependencies = (
 			);
-			fileSystemSynchronizedGroups = (
-				BFDA0F382F2D6997008E3F67 /* ShareToPulsor */,
-			);
 			name = ShareToPulsor;
 			packageProductDependencies = (
 			);
@@ -267,12 +288,13 @@
 				BFFDD5ED2F1C47850032409D /* Resources */,
 				BF5765212F1EB3D00056E8CB /* Embed Frameworks */,
 				BF1938462F20794C0067A7A8 /* ShellScript */,
-				BFA75ADA2F2AFCC4007D334F /* Embed Foundation Extensions */,
+				BF20D2692F2D74B500ACD1B3 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				BFDA0F402F2D6997008E3F67 /* PBXTargetDependency */,
+				BF20D2682F2D74B500ACD1B3 /* PBXTargetDependency */,
+				BF20D26B2F2D74C000ACD1B3 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				BFFDD5F12F1C47850032409D /* musicApp */,
@@ -466,10 +488,15 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		BFDA0F402F2D6997008E3F67 /* PBXTargetDependency */ = {
+		BF20D2682F2D74B500ACD1B3 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = BFDA0F362F2D6997008E3F67 /* ShareToPulsor */;
-			targetProxy = BFDA0F3F2F2D6997008E3F67 /* PBXContainerItemProxy */;
+			targetProxy = BF20D2672F2D74B500ACD1B3 /* PBXContainerItemProxy */;
+		};
+		BF20D26B2F2D74C000ACD1B3 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BFDA0F362F2D6997008E3F67 /* ShareToPulsor */;
+			targetProxy = BF20D26A2F2D74C000ACD1B3 /* PBXContainerItemProxy */;
 		};
 		BFFDD6032F1C478D0032409D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -488,6 +515,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareToPulsor/ShareToPulsor.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 74JNGCVVMG;
@@ -502,8 +530,9 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = Ploso.musicApp.share;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ploso.musicApp.share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -515,6 +544,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareToPulsor/ShareToPulsor.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 74JNGCVVMG;
@@ -529,8 +559,9 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = Ploso.musicApp.share;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ploso.musicApp.share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -663,6 +694,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = musicApp/musicApp.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"musicApp/Preview Content\"";
@@ -685,8 +717,9 @@
 					"$(PROJECT_DIR)/python-stdlib/lib/python3.11/lib-dynload",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = Ploso.musicApp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ploso.musicApp;
 				PRODUCT_NAME = Pulsor;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -699,6 +732,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = musicApp/musicApp.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"musicApp/Preview Content\"";
@@ -721,8 +755,9 @@
 					"$(PROJECT_DIR)/python-stdlib/lib/python3.11/lib-dynload",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = Ploso.musicApp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ploso.musicApp;
 				PRODUCT_NAME = Pulsor;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
