@@ -211,27 +211,37 @@ struct DownloadRow: View {
             .background(Color.black)
             .offset(x: offset)
             .gesture(
-                DragGesture(minimumDistance: 10, coordinateSpace: .local)
+                DragGesture(minimumDistance: 20, coordinateSpace: .local)
                     .onChanged { gesture in
-                        let translation = gesture.translation.width
-                        if translation > 0 {
+                        let horizontalTranslation = gesture.translation.width
+                        let verticalTranslation = abs(gesture.translation.height)
+                        
+                        // Only recognize as swipe if horizontal movement dominates
+                        if horizontalTranslation > 0 && horizontalTranslation > verticalTranslation * 2.5 {
                             isSwiping = true
                             withAnimation(.interactiveSpring()) {
-                                offset = min(translation, maxSwipeOffset)
+                                offset = min(horizontalTranslation, maxSwipeOffset)
                             }
                         }
                     }
                     .onEnded { gesture in
-                        let translation = gesture.translation.width
-                        let velocity = gesture.predictedEndTranslation.width - translation
+                        let horizontalTranslation = gesture.translation.width
+                        let verticalTranslation = abs(gesture.translation.height)
+                        let velocity = gesture.predictedEndTranslation.width - horizontalTranslation
                         
-                        if translation > queueTriggerThreshold || velocity > 50 {
-                            addToQueue()
+                        // Only queue if it was a primarily horizontal swipe
+                        if horizontalTranslation > verticalTranslation * 2.5 {
+                            if horizontalTranslation > queueTriggerThreshold || velocity > 50 {
+                                addToQueue()
+                            } else {
+                                resetSwipe()
+                            }
                         } else {
+                            // Was vertical scroll, just reset
                             resetSwipe()
                         }
                         
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                             isSwiping = false
                         }
                     }
