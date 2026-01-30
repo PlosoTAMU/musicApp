@@ -120,12 +120,20 @@
 			);
 			target = BFDA0F362F2D6997008E3F67 /* ShareToPulsor */;
 		};
+		BFDA0F482F2D6AEF008E3F67 /* Exceptions for "ShareToPulsor" folder in "musicApp" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				ShareViewController.swift,
+			);
+			target = BFFDD5EE2F1C47850032409D /* musicApp */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		BFDA0F382F2D6997008E3F67 /* ShareToPulsor */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				BFDA0F482F2D6AEF008E3F67 /* Exceptions for "ShareToPulsor" folder in "musicApp" target */,
 				BFDA0F452F2D6997008E3F67 /* Exceptions for "ShareToPulsor" folder in "ShareToPulsor" target */,
 			);
 			path = ShareToPulsor;
