@@ -81,7 +81,7 @@ struct ContentView: View {
         .onOpenURL { url in
             print("📥 App opened with URL: \(url)")
             
-            if url.scheme == "pulsor" {
+            if (url.scheme == "pulsor" || url.scheme == "musicApp") {
                 processIncomingShares()
                 
                 if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
