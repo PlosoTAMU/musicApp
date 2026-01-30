@@ -1,7 +1,7 @@
 import Foundation
 
 enum IncomingShareQueue {
-    // IMPORTANT: This MUST match in both main app AND share extension
+    // MUST match the App Group you created
     static let appGroupID = "group.com.ploso.ploso"
     static let queueFilename = "incoming_urls.json"
     

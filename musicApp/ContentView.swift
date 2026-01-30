@@ -81,12 +81,11 @@ struct ContentView: View {
         .onOpenURL { url in
             print("📥 App opened with URL: \(url)")
             
-            // Handle pulsor://import?url=ENCODED_URL
             if url.scheme == "pulsor" {
-                // First process any queued URLs
+                // Process queued URLs
                 processIncomingShares()
                 
-                // Also check if URL was passed directly
+                // Also handle direct URL parameter
                 if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
                 let urlParam = components.queryItems?.first(where: { $0.name == "url" })?.value,
                 let decodedURL = urlParam.removingPercentEncoding {
@@ -106,44 +105,40 @@ struct ContentView: View {
                 }
             }
         }
-    }
 
-    private func processIncomingShares() {
-        let urls = IncomingShareQueue.drain()
-        
-        guard !urls.isEmpty else { return }
-        
-        print("📥 Processing \(urls.count) shared URLs")
-        
-        for urlString in urls {
-            // Extract video ID
-            let videoID = extractYoutubeId(from: urlString) ?? ""
+        private func processIncomingShares() {
+            let urls = IncomingShareQueue.drain()
             
-            // Check for duplicates
-            if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) != nil {
-                print("⚠️ Skipping duplicate: \(videoID)")
-                continue
+            guard !urls.isEmpty else { return }
+            
+            print("📥 Processing \(urls.count) shared URLs")
+            
+            for urlString in urls {
+                let videoID = extractYoutubeId(from: urlString) ?? ""
+                
+                if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) != nil {
+                    print("⚠️ Skipping duplicate: \(videoID)")
+                    continue
+                }
+                
+                downloadManager.startBackgroundDownload(
+                    url: urlString,
+                    videoID: videoID,
+                    source: .youtube,
+                    title: "Downloading from share..."
+                )
             }
-            
-            // Start download
-            downloadManager.startBackgroundDownload(
-                url: urlString,
-                videoID: videoID,
-                source: .youtube,
-                title: "Downloading from share..."
-            )
         }
-    }
 
-    private func extractYoutubeId(from url: String) -> String? {
-        guard let urlComponents = URLComponents(string: url) else { return nil }
-        
-        if url.contains("youtu.be") {
-            return urlComponents.path.replacingOccurrences(of: "/", with: "")
-        } else {
-            return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
+        private func extractYoutubeId(from url: String) -> String? {
+            guard let urlComponents = URLComponents(string: url) else { return nil }
+            
+            if url.contains("youtu.be") {
+                return urlComponents.path.replacingOccurrences(of: "/", with: "")
+            } else {
+                return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
+            }
         }
-    }
 
 }
 
