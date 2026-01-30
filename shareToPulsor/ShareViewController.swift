@@ -173,7 +173,7 @@ final class ShareViewController: UIViewController {
     
     private func openAppAndFinish(withURL urlString: String?) {
         var components = URLComponents()
-        components.scheme = "pulsor"
+        components.scheme = "musicApp"
         components.host = "import"
         
         if let urlString = urlString,
