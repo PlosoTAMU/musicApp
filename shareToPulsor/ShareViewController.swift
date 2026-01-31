@@ -211,9 +211,9 @@ final class ShareViewController: UIViewController {
         components.scheme = "musicApp"
         components.host = "import"
         
-        if let urlString = urlString,
-           let encoded = urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            components.queryItems = [URLQueryItem(name: "url", value: encoded)]
+        if let urlString = urlString {
+            // Don't encode again - it's already a valid URL
+            components.queryItems = [URLQueryItem(name: "url", value: urlString)]
         }
         
         guard let url = components.url else {
@@ -250,19 +250,18 @@ final class ShareViewController: UIViewController {
     
     private func openURLViaResponderChain(_ url: URL) {
         print("🔄 Trying responder chain")
-        let selector = NSSelectorFromString("openURL:")
         var responder: UIResponder? = self
-        
         while let current = responder {
-            if current.responds(to: selector) {
-                print("✅ Responder found: \(type(of: current))")
-                current.perform(selector, with: url)
-                showSuccess()
+            if let application = current as? UIApplication {
+                print("✅ Found UIApplication")
+                application.open(url, options: [:]) { success in
+                    print(success ? "✅ UIApplication.open succeeded" : "❌ UIApplication.open failed")
+                    self.showSuccess()
+                }
                 return
             }
             responder = current.next
         }
-        
         print("❌ Responder chain failed")
     }
     
