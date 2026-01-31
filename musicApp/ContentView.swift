@@ -93,12 +93,6 @@ struct ContentView: View {
         // Handle both custom scheme and universal links
         if url.scheme == "pulsor" {
             processIncomingShares()
-            
-            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-            let urlParam = components.queryItems?.first(where: { $0.name == "url" })?.value,
-            let decodedURL = urlParam.removingPercentEncoding {
-                startDownload(from: decodedURL)
-            }
         } else if urlString.contains("youtube.com") || urlString.contains("youtu.be") {
             // Direct YouTube URL
             startDownload(from: urlString)
