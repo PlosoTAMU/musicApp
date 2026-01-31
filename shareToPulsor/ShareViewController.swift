@@ -10,18 +10,20 @@ final class ShareViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        print("🟢 viewDidLoad")
         setupUI()
     }
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        print("🟢 viewDidAppear")
         handleSharedItems()
     }
     
     private func setupUI() {
+        print("🎨 setupUI")
         view.backgroundColor = UIColor.black.withAlphaComponent(0.5)
         
-        // Container
         containerView.backgroundColor = UIColor.systemBackground
         containerView.layer.cornerRadius = 20
         containerView.layer.shadowColor = UIColor.black.cgColor
@@ -31,20 +33,17 @@ final class ShareViewController: UIViewController {
         containerView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(containerView)
         
-        // App icon
         iconImageView.image = UIImage(systemName: "arrow.down.circle.fill")
         iconImageView.tintColor = .systemBlue
         iconImageView.contentMode = .scaleAspectFit
         iconImageView.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(iconImageView)
         
-        // Activity indicator
         activityIndicator.color = .systemBlue
         activityIndicator.translatesAutoresizingMaskIntoConstraints = false
         activityIndicator.startAnimating()
         containerView.addSubview(activityIndicator)
         
-        // Status label
         statusLabel.text = "Sending to Pulsor..."
         statusLabel.textColor = .label
         statusLabel.font = .systemFont(ofSize: 17, weight: .semibold)
@@ -72,24 +71,31 @@ final class ShareViewController: UIViewController {
             statusLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16)
         ])
         
-        // Tap background to cancel
         let tap = UITapGestureRecognizer(target: self, action: #selector(cancelTapped))
         view.addGestureRecognizer(tap)
     }
     
     @objc private func cancelTapped() {
+        print("🛑 User tapped cancel")
         extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
     }
     
     private func handleSharedItems() {
+        print("📦 handleSharedItems")
+        
         guard let extensionItems = extensionContext?.inputItems as? [NSExtensionItem] else {
+            print("❌ No extension items")
             showError("No items found")
             return
         }
         
+        print("📦 Extension items count: \(extensionItems.count)")
+        
         let providers = extensionItems
             .compactMap { $0.attachments }
             .flatMap { $0 }
+        
+        print("📎 Total item providers: \(providers.count)")
         
         guard !providers.isEmpty else {
             showError("No attachments")
@@ -102,52 +108,77 @@ final class ShareViewController: UIViewController {
         let group = DispatchGroup()
         var foundURL: String?
         
-        for provider in providers {
+        for (index, provider) in providers.enumerated() {
+            print("🔍 Inspecting provider \(index)")
+            
             if provider.hasItemConformingToTypeIdentifier(urlType) {
+                print("➡️ Provider has URL type")
                 group.enter()
                 provider.loadItem(forTypeIdentifier: urlType, options: nil) { item, error in
-                    defer { group.leave() }
+                    defer {
+                        print("⬅️ Leaving group (URL)")
+                        group.leave()
+                    }
+                    
                     if let url = item as? URL {
                         foundURL = url.absoluteString
-                        print("✅ Found URL: \(url.absoluteString)")
+                        print("✅ Loaded URL: \(url.absoluteString)")
                     } else if let error = error {
                         print("❌ Error loading URL: \(error)")
+                    } else {
+                        print("⚠️ URL item was nil or unexpected type")
                     }
                 }
+                
             } else if provider.hasItemConformingToTypeIdentifier(textType) {
+                print("➡️ Provider has text type")
                 group.enter()
                 provider.loadItem(forTypeIdentifier: textType, options: nil) { item, error in
-                    defer { group.leave() }
+                    defer {
+                        print("⬅️ Leaving group (Text)")
+                        group.leave()
+                    }
+                    
                     if let text = item as? String {
+                        print("📝 Loaded text: \(text)")
                         foundURL = Self.extractURL(from: text)
-                        print("✅ Extracted URL from text: \(foundURL ?? "none")")
+                        print("🔗 Extracted URL: \(foundURL ?? "nil")")
                     } else if let error = error {
                         print("❌ Error loading text: \(error)")
+                    } else {
+                        print("⚠️ Text item was nil or unexpected type")
                     }
                 }
+            } else {
+                print("🚫 Provider does not support URL or text")
             }
         }
         
         group.notify(queue: .main) { [weak self] in
+            print("📢 DispatchGroup completed")
             guard let self = self else { return }
             
             if let urlString = foundURL {
+                print("🎯 Final URL selected: \(urlString)")
                 self.updateStatus("Saving...")
                 IncomingShareQueue.enqueue(urlString)
                 self.openAppAndFinish(withURL: urlString)
             } else {
+                print("❌ No URL found after processing all providers")
                 self.showError("No URL found")
             }
         }
     }
     
     private func updateStatus(_ text: String) {
+        print("ℹ️ Status update: \(text)")
         DispatchQueue.main.async {
             self.statusLabel.text = text
         }
     }
     
     private func showError(_ message: String) {
+        print("🧨 showError: \(message)")
         DispatchQueue.main.async {
             self.activityIndicator.stopAnimating()
             self.iconImageView.image = UIImage(systemName: "xmark.circle.fill")
@@ -156,12 +187,14 @@ final class ShareViewController: UIViewController {
             self.statusLabel.textColor = .systemRed
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                print("🧨 Completing extension after error")
                 self.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
             }
         }
     }
     
     private func showSuccess() {
+        print("🎉 showSuccess")
         DispatchQueue.main.async {
             self.activityIndicator.stopAnimating()
             self.iconImageView.image = UIImage(systemName: "checkmark.circle.fill")
@@ -172,6 +205,8 @@ final class ShareViewController: UIViewController {
     }
     
     private func openAppAndFinish(withURL urlString: String?) {
+        print("🚀 Preparing to open app with URL: \(urlString ?? "nil")")
+        
         var components = URLComponents()
         components.scheme = "musicApp"
         components.host = "import"
@@ -182,12 +217,12 @@ final class ShareViewController: UIViewController {
         }
         
         guard let url = components.url else {
+            print("❌ Failed to create deep link URL")
             showError("Failed to create URL")
             return
         }
         
-        print("🚀 Opening URL: \(url.absoluteString)")
-        
+        print("🔗 Deep link URL: \(url.absoluteString)")
         updateStatus("Opening Pulsor...")
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -196,45 +231,49 @@ final class ShareViewController: UIViewController {
     }
     
     private func openURL(_ url: URL) {
-        print("🚀 Attempting to open: \(url.absoluteString)")
-        
-        // Check if we can open the URL
+        print("🌍 Attempting extensionContext.open")
         
         extensionContext?.open(url) { [weak self] success in
-            DispatchQueue.main.async {
-                print(success ? "✅ extensionContext.open succeeded" : "❌ extensionContext.open failed")
-                
-                if !success {
-                    self?.openURLViaResponderChain(url)
-                }
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                    self?.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
-                }
+            print(success ? "✅ extensionContext.open succeeded" : "❌ extensionContext.open failed")
+            
+            if !success {
+                print("↩️ Falling back to responder chain")
+                self?.openURLViaResponderChain(url)
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                print("🏁 Completing extension request")
+                self?.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
             }
         }
     }
     
     private func openURLViaResponderChain(_ url: URL) {
+        print("🔄 Trying responder chain")
         let selector = NSSelectorFromString("openURL:")
         var responder: UIResponder? = self
         
         while let current = responder {
             if current.responds(to: selector) {
+                print("✅ Responder found: \(type(of: current))")
                 current.perform(selector, with: url)
                 showSuccess()
-                print("✅ Opened via responder chain")
                 return
             }
             responder = current.next
         }
-        print("❌ All methods failed")
+        
+        print("❌ Responder chain failed")
     }
     
     private static func extractURL(from text: String) -> String? {
+        print("🔎 Running NSDataDetector")
         let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
         let range = NSRange(text.startIndex..., in: text)
-        return detector?.matches(in: text, options: [], range: range)
-            .first?.url?.absoluteString
+        return detector?
+            .matches(in: text, options: [], range: range)
+            .first?
+            .url?
+            .absoluteString
     }
 }
