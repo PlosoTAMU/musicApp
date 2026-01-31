@@ -821,18 +821,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         play(track)
     }
     
-    private func startTimeUpdates() {
-        stopTimeUpdates()
-        
-        displayLink = CADisplayLink(target: self, selector: #selector(updateTime))
-        displayLink?.preferredFramesPerSecond = 2
-        displayLink?.add(to: .main, forMode: .common)
-    }
-    
-    private func stopTimeUpdates() {
-        displayLink?.invalidate()
-        displayLink = nil
-    }
+
     
     func pauseTimeUpdates() {
         stopTimeUpdates()

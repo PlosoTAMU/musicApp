@@ -1,29 +1,54 @@
 import Foundation
 
-enum TrackSource {
-    case youtubeDownload
-    case spotifyDownload  
-    case localImport
-}
-
 struct Track: Identifiable, Codable, Equatable {
     let id: UUID
     let name: String
     let url: URL
     let folderName: String
-    let source: TrackSource
     var bookmarkData: Data?
     
-    init(id: UUID = UUID(), name: String, url: URL, folderName: String, source: TrackSource = .localImport) {
+    // FIXED: Custom init for runtime creation
+    init(id: UUID = UUID(), name: String, url: URL, folderName: String) {
         self.id = id
         self.name = name
         self.url = url
         self.folderName = folderName
-        self.source = source
         
-        if source == .localImport {
-            self.bookmarkData = try? url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+        // Create bookmark for imported files
+        if folderName != "YouTube Downloads" {
+            self.bookmarkData = try? url.bookmarkData(
+                options: .minimalBookmark,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
         }
+    }
+    
+    // FIXED: Explicit Codable conformance (required when you have custom init)
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case url
+        case folderName
+        case bookmarkData
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        url = try container.decode(URL.self, forKey: .url)
+        folderName = try container.decode(String.self, forKey: .folderName)
+        bookmarkData = try container.decodeIfPresent(Data.self, forKey: .bookmarkData)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, for: .id)
+        try container.encode(name, for: .name)
+        try container.encode(url, for: .url)
+        try container.encode(folderName, for: .folderName)
+        try container.encodeIfPresent(bookmarkData, for: .bookmarkData)
     }
     
     // Equatable conformance
@@ -41,7 +66,12 @@ struct Track: Identifiable, Codable, Equatable {
         // For imported files, resolve from bookmark
         if let bookmarkData = bookmarkData {
             var isStale = false
-            if let resolvedURL = try? URL(resolvingBookmarkData: bookmarkData, options: .withoutUI, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+            if let resolvedURL = try? URL(
+                resolvingBookmarkData: bookmarkData,
+                options: .withoutUI,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
                 return resolvedURL
             }
         }
