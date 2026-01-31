@@ -83,10 +83,10 @@ struct ContentView: View {
             
             if (url.scheme == "pulsor" || url.scheme == "musicApp") {
                 processIncomingShares()
-                }
             }
         }
     }
+}
     
     // ✅ FIXED: Moved outside body, made static helper functions
     private func processIncomingShares() {
