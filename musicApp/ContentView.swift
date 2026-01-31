@@ -80,9 +80,42 @@ struct ContentView: View {
         }
         .onOpenURL { url in
             print("📥 App opened with URL: \(url)")
+            handleIncomingURL(url)
+        }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
+            guard let incomingURL = userActivity.webpageURL else { return }
+            print("📥 Universal Link: \(incomingURL)")
+            handleIncomingURL(incomingURL)
+        }
+
+        private func handleIncomingURL(_ url: URL) {
+            let urlString = url.absoluteString
             
-            if (url.scheme == "pulsor" || url.scheme == "musicApp") {
+            // Handle both custom scheme and universal links
+            if url.scheme == "pulsor" {
                 processIncomingShares()
+                
+                if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                let urlParam = components.queryItems?.first(where: { $0.name == "url" })?.value,
+                let decodedURL = urlParam.removingPercentEncoding {
+                    startDownload(from: decodedURL)
+                }
+            } else if urlString.contains("youtube.com") || urlString.contains("youtu.be") {
+                // Direct YouTube URL
+                startDownload(from: urlString)
+            }
+        }
+
+        private func startDownload(from urlString: String) {
+            let videoID = extractYoutubeId(from: urlString) ?? ""
+            
+            if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) == nil {
+                downloadManager.startBackgroundDownload(
+                    url: urlString,
+                    videoID: videoID,
+                    source: .youtube,
+                    title: "Downloading..."
+                )
             }
         }
     }
@@ -112,10 +145,26 @@ struct ContentView: View {
         }
     }
     
-    // ✅ FIXED: Made static so it can be called from onOpenURL
-    private static func extractYoutubeId(from url: String) -> String? {
-        guard let urlComponents = URLComponents(string: url) else { return nil }
+    private func loadWaveform() {
+        guard let track = audioPlayer.currentTrack else {
+            waveform = nil
+            return
+        }
         
+        let videoID = extractYoutubeId(from: track.url.absoluteString) ?? track.url.lastPathComponent
+        let waveformURL = getWaveformURL(for: videoID)
+        
+        waveform = WaveformGenerator.load(from: waveformURL)
+    }
+    
+    private func getWaveformURL(for videoID: String) -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Waveforms", isDirectory: true)
+            .appendingPathComponent("\(videoID).waveform")
+    }
+    
+    private func extractYoutubeId(from url: String) -> String? {
+        guard let urlComponents = URLComponents(string: url) else { return nil }
         if url.contains("youtu.be") {
             return urlComponents.path.replacingOccurrences(of: "/", with: "")
         } else {
@@ -391,43 +440,55 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                    Image(uiImage: thumbnailImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                Zstack {
+                    if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
+                        Image(uiImage: thumbnailImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 290, height: 290)
+                            .clipShape(RoundedRectangle(cornerRadius: 20))
+                            .shadow(color: .black.opacity(1), radius: 40, y: 12)
+                            .onTapGesture {
+                                if audioPlayer.isPlaying {
+                                    audioPlayer.pause()
+                                } else {
+                                    audioPlayer.resume()
+                                }
+                            }
+                    } else {
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(LinearGradient(
+                                colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                            .frame(width: 290, height: 290)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 80))
+                                    .foregroundColor(.white.opacity(0.5))
+                            )
+                            .shadow(color: .black.opacity(1), radius: 40, y: 12)
+                            .onTapGesture {
+                                if audioPlayer.isPlaying {
+                                    audioPlayer.pause()
+                                } else {
+                                    audioPlayer.resume()
+                                }
+                            }
+                    }
+                    if let waveform = waveform {
+                        VStack {
+                            Spacer()
+                            WaveformView(waveform: waveform, barCount: 50, color: .white)
+                                .frame(height: 60)
+                                .padding(.horizontal, 20)
+                                .padding(.bottom, 20)
+                        }
                         .frame(width: 290, height: 290)
                         .clipShape(RoundedRectangle(cornerRadius: 20))
-                        .shadow(color: .black.opacity(1), radius: 40, y: 12)
-                        .onTapGesture {
-                            if audioPlayer.isPlaying {
-                                audioPlayer.pause()
-                            } else {
-                                audioPlayer.resume()
-                            }
-                        }
-                } else {
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(LinearGradient(
-                            colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ))
-                        .frame(width: 290, height: 290)
-                        .overlay(
-                            Image(systemName: "music.note")
-                                .font(.system(size: 80))
-                                .foregroundColor(.white.opacity(0.5))
-                        )
-                        .shadow(color: .black.opacity(1), radius: 40, y: 12)
-                        .onTapGesture {
-                            if audioPlayer.isPlaying {
-                                audioPlayer.pause()
-                            } else {
-                                audioPlayer.resume()
-                            }
-                        }
+                    }
                 }
-                
                 Spacer()
                 
                 VStack(spacing: 6) {
@@ -567,12 +628,14 @@ struct NowPlayingView: View {
         .onAppear {
             updateBackgroundImage()
             lockOrientation(.portrait)
+            loadWaveform()
         }
         .onDisappear {
             unlockOrientation()
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             updateBackgroundImage()
+            loadWaveform()
         }
         .gesture(
             DragGesture()

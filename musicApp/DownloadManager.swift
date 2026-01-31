@@ -106,6 +106,16 @@ class DownloadManager: ObservableObject {
                     videoID: videoID,
                     source: source
                 )
+
+                DispatchQueue.global(qos: .utility).async {
+                    if let audioURL = self.getDownloadedFileURL(for: videoID),
+                    let waveform = WaveformGenerator.generate(from: audioURL, targetSamples: 100) {
+                        
+                        let waveformURL = self.getWaveformURL(for: videoID)
+                        WaveformGenerator.save(waveform, to: waveformURL)
+                        print("✅ Waveform saved: \(waveform.count) samples")
+                    }
+                }
                 
                 await MainActor.run {
                     self.activeDownloads.removeAll { $0.videoID == videoID }
@@ -118,6 +128,14 @@ class DownloadManager: ObservableObject {
                 }
             }
         }
+    }
+
+    private func getWaveformURL(for videoID: String) -> URL {
+        let waveformsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Waveforms", isDirectory: true)
+        
+        try? FileManager.default.createDirectory(at: waveformsDir, withIntermediateDirectories: true)
+        return waveformsDir.appendingPathComponent("\(videoID).waveform")
     }
     
     func addDownload(_ download: Download) {
