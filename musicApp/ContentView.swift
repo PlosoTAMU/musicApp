@@ -461,6 +461,7 @@ struct NowPlayingView: View {
                 Spacer()
                 
                 ZStack {
+                    // Main thumbnail
                     if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                         Image(uiImage: thumbnailImage)
                             .resizable()
@@ -468,13 +469,6 @@ struct NowPlayingView: View {
                             .frame(width: 290, height: 290)
                             .clipShape(RoundedRectangle(cornerRadius: 20))
                             .shadow(color: .black.opacity(1), radius: 40, y: 12)
-                            .onTapGesture {
-                                if audioPlayer.isPlaying {
-                                    audioPlayer.pause()
-                                } else {
-                                    audioPlayer.resume()
-                                }
-                            }
                     } else {
                         RoundedRectangle(cornerRadius: 20)
                             .fill(LinearGradient(
@@ -489,24 +483,38 @@ struct NowPlayingView: View {
                                     .foregroundColor(.white.opacity(0.5))
                             )
                             .shadow(color: .black.opacity(1), radius: 40, y: 12)
-                            .onTapGesture {
-                                if audioPlayer.isPlaying {
-                                    audioPlayer.pause()
-                                } else {
-                                    audioPlayer.resume()
-                                }
-                            }
                     }
+                    
+                    // Waveform overlay around edges
                     if let waveform = waveform {
+                        // Top edge
                         VStack {
-                            Spacer()
                             WaveformView(waveform: waveform, barCount: 50, color: .white)
-                                .frame(height: 60)
+                                .frame(height: 40)
                                 .padding(.horizontal, 20)
-                                .padding(.bottom, 20)
+                                .padding(.top, 10)
+                            Spacer()
                         }
                         .frame(width: 290, height: 290)
                         .clipShape(RoundedRectangle(cornerRadius: 20))
+                        
+                        // Bottom edge
+                        VStack {
+                            Spacer()
+                            WaveformView(waveform: waveform, barCount: 50, color: .white)
+                                .frame(height: 40)
+                                .padding(.horizontal, 20)
+                                .padding(.bottom, 10)
+                        }
+                        .frame(width: 290, height: 290)
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                    }
+                }
+                .onTapGesture {
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
+                    } else {
+                        audioPlayer.resume()
                     }
                 }
                 Spacer()
