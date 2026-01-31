@@ -194,6 +194,8 @@ class DownloadManager: ObservableObject {
         guard let thumbnailFilename = download.thumbnailPath else { return nil }
         
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let thumbnailsDir = documentsPath.appendingPathComponent("Thumbnails", isDirectory: true)
+        let fullPath = thumbnailsDir.appendingPathComponent(thumbnailFilename).path
         
         if FileManager.default.fileExists(atPath: fullPath) {
             return fullPath
