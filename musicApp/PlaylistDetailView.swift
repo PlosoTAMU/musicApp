@@ -224,147 +224,56 @@ struct PlaylistSongRow: View {
     let playlist: Playlist
     let onTap: () -> Void
     
-    @State private var offset: CGFloat = 0
-    @State private var showQueueAdded = false
-    @State private var isSwiping = false
-    
-    private let queueTriggerThreshold: CGFloat = 60
-    private let maxSwipeOffset: CGFloat = 120
-    
-    // FIXED: Check if currently playing
     private var isCurrentlyPlaying: Bool {
         audioPlayer.currentTrack?.id == download.id
     }
     
     var body: some View {
-        ZStack(alignment: .leading) {
-            if offset > 5 {
-                HStack {
-                    Spacer()
-                    VStack(spacing: 4) {
-                        Image(systemName: "text.line.first.and.arrowtriangle.forward")
-                            .font(.system(size: 22))
-                            .foregroundColor(Color(red: 0.6, green: 1.0, blue: 0.6))
-                        Text("Add to Queue")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(Color(red: 0.6, green: 1.0, blue: 0.6))
-                    }
-                    .frame(width: 100)
-                    .padding(.trailing, 8)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(
-                    LinearGradient(
-                        colors: [Color(red: 0.0, green: 0.4, blue: 0.0), Color(red: 0.0, green: 0.5, blue: 0.0)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-            }
-            
+        HStack(spacing: 12) {
             HStack(spacing: 12) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        if let thumbPath = download.thumbnailPath,
-                           let image = UIImage(contentsOfFile: thumbPath) {
-                            Image(uiImage: image)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 48, height: 48)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                        } else {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.gray.opacity(0.3))
-                                .frame(width: 48, height: 48)
-                                .overlay(
-                                    Image(systemName: "music.note")
-                                        .foregroundColor(.gray)
-                                )
-                        }
-                    }
-                    
-                    // FIXED: Bold + Italic when playing
-                    Text(download.name)
-                        .font(.body)
-                        .fontWeight(isCurrentlyPlaying ? .bold : .regular)
-                        .italic(isCurrentlyPlaying)
-                        .lineLimit(1)
-                    
-                    Spacer()
-                    
-                    if isCurrentlyPlaying && audioPlayer.isPlaying {
-                        Image(systemName: "speaker.wave.2.fill")
-                            .foregroundColor(.blue)
+                ZStack {
+                    if let thumbPath = download.thumbnailPath,
+                       let image = UIImage(contentsOfFile: thumbPath) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 48, height: 48)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 48, height: 48)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .foregroundColor(.gray)
+                            )
                     }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    guard !isSwiping else { return }
-                    onTap()
+                
+                Text(download.name)
+                    .font(.body)
+                    .fontWeight(isCurrentlyPlaying ? .bold : .regular)
+                    .italic(isCurrentlyPlaying)
+                    .lineLimit(1)
+                
+                Spacer()
+                
+                if isCurrentlyPlaying && audioPlayer.isPlaying {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .foregroundColor(.blue)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(Color.black)
-            .offset(x: offset)
-            .gesture(
-                DragGesture(minimumDistance: 10, coordinateSpace: .local)
-                    .onChanged { gesture in
-                        let translation = gesture.translation.width
-                        if translation > 0 {
-                            isSwiping = true
-                            withAnimation(.interactiveSpring()) {
-                                offset = min(translation, maxSwipeOffset)
-                            }
-                        }
-                    }
-                    .onEnded { gesture in
-                        let translation = gesture.translation.width
-                        let velocity = gesture.predictedEndTranslation.width - translation
-                        
-                        if translation > queueTriggerThreshold || velocity > 50 {
-                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
-                            audioPlayer.addToQueue(track)
-                            
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            
-                            showQueueAdded = true
-                            
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                offset = maxSwipeOffset
-                            }
-                            
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                    offset = 0
-                                    showQueueAdded = false
-                                }
-                            }
-                        } else {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                offset = 0
-                            }
-                        }
-                        
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                            isSwiping = false
-                        }
-                    }
-            )
-            
-            if showQueueAdded {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text("Queued")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.green)
-                }
-                .padding(.leading, 12)
-                .transition(.opacity)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onTap()
             }
         }
-        .clipped()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.black)
+        .swipeToQueue {  // ✨ USE THE MODIFIER HERE
+            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+            audioPlayer.addToQueue(track)
+        }
     }
 }

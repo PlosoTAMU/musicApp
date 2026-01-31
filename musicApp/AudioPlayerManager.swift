@@ -36,7 +36,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var reverbNode: AVAudioUnitReverb?
     private var timePitchNode: AVAudioUnitTimePitch?
     
-    private var displayLink: CADisplayLink?
+    private var timeUpdateTimer: Timer?
+
+    private func startTimeUpdates() {
+        stopTimeUpdates()
+        timeUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.updateTime()
+        }
+    }
+
+    private func stopTimeUpdates() {
+        timeUpdateTimer?.invalidate()
+        timeUpdateTimer = nil
+    }
     private var seekOffset: TimeInterval = 0
     
     private var needsReschedule = false

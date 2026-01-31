@@ -5,6 +5,7 @@ class DownloadManager: ObservableObject {
     @Published var downloads: [Download] = []
     @Published var activeDownloads: [ActiveDownload] = []
     private var deletionTimers: [UUID: Timer] = [:]
+    private let timerLock = NSLock()
     
     private let downloadsFileURL: URL
     private let musicDirectory: URL
@@ -206,10 +207,13 @@ class DownloadManager: ObservableObject {
     func markForDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
         guard let index = downloads.firstIndex(where: { $0.id == download.id }) else { return }
         
+        timerLock.lock()
         if downloads[index].pendingDeletion {
+            timerLock.unlock()
             cancelDeletion(download)
             return
         }
+        timerLock.unlock()
         
         downloads[index].pendingDeletion = true
         objectWillChange.send()
@@ -217,16 +221,21 @@ class DownloadManager: ObservableObject {
         let timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
             self?.confirmDeletion(download, onDelete: onDelete)
         }
-        
+        timerLock.lock()
         deletionTimers[download.id] = timer
+        timerLock.unlock()
     }
     
     func cancelDeletion(_ download: Download) {
         guard let index = downloads.firstIndex(where: { $0.id == download.id }) else { return }
         
         downloads[index].pendingDeletion = false
+
+        timerLock.lock()
         deletionTimers[download.id]?.invalidate()
         deletionTimers.removeValue(forKey: download.id)
+        timerLock.unlock()
+
         objectWillChange.send()
     }
     
@@ -267,7 +276,9 @@ class DownloadManager: ObservableObject {
         }
         
         downloads.removeAll { $0.id == download.id }
+        timerLock.lock()
         deletionTimers.removeValue(forKey: download.id)
+        timerLock.unlock()
         saveDownloads()
         
         print("🗑️ [DownloadManager] Completely removed: \(download.name)")

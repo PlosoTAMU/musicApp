@@ -4,7 +4,6 @@ import AVFoundation
 
 class PlaylistManager: ObservableObject {
     @Published var playlists: [Playlist] = []
-    @Published var activeDownloads: [String: Double] = [:] // videoID : progress
     
     private let playlistsFileURL: URL
     
@@ -13,34 +12,7 @@ class PlaylistManager: ObservableObject {
         playlistsFileURL = documentsPath.appendingPathComponent("playlists.json")
         loadPlaylists()
     }
-    func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, completion: @escaping (Result<Download, Error>) -> Void) {
-        activeDownloads[videoID] = 0.0
-        
-        Task.detached(priority: .userInitiated) {
-            do {
-                let (fileURL, title) = try await EmbeddedPython.shared.downloadAudio(url: url)
-                let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
-                
-                let download = Download(
-                    name: title,
-                    url: fileURL,
-                    thumbnailPath: thumbnailPath?.path,
-                    videoID: videoID,
-                    source: source
-                )
-                
-                await MainActor.run {
-                    self.activeDownloads.removeValue(forKey: videoID)
-                    completion(.success(download))
-                }
-            } catch {
-                await MainActor.run {
-                    self.activeDownloads.removeValue(forKey: videoID)
-                    completion(.failure(error))
-                }
-            }
-        }
-    }
+    
     
     func createPlaylist(name: String) -> Playlist {
         let playlist = Playlist(name: name)

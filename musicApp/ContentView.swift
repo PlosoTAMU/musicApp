@@ -860,34 +860,32 @@ struct VolumeSlider: UIViewRepresentable {
 
 struct DownloadBanner: View {
     @ObservedObject var downloadManager: DownloadManager
-    @State private var dotCount = 1
     
     var body: some View {
-        VStack(spacing: 8) {
-            ForEach(downloadManager.activeDownloads) { download in
-                HStack(spacing: 12) {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    
-                    Text("\(download.title)\(String(repeating: ".", count: dotCount))")
-                        .font(.subheadline)
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    
-                    Spacer()
+        TimelineView(.periodic(from: .now, by: 0.5)) { timeline in
+            let dotCount = Int(timeline.date.timeIntervalSince1970 * 2) % 3 + 1
+            
+            VStack(spacing: 8) {
+                ForEach(downloadManager.activeDownloads) { download in
+                    HStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        
+                        Text("\(download.title)\(String(repeating: ".", count: dotCount))")
+                            .font(.subheadline)
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(12)
+                    .shadow(color: .black.opacity(0.1), radius: 5, y: 2)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.ultraThinMaterial)
-                .cornerRadius(12)
-                .shadow(color: .black.opacity(0.1), radius: 5, y: 2)
             }
-        }
-        .padding(.horizontal, 16)
-        .onAppear {
-            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-                dotCount = (dotCount % 3) + 1
-            }
+            .padding(.horizontal, 16)
         }
     }
 }

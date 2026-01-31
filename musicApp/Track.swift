@@ -1,22 +1,27 @@
 import Foundation
 
+enum TrackSource {
+    case youtubeDownload
+    case spotifyDownload  
+    case localImport
+}
+
 struct Track: Identifiable, Codable, Equatable {
     let id: UUID
     let name: String
     let url: URL
     let folderName: String
-    
-    // Store bookmark data for security-scoped resources
+    let source: TrackSource
     var bookmarkData: Data?
     
-    init(id: UUID = UUID(), name: String, url: URL, folderName: String) {
+    init(id: UUID = UUID(), name: String, url: URL, folderName: String, source: TrackSource = .localImport) {
         self.id = id
         self.name = name
         self.url = url
         self.folderName = folderName
+        self.source = source
         
-        // Create bookmark for imported files
-        if folderName != "YouTube Downloads" {
+        if source == .localImport {
             self.bookmarkData = try? url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
         }
     }

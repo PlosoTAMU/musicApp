@@ -93,174 +93,93 @@ struct DownloadRow: View {
     let onAddToPlaylist: () -> Void
     let onDelete: () -> Void
     
-    @State private var offset: CGFloat = 0
-    @State private var showQueueAdded = false
-    @State private var isSwiping = false
-    
-    private let queueTriggerThreshold: CGFloat = 60
-    private let maxSwipeOffset: CGFloat = 120
-    
-    // FIXED: Check if this is the currently playing track
     private var isCurrentlyPlaying: Bool {
         audioPlayer.currentTrack?.id == download.id
     }
     
     var body: some View {
-        ZStack(alignment: .leading) {
-            if offset > 5 {
-                HStack {
-                    Spacer()
-                    VStack(spacing: 4) {
-                        Image(systemName: "text.line.first.and.arrowtriangle.forward")
-                            .font(.system(size: 22))
-                            .foregroundColor(Color(red: 0.6, green: 1.0, blue: 0.6))
-                        Text("Add to Queue")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(Color(red: 0.6, green: 1.0, blue: 0.6))
+        HStack(spacing: 12) {
+            HStack(spacing: 12) {
+                // Thumbnail
+                ZStack {
+                    if let thumbPath = download.resolvedThumbnailPath,
+                       let image = UIImage(contentsOfFile: thumbPath) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 48, height: 48)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .grayscale(download.pendingDeletion ? 1.0 : 0.0)
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 48, height: 48)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            )
                     }
-                    .frame(width: 100)
-                    .padding(.trailing, 8)
+                    
+                    if isCurrentlyPlaying && audioPlayer.isPlaying {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.black.opacity(0.4))
+                            .frame(width: 48, height: 48)
+                        Image(systemName: "pause.fill")
+                            .foregroundColor(.white)
+                            .font(.system(size: 14))
+                    }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(
-                    LinearGradient(
-                        colors: [Color(red: 0.0, green: 0.4, blue: 0.0), Color(red: 0.0, green: 0.5, blue: 0.0)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
+                .frame(width: 48, height: 48)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(download.name)
+                        .font(.body)
+                        .fontWeight(isCurrentlyPlaying ? .bold : .regular)
+                        .italic(isCurrentlyPlaying)
+                        .foregroundColor(download.pendingDeletion ? .gray : .primary)
+                        .lineLimit(1)
+                    
+                    HStack(spacing: 4) {
+                        Image(systemName: sourceIcon(for: download.source))
+                            .font(.system(size: 8))
+                        Text(download.source.rawValue.capitalized)
+                            .font(.system(size: 10))
+                    }
+                    .foregroundColor(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                handleTap()
             }
             
-            HStack(spacing: 12) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        if let thumbPath = download.resolvedThumbnailPath,
-                            let image = UIImage(contentsOfFile: thumbPath) {
-                            Image(uiImage: image)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 48, height: 48)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .grayscale(download.pendingDeletion ? 1.0 : 0.0)
-                        } else {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.gray.opacity(0.3))
-                                .frame(width: 48, height: 48)
-                                .overlay(
-                                    Image(systemName: "music.note")
-                                        .font(.caption)
-                                        .foregroundColor(.gray)
-                                )
-                        }
-                        
-                        if isCurrentlyPlaying && audioPlayer.isPlaying {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.black.opacity(0.4))
-                                .frame(width: 48, height: 48)
-                            Image(systemName: "pause.fill")
-                                .foregroundColor(.white)
-                                .font(.system(size: 14))
-                        }
-                    }
-                    .frame(width: 48, height: 48)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        // FIXED: Bold + Italic when playing
-                        Text(download.name)
-                            .font(.body)
-                            .fontWeight(isCurrentlyPlaying ? .bold : .regular)
-                            .italic(isCurrentlyPlaying)
-                            .foregroundColor(download.pendingDeletion ? .gray : .primary)
-                            .lineLimit(1)
-                        
-                        HStack(spacing: 4) {
-                            Image(systemName: sourceIcon(for: download.source))
-                                .font(.system(size: 8))
-                            Text(download.source.rawValue.capitalized)
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(.secondary)
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    guard !isSwiping else { return }
-                    handleTap()
-                }
-                
-                Spacer()
-                
-                if !download.pendingDeletion {
-                    Button(action: onAddToPlaylist) {
-                        Image(systemName: "plus.circle")
-                            .font(.title3)
-                            .foregroundColor(.blue)
-                    }
-                    .buttonStyle(.plain)
-                }
-                
-                Button(action: onDelete) {
-                    Image(systemName: download.pendingDeletion ? "arrow.uturn.backward.circle.fill" : "trash")
-                        .font(.body)
-                        .foregroundColor(download.pendingDeletion ? .orange : .red)
+            Spacer()
+            
+            if !download.pendingDeletion {
+                Button(action: onAddToPlaylist) {
+                    Image(systemName: "plus.circle")
+                        .font(.title3)
+                        .foregroundColor(.blue)
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(Color.black)
-            .offset(x: offset)
-            .gesture(
-                DragGesture(minimumDistance: 20, coordinateSpace: .local)
-                    .onChanged { gesture in
-                        let horizontalTranslation = gesture.translation.width
-                        let verticalTranslation = abs(gesture.translation.height)
-                        
-                        // Only recognize as swipe if horizontal movement dominates
-                        if horizontalTranslation > 0 && horizontalTranslation > verticalTranslation * 2.5 {
-                            isSwiping = true
-                            withAnimation(.interactiveSpring()) {
-                                offset = min(horizontalTranslation, maxSwipeOffset)
-                            }
-                        }
-                    }
-                    .onEnded { gesture in
-                        let horizontalTranslation = gesture.translation.width
-                        let verticalTranslation = abs(gesture.translation.height)
-                        let velocity = gesture.predictedEndTranslation.width - horizontalTranslation
-                        
-                        // Only queue if it was a primarily horizontal swipe
-                        if horizontalTranslation > verticalTranslation * 2.5 {
-                            if horizontalTranslation > queueTriggerThreshold || velocity > 50 {
-                                addToQueue()
-                            } else {
-                                resetSwipe()
-                            }
-                        } else {
-                            // Was vertical scroll, just reset
-                            resetSwipe()
-                        }
-                        
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                            isSwiping = false
-                        }
-                    }
-            )
             
-            if showQueueAdded {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text("Queued")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.green)
-                }
-                .padding(.leading, 12)
-                .transition(.opacity)
+            Button(action: onDelete) {
+                Image(systemName: download.pendingDeletion ? "arrow.uturn.backward.circle.fill" : "trash")
+                    .font(.body)
+                    .foregroundColor(download.pendingDeletion ? .orange : .red)
             }
+            .buttonStyle(.plain)
         }
-        .clipped()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.black)
+        .swipeToQueue {  // ✨ USE THE MODIFIER HERE
+            let folderName = folderName(for: download.source)
+            let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
+            audioPlayer.addToQueue(track)
+        }
     }
     
     private func handleTap() {
@@ -276,31 +195,6 @@ struct DownloadRow: View {
             let folderName = folderName(for: download.source)
             let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
             audioPlayer.play(track)
-        }
-    }
-    
-    private func addToQueue() {
-        let folderName = folderName(for: download.source)
-        let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
-        audioPlayer.addToQueue(track)
-        
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        
-        showQueueAdded = true
-        
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-            offset = maxSwipeOffset
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            resetSwipe()
-            showQueueAdded = false
-        }
-    }
-    
-    private func resetSwipe() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-            offset = 0
         }
     }
     

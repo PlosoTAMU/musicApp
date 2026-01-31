@@ -18,12 +18,7 @@ extension URL {
 
 extension Download {
     func getThumbnailImage() -> UIImage? {
-        if let thumbPath = self.thumbnailPath,
-           let image = UIImage(contentsOfFile: thumbPath) {
-            return image
-        }
-        
-        // Fallback to URL-based lookup
-        return self.url.getThumbnailImage()
+        guard let path = resolvedThumbnailPath else { return nil }
+        return UIImage(contentsOfFile: path)
     }
 }
