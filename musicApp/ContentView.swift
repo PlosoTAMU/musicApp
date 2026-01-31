@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
+    @State private var waveform: [Float]? = nil
     
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -160,7 +161,7 @@ struct ContentView: View {
             .appendingPathComponent("\(videoID).waveform")
     }
     
-    private func extractYoutubeId(from url: String) -> String? {
+    private static func extractYoutubeId(from url: String) -> String? {
         guard let urlComponents = URLComponents(string: url) else { return nil }
         if url.contains("youtu.be") {
             return urlComponents.path.replacingOccurrences(of: "/", with: "")
@@ -361,6 +362,33 @@ struct NowPlayingView: View {
                 }
             }
         )
+    }
+
+    private func loadWaveform() {
+        guard let track = audioPlayer.currentTrack else {
+            waveform = nil
+            return
+        }
+        
+        let videoID = extractYoutubeId(from: track.url.absoluteString) ?? track.url.lastPathComponent
+        let waveformURL = getWaveformURL(for: videoID)
+        
+        waveform = WaveformGenerator.load(from: waveformURL)
+    }
+
+    private func getWaveformURL(for videoID: String) -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Waveforms", isDirectory: true)
+            .appendingPathComponent("\(videoID).waveform")
+    }
+
+    private func extractYoutubeId(from url: String) -> String? {
+        guard let urlComponents = URLComponents(string: url) else { return nil }
+        if url.contains("youtu.be") {
+            return urlComponents.path.replacingOccurrences(of: "/", with: "")
+        } else {
+            return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
+        }
     }
     
     private var speedBinding: Binding<Double> {
