@@ -86,7 +86,6 @@ struct ContentView: View {
             }
         }
     }
-}
     
     // ✅ FIXED: Moved outside body, made static helper functions
     private func processIncomingShares() {
