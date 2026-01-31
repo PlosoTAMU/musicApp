@@ -48,6 +48,7 @@ final class ShareViewController: UIViewController {
         statusLabel.textColor = .label
         statusLabel.font = .systemFont(ofSize: 17, weight: .semibold)
         statusLabel.textAlignment = .center
+        statusLabel.numberOfLines = 0
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(statusLabel)
         
@@ -160,14 +161,44 @@ final class ShareViewController: UIViewController {
             
             if let urlString = foundURL {
                 print("🎯 Final URL selected: \(urlString)")
-                self.updateStatus("Saving...")
-                IncomingShareQueue.enqueue(urlString)
-                self.openAppAndFinish(withURL: urlString)
+                
+                // ✅ FIXED: Validate URL before enqueueing
+                if self.isValidURL(urlString) {
+                    self.updateStatus("Saving...")
+                    IncomingShareQueue.enqueue(urlString)
+                    self.openAppAndFinish(withURL: urlString)
+                } else {
+                    print("❌ Invalid URL format")
+                    self.showError("Only YouTube and\nSpotify links supported")
+                }
             } else {
                 print("❌ No URL found after processing all providers")
                 self.showError("No URL found")
             }
         }
+    }
+    
+    // ✅ NEW: Validate URL is YouTube or Spotify
+    private func isValidURL(_ urlString: String) -> Bool {
+        let lowercased = urlString.lowercased()
+        
+        // YouTube detection
+        if lowercased.contains("youtube.com") ||
+           lowercased.contains("youtu.be") ||
+           lowercased.contains("m.youtube.com") {
+            print("✅ Detected YouTube URL")
+            return true
+        }
+        
+        // Spotify detection
+        if lowercased.contains("spotify.com") ||
+           lowercased.contains("open.spotify.com") {
+            print("✅ Detected Spotify URL")
+            return true
+        }
+        
+        print("❌ URL is neither YouTube nor Spotify")
+        return false
     }
     
     private func updateStatus(_ text: String) {
@@ -186,7 +217,7 @@ final class ShareViewController: UIViewController {
             self.statusLabel.text = message
             self.statusLabel.textColor = .systemRed
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 print("🧨 Completing extension after error")
                 self.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
             }
@@ -212,7 +243,6 @@ final class ShareViewController: UIViewController {
         components.host = "import"
         
         if let urlString = urlString {
-            // Don't encode again - it's already a valid URL
             components.queryItems = [URLQueryItem(name: "url", value: urlString)]
         }
         
@@ -224,6 +254,7 @@ final class ShareViewController: UIViewController {
         
         print("🔗 Deep link URL: \(url.absoluteString)")
         updateStatus("Opening Pulsor...")
+        showSuccess()
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.openURL(url)
@@ -256,7 +287,6 @@ final class ShareViewController: UIViewController {
                 print("✅ Found UIApplication")
                 application.open(url, options: [:]) { success in
                     print(success ? "✅ UIApplication.open succeeded" : "❌ UIApplication.open failed")
-                    self.showSuccess()
                 }
                 return
             }
