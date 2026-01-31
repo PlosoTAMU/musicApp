@@ -323,6 +323,10 @@ class EmbeddedPython: ObservableObject {
             }
         }
     }
+    // Make executePython accessible for Spotify conversion
+    func executePythonScript(_ script: String) -> Bool {
+        return executePython(script) != nil
+    }
     
     private func stopProgressMonitoring() {
         DispatchQueue.main.async { [weak self] in
