@@ -83,35 +83,37 @@ struct ContentView: View {
             handleIncomingURL(url)
         }
 
-        private func handleIncomingURL(_ url: URL) {
-            let urlString = url.absoluteString
-            
-            // Handle both custom scheme and universal links
-            if url.scheme == "pulsor" {
-                processIncomingShares()
-                
-                if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-                let urlParam = components.queryItems?.first(where: { $0.name == "url" })?.value,
-                let decodedURL = urlParam.removingPercentEncoding {
-                    startDownload(from: decodedURL)
-                }
-            } else if urlString.contains("youtube.com") || urlString.contains("youtu.be") {
-                // Direct YouTube URL
-                startDownload(from: urlString)
-            }
-        }
+        
+    }
 
-        private func startDownload(from urlString: String) {
-            let videoID = extractYoutubeId(from: urlString) ?? ""
+    private func handleIncomingURL(_ url: URL) {
+        let urlString = url.absoluteString
+        
+        // Handle both custom scheme and universal links
+        if url.scheme == "pulsor" {
+            processIncomingShares()
             
-            if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) == nil {
-                downloadManager.startBackgroundDownload(
-                    url: urlString,
-                    videoID: videoID,
-                    source: .youtube,
-                    title: "Downloading..."
-                )
+            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+            let urlParam = components.queryItems?.first(where: { $0.name == "url" })?.value,
+            let decodedURL = urlParam.removingPercentEncoding {
+                startDownload(from: decodedURL)
             }
+        } else if urlString.contains("youtube.com") || urlString.contains("youtu.be") {
+            // Direct YouTube URL
+            startDownload(from: urlString)
+        }
+    }
+
+    private func startDownload(from urlString: String) {
+        let videoID = extractYoutubeId(from: urlString) ?? ""
+        
+        if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) == nil {
+            downloadManager.startBackgroundDownload(
+                url: urlString,
+                videoID: videoID,
+                source: .youtube,
+                title: "Downloading..."
+            )
         }
     }
     
@@ -347,6 +349,7 @@ struct NowPlayingView: View {
     @State private var showPlaylistPicker = false
     @State private var backgroundImage: UIImage?
     @State private var orientation = UIDeviceOrientation.unknown
+    @State private var waveform: [Float]? = nil
     
     private var sliderBinding: Binding<Double> {
         Binding(
@@ -435,7 +438,7 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                Zstack {
+                ZStack {
                     if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                         Image(uiImage: thumbnailImage)
                             .resizable()
@@ -795,8 +798,14 @@ struct FastForwardButton: View {
 struct VolumeSlider: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
         let volumeView = MPVolumeView(frame: .zero)
-        volumeView.showsRouteButton = false
-        
+        volumeView.showsVolumeSlider = true
+        // Hide the route button by setting frame
+        for subview in volumeView.subviews {
+            if subview is UIButton {
+                subview.isHidden = true
+            }
+        }
+    
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
                 slider.minimumTrackTintColor = .white
