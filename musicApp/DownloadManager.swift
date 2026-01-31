@@ -87,7 +87,7 @@ class DownloadManager: ObservableObject {
                 
                 var thumbnailPath: URL? = nil
                 for attempt in 1...5 {
-                    await Task.sleep(1_000_000_000)
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
                     thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                     if thumbnailPath != nil { break }
                     print("🔄 Thumbnail check \(attempt)/5")
@@ -95,7 +95,7 @@ class DownloadManager: ObservableObject {
                 
                 if thumbnailPath == nil && !videoID.isEmpty {
                     EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
-                    await Task.sleep(2_000_000_000)
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
                     thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                 }
                 
@@ -194,8 +194,6 @@ class DownloadManager: ObservableObject {
         guard let thumbnailFilename = download.thumbnailPath else { return nil }
         
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let thumbnailsDir = documentsPath.appendingPathComponent("Thumbnails", isDirectory: true)
-        let fullPath = thumbnailsDir.appendingPathComponent(thumbnailFilename).path
         
         if FileManager.default.fileExists(atPath: fullPath) {
             return fullPath
@@ -342,18 +340,10 @@ class DownloadManager: ObservableObject {
             }
         }
         
-        // If not found by videoID, search through downloaded files
-        return downloadedFiles.first { $0.lastPathComponent.contains(videoID) }
+        // Search through downloads array instead
+        return downloads.first(where: { $0.url.lastPathComponent.contains(videoID) })?.url
     }
     
-    // ✅ ADD THIS METHOD TOO
-    private func getWaveformURL(for videoID: String) -> URL {
-        let waveformsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Waveforms", isDirectory: true)
-        
-        try? FileManager.default.createDirectory(at: waveformsDir, withIntermediateDirectories: true)
-        return waveformsDir.appendingPathComponent("\(videoID).waveform")
-    }
     
     private func saveDownloads() {
         do {
