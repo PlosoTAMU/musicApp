@@ -83,23 +83,6 @@ struct ContentView: View {
             
             if (url.scheme == "pulsor" || url.scheme == "musicApp") {
                 processIncomingShares()
-                
-                if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-                   let urlParam = components.queryItems?.first(where: { $0.name == "url" })?.value,
-                   let decodedURL = urlParam.removingPercentEncoding {
-                    
-                    print("📥 Direct URL from share: \(decodedURL)")
-                    
-                    let videoID = Self.extractYoutubeId(from: decodedURL) ?? ""
-                    
-                    if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) == nil {
-                        downloadManager.startBackgroundDownload(
-                            url: decodedURL,
-                            videoID: videoID,
-                            source: .youtube,
-                            title: "Downloading..."
-                        )
-                    }
                 }
             }
         }
