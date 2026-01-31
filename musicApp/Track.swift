@@ -7,7 +7,7 @@ struct Track: Identifiable, Codable, Equatable {
     let folderName: String
     var bookmarkData: Data?
     
-    // FIXED: Custom init for runtime creation
+    // Custom init for runtime creation
     init(id: UUID = UUID(), name: String, url: URL, folderName: String) {
         self.id = id
         self.name = name
@@ -24,7 +24,7 @@ struct Track: Identifiable, Codable, Equatable {
         }
     }
     
-    // FIXED: Explicit Codable conformance (required when you have custom init)
+    // Explicit Codable conformance (required when you have custom init)
     enum CodingKeys: String, CodingKey {
         case id
         case name
@@ -44,11 +44,11 @@ struct Track: Identifiable, Codable, Equatable {
     
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, for: .id)
-        try container.encode(name, for: .name)
-        try container.encode(url, for: .url)
-        try container.encode(folderName, for: .folderName)
-        try container.encodeIfPresent(bookmarkData, for: .bookmarkData)
+        try container.encode(id, forKey: .id)                    // ✅ FIXED: 'forKey'
+        try container.encode(name, forKey: .name)                // ✅ FIXED: 'forKey'
+        try container.encode(url, forKey: .url)                  // ✅ FIXED: 'forKey'
+        try container.encode(folderName, forKey: .folderName)    // ✅ FIXED: 'forKey'
+        try container.encodeIfPresent(bookmarkData, forKey: .bookmarkData)  // ✅ FIXED: 'forKey'
     }
     
     // Equatable conformance
