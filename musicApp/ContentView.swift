@@ -106,7 +106,7 @@ struct ContentView: View {
     }
 
     private func startDownload(from urlString: String) {
-        let videoID = extractYoutubeId(from: urlString) ?? ""
+        let videoID = Self.extractYoutubeId(from: urlString) ?? ""
         
         if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) == nil {
             downloadManager.startBackgroundDownload(
@@ -149,7 +149,7 @@ struct ContentView: View {
             return
         }
         
-        let videoID = extractYoutubeId(from: track.url.absoluteString) ?? track.url.lastPathComponent
+        let videoID = Self.extractYoutubeId(from: track.url.absoluteString) ?? track.url.lastPathComponent
         let waveformURL = getWaveformURL(for: videoID)
         
         waveform = WaveformGenerator.load(from: waveformURL)
@@ -161,7 +161,7 @@ struct ContentView: View {
             .appendingPathComponent("\(videoID).waveform")
     }
     
-    private static func extractYoutubeId(from url: String) -> String? {
+    private static func Self.extractYoutubeId(from url: String) -> String? {
         guard let urlComponents = URLComponents(string: url) else { return nil }
         if url.contains("youtu.be") {
             return urlComponents.path.replacingOccurrences(of: "/", with: "")
@@ -370,7 +370,7 @@ struct NowPlayingView: View {
             return
         }
         
-        let videoID = extractYoutubeId(from: track.url.absoluteString) ?? track.url.lastPathComponent
+        let videoID = Self.extractYoutubeId(from: track.url.absoluteString) ?? track.url.lastPathComponent
         let waveformURL = getWaveformURL(for: videoID)
         
         waveform = WaveformGenerator.load(from: waveformURL)
