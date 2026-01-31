@@ -199,8 +199,6 @@ final class ShareViewController: UIViewController {
         print("🚀 Attempting to open: \(url.absoluteString)")
         
         // Check if we can open the URL
-        let canOpen = UIApplication.shared.canOpenURL(url)
-        print("📱 Can open URL: \(canOpen)")
         
         extensionContext?.open(url) { [weak self] success in
             DispatchQueue.main.async {
