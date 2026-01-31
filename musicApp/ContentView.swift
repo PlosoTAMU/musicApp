@@ -82,11 +82,6 @@ struct ContentView: View {
             print("📥 App opened with URL: \(url)")
             handleIncomingURL(url)
         }
-        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
-            guard let incomingURL = userActivity.webpageURL else { return }
-            print("📥 Universal Link: \(incomingURL)")
-            handleIncomingURL(incomingURL)
-        }
 
         private func handleIncomingURL(_ url: URL) {
             let urlString = url.absoluteString
