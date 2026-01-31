@@ -382,7 +382,7 @@ struct NowPlayingView: View {
             .appendingPathComponent("\(videoID).waveform")
     }
 
-    private func extractYoutubeId(from url: String) -> String? {
+    private static func extractYoutubeId(from url: String) -> String? {
         guard let urlComponents = URLComponents(string: url) else { return nil }
         if url.contains("youtu.be") {
             return urlComponents.path.replacingOccurrences(of: "/", with: "")
