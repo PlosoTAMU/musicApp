@@ -51,31 +51,10 @@ class DownloadManager: ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 
-                print("🔍 [DownloadManager] Callback fired with videoID: \(callbackVideoID), title: \(callbackTitle)")
-                print("🔍 [DownloadManager] Active downloads: \(self.activeDownloads.map { "{\($0.videoID): \($0.title)}" }.joined(separator: ", "))")
-                
-                // FIXED: Update title in place instead of replacing entire object
                 if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
-                    print("✅ [DownloadManager] MATCH FOUND at index \(index)")
                     self.activeDownloads[index].title = callbackTitle
                     self.activeDownloads[index].progress = 0.5
-                    self.objectWillChange.send() // Force UI update
-                    print("📝 [DownloadManager] Updated title to: \(callbackTitle)")
-                } else {
-                    print("❌ [DownloadManager] NO MATCH FOUND for videoID: \(callbackVideoID)")
-                    print("❌ [DownloadManager] Trying fuzzy match...")
-                    
-                    // AGGRESSIVE FIX: Try to find by partial match
-                    if let index = self.activeDownloads.firstIndex(where: { 
-                        $0.videoID.contains(callbackVideoID) || callbackVideoID.contains($0.videoID)
-                    }) {
-                        print("✅ [DownloadManager] FUZZY MATCH FOUND at index \(index)")
-                        self.activeDownloads[index].title = callbackTitle
-                        self.activeDownloads[index].progress = 0.5
-                        self.objectWillChange.send()
-                    } else {
-                        print("❌ [DownloadManager] NO FUZZY MATCH EITHER!")
-                    }
+                    self.objectWillChange.send()
                 }
             }
         }
@@ -84,7 +63,41 @@ class DownloadManager: ObservableObject {
             guard let self = self else { return }
             
             do {
-                let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: url, videoID: videoID)
+                // FIXED: Handle Spotify conversion first
+                var finalURL = url
+                var finalVideoID = videoID
+                
+                if source == .spotify {
+                    // Update status to show conversion
+                    await MainActor.run {
+                        if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
+                            self.activeDownloads[index].title = "Converting Spotify link..."
+                            self.objectWillChange.send()
+                        }
+                    }
+                    
+                    // Convert Spotify to YouTube
+                    let youtubeURL = try await EmbeddedPython.shared.spotifyToYouTube(spotifyURL: url)
+                    finalURL = youtubeURL
+                    
+                    // Extract YouTube video ID
+                    if let extractedID = self.extractYouTubeID(from: youtubeURL) {
+                        finalVideoID = extractedID
+                    }
+                    
+                    print("✅ [DownloadManager] Converted Spotify to YouTube: \(finalURL)")
+                    
+                    // Update status
+                    await MainActor.run {
+                        if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
+                            self.activeDownloads[index].title = "Downloading from YouTube..."
+                            self.objectWillChange.send()
+                        }
+                    }
+                }
+                
+                // Now proceed with YouTube download
+                let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: finalURL, videoID: finalVideoID)
                 
                 var thumbnailPath: URL? = nil
                 for attempt in 1...5 {
@@ -94,8 +107,8 @@ class DownloadManager: ObservableObject {
                     print("🔄 Thumbnail check \(attempt)/5")
                 }
                 
-                if thumbnailPath == nil && !videoID.isEmpty {
-                    EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
+                if thumbnailPath == nil && !finalVideoID.isEmpty {
+                    EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: finalVideoID)
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                 }
@@ -104,15 +117,15 @@ class DownloadManager: ObservableObject {
                     name: downloadedTitle,
                     url: fileURL,
                     thumbnailPath: thumbnailPath?.path,
-                    videoID: videoID,
-                    source: source
+                    videoID: finalVideoID,
+                    source: source  // Keep original source for tracking
                 )
 
                 DispatchQueue.global(qos: .utility).async {
-                    if let audioURL = self.getDownloadedFileURL(for: videoID),
+                    if let audioURL = self.getDownloadedFileURL(for: finalVideoID),
                     let waveform = WaveformGenerator.generate(from: audioURL, targetSamples: 100) {
                         
-                        let waveformURL = self.getWaveformURL(for: videoID)
+                        let waveformURL = self.getWaveformURL(for: finalVideoID)
                         WaveformGenerator.save(waveform, to: waveformURL)
                         print("✅ Waveform saved: \(waveform.count) samples")
                     }
@@ -129,6 +142,28 @@ class DownloadManager: ObservableObject {
                 }
             }
         }
+    }
+
+    // FIXED: Add helper method to extract YouTube ID
+    private func extractYouTubeID(from urlString: String) -> String? {
+        guard let url = URL(string: urlString) else { return nil }
+        
+        let host = url.host?.lowercased() ?? ""
+        
+        if host.contains("youtu.be") {
+            let pathComponents = url.pathComponents.filter { $0 != "/" }
+            return pathComponents.first
+        }
+        
+        if host.contains("youtube.com") {
+            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+            let queryItems = components.queryItems,
+            let videoID = queryItems.first(where: { $0.name == "v" })?.value {
+                return videoID
+            }
+        }
+        
+        return nil
     }
 
     private func getWaveformURL(for videoID: String) -> URL {

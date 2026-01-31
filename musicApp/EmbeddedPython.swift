@@ -164,6 +164,130 @@ class EmbeddedPython: ObservableObject {
         }
     }
     
+    func spotifyToYouTube(spotifyURL: String) async throws -> String {
+        guard pythonInitialized else {
+            throw PythonError.notInitialized
+        }
+        
+        updateStatus("Converting Spotify link...")
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            pythonQueue.async { [weak self] in
+                let resultFilePath = NSTemporaryDirectory() + "spotify_result.json"
+                
+                let script = self?.generateSpotifyScript(spotifyURL: spotifyURL, resultFilePath: resultFilePath) ?? ""
+                
+                guard let _ = self?.executePython(script) else {
+                    print("❌ [Spotify] executePython returned nil")
+                    continuation.resume(throwing: PythonError.executionError("Failed to execute Spotify script"))
+                    return
+                }
+                
+                guard let jsonData = try? Data(contentsOf: URL(fileURLWithPath: resultFilePath)),
+                    let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                    print("❌ [Spotify] Failed to read result file")
+                    continuation.resume(throwing: PythonError.executionError("Failed to read Spotify result"))
+                    return
+                }
+                
+                try? FileManager.default.removeItem(atPath: resultFilePath)
+                
+                guard let success = json["success"] as? Bool, success,
+                    let youtubeURL = json["youtube_url"] as? String else {
+                    let errorMsg = json["error"] as? String ?? "Unknown error"
+                    print("❌ [Spotify] Failed: \(errorMsg)")
+                    continuation.resume(throwing: PythonError.executionError(errorMsg))
+                    return
+                }
+                
+                print("✅ [Spotify] Converted to YouTube: \(youtubeURL)")
+                continuation.resume(returning: youtubeURL)
+            }
+        }
+    }
+
+    private func generateSpotifyScript(spotifyURL: String, resultFilePath: String) -> String {
+        let cleanURL = spotifyURL.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: "")
+        
+        return """
+        import sys
+        import json
+        import requests
+        import re
+        
+        def get_spotify_track_info(spotify_url):
+            try:
+                oembed_url = f"https://open.spotify.com/oembed?url={spotify_url}"
+                response = requests.get(oembed_url, timeout=10)
+                if response.status_code != 200:
+                    return None
+                data = response.json()
+                title = data.get("title")  # format: "Track Name – Artist Name"
+                return title
+            except Exception as e:
+                print(f"Error getting Spotify info: {e}")
+                return None
+        
+        def search_youtube(query):
+            try:
+                query = query.replace(' ', '+')
+                url = f"https://www.youtube.com/results?search_query={query}"
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                
+                response = requests.get(url, headers=headers, timeout=10)
+                if response.status_code != 200:
+                    return None
+                
+                # Find video IDs in the response
+                video_ids = re.findall(r"watch\\?v=(\\S{11})", response.text)
+                if video_ids:
+                    return f"https://www.youtube.com/watch?v={video_ids[0]}"
+                return None
+            except Exception as e:
+                print(f"Error searching YouTube: {e}")
+                return None
+        
+        def spotify_to_youtube(spotify_url):
+            track_info = get_spotify_track_info(spotify_url)
+            if not track_info:
+                return None, "Could not extract track info from Spotify"
+            
+            print(f"Found track: {track_info}")
+            
+            youtube_link = search_youtube(track_info)
+            if not youtube_link:
+                return None, "Could not find YouTube video for this track"
+            
+            return youtube_link, None
+        
+        # Main execution
+        spotify_url = r'''\(cleanURL)'''
+        result = {}
+        
+        try:
+            youtube_url, error = spotify_to_youtube(spotify_url)
+            if youtube_url:
+                result = {
+                    'success': True,
+                    'youtube_url': youtube_url
+                }
+            else:
+                result = {
+                    'success': False,
+                    'error': error or 'Unknown error'
+                }
+        except Exception as e:
+            result = {
+                'success': False,
+                'error': str(e)
+            }
+        
+        with open(r'''\(resultFilePath)''', 'w', encoding='utf-8') as f:
+            json.dump(result, f)
+        """
+    }
+    
+    
     // MARK: - Progress Monitoring
     
     private func startProgressMonitoring(outputDir: String) {
