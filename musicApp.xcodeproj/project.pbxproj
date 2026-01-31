@@ -28,6 +28,7 @@
 		BF33575A2F1F0CDB00C362AD /* libswscale.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		BF5779242F1EB4630056E8CB /* python-stdlib in Resources */ = {isa = PBXBuildFile; fileRef = BF5779232F1EB45D0056E8CB /* python-stdlib */; };
 		BF5781D02F1EB4D70056E8CB /* yt_dlp in Resources */ = {isa = PBXBuildFile; fileRef = BF5781CF2F1EB4D20056E8CB /* yt_dlp */; };
+		BF59D9DC2F2EAC6500491E96 /* cacert.pem in Resources */ = {isa = PBXBuildFile; fileRef = BF59D9DB2F2EAC6500491E96 /* cacert.pem */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -105,6 +106,7 @@
 		BF5782152F1ECD7E0056E8CB /* libavutil.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libavutil.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libavutil.xcframework"; sourceTree = SOURCE_ROOT; };
 		BF5782162F1ECD7E0056E8CB /* libswresample.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libswresample.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libswresample.xcframework"; sourceTree = SOURCE_ROOT; };
 		BF5782172F1ECD7E0056E8CB /* libswscale.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libswscale.xcframework; path = "../ffmpeg-kit-ios-full/ffmpeg-kit-ios-full/libswscale.xcframework"; sourceTree = SOURCE_ROOT; };
+		BF59D9DB2F2EAC6500491E96 /* cacert.pem */ = {isa = PBXFileReference; lastKnownFileType = text; path = cacert.pem; sourceTree = "<group>"; };
 		BFB82D972F203CDD005AC5A2 /* Python.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = "../Downloads/Python-3.11-iOS-support.b7/Python.xcframework"; sourceTree = SOURCE_ROOT; };
 		BFDA0F372F2D6997008E3F67 /* ShareToPulsor.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShareToPulsor.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFFDD5EF2F1C47850032409D /* Pulsor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pulsor.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -226,6 +228,7 @@
 		BFFDD5E62F1C47850032409D = {
 			isa = PBXGroup;
 			children = (
+				BF59D9DB2F2EAC6500491E96 /* cacert.pem */,
 				BFB82D972F203CDD005AC5A2 /* Python.xcframework */,
 				BF5781CF2F1EB4D20056E8CB /* yt_dlp */,
 				BF5779232F1EB45D0056E8CB /* python-stdlib */,
@@ -416,6 +419,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BF5781D02F1EB4D70056E8CB /* yt_dlp in Resources */,
+				BF59D9DC2F2EAC6500491E96 /* cacert.pem in Resources */,
 				BF5779242F1EB4630056E8CB /* python-stdlib in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
