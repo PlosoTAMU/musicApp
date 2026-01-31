@@ -328,6 +328,33 @@ class DownloadManager: ObservableObject {
         return nil
     }
     
+    // ✅ ADD THIS METHOD
+    func getDownloadedFileURL(for videoID: String) -> URL? {
+        let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        
+        // Check common audio file extensions
+        let extensions = ["m4a", "mp3", "wav", "aac"]
+        
+        for ext in extensions {
+            let fileURL = documentsDir.appendingPathComponent("\(videoID).\(ext)")
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                return fileURL
+            }
+        }
+        
+        // If not found by videoID, search through downloaded files
+        return downloadedFiles.first { $0.lastPathComponent.contains(videoID) }
+    }
+    
+    // ✅ ADD THIS METHOD TOO
+    private func getWaveformURL(for videoID: String) -> URL {
+        let waveformsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Waveforms", isDirectory: true)
+        
+        try? FileManager.default.createDirectory(at: waveformsDir, withIntermediateDirectories: true)
+        return waveformsDir.appendingPathComponent("\(videoID).waveform")
+    }
+    
     private func saveDownloads() {
         do {
             let encoder = JSONEncoder()
