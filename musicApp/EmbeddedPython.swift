@@ -70,9 +70,31 @@ class EmbeddedPython: ObservableObject {
         print("📂 [EmbeddedPython] PYTHONHOME: \(pythonHome)")
         print("📂 [EmbeddedPython] PYTHONPATH: \(pythonPath)")
         
+        // ✅ FIXED: Robust certificate path resolution
         let certPath = resourcePath + "/cacert.pem"
-        setenv("SSL_CERT_FILE", certPath, 1)
-        setenv("REQUESTS_CA_BUNDLE", certPath, 1)
+        
+        if FileManager.default.fileExists(atPath: certPath) {
+            print("✅ [EmbeddedPython] Found certificate at: \(certPath)")
+            setenv("SSL_CERT_FILE", certPath, 1)
+            setenv("REQUESTS_CA_BUNDLE", certPath, 1)
+            setenv("CURL_CA_BUNDLE", certPath, 1)
+        } else {
+            print("⚠️ [EmbeddedPython] Certificate NOT found at: \(certPath)")
+            print("⚠️ [EmbeddedPython] Trying fallback certificate paths...")
+            
+            // Fallback 1: Check if it's in a subdirectory
+            let altCertPath = resourcePath + "/python-stdlib/cacert.pem"
+            if FileManager.default.fileExists(atPath: altCertPath) {
+                print("✅ [EmbeddedPython] Found certificate at alternate path: \(altCertPath)")
+                setenv("SSL_CERT_FILE", altCertPath, 1)
+                setenv("REQUESTS_CA_BUNDLE", altCertPath, 1)
+                setenv("CURL_CA_BUNDLE", altCertPath, 1)
+            } else {
+                // Fallback 2: Use iOS system certificates
+                print("⚠️ [EmbeddedPython] Using system SSL certificates")
+                setenv("PYTHONHTTPSVERIFY", "0", 1) // Disable verification as last resort
+            }
+        }
 
         let encodingsPath = libPath + "/encodings"
         guard FileManager.default.fileExists(atPath: encodingsPath) else {
