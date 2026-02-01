@@ -168,6 +168,14 @@ struct ContentView: View {
         
         waveform = WaveformGenerator.load(from: waveformURL)
     }
+    private static func extractYoutubeId(from url: String) -> String? {
+        guard let urlComponents = URLComponents(string: url) else { return nil }
+        if url.contains("youtu.be") {
+            return urlComponents.path.replacingOccurrences(of: "/", with: "")
+        } else {
+            return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
+        }
+    }
     
     private func getWaveformURL(for videoID: String) -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
