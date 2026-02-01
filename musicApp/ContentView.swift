@@ -412,23 +412,89 @@ struct NowPlayingView: View {
             }
         )
     }
+    
+    // ✅ NEW: For pulsing animation
+    @State private var pulsePhase: Double = 0
+    private let pulseTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    
+    private var sliderBinding: Binding<Double> {
+        Binding(
+            get: { isSeeking ? localSeekPosition : audioPlayer.currentTime },
+            set: { newValue in
+                localSeekPosition = newValue
+                if !isSeeking {
+                    audioPlayer.seek(to: newValue)
+                }
+            }
+        )
+    }
 
+    // ✅ FIXED: Load waveform using the correct videoID from Download object
     private func loadWaveform() {
         guard let track = audioPlayer.currentTrack else {
             waveform = nil
             return
         }
         
-        let videoID = Self.extractYoutubeId(from: track.url.absoluteString) ?? track.url.lastPathComponent
-        let waveformURL = getWaveformURL(for: videoID)
+        // ✅ FIXED: Get videoID from the track's ID by looking up the Download
+        let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let downloadsFile = documentsDir.appendingPathComponent("downloads.json")
         
-        waveform = WaveformGenerator.load(from: waveformURL)
+        var videoID: String? = nil
+        
+        // Try to find the videoID from saved downloads
+        if let data = try? Data(contentsOf: downloadsFile),
+           let downloads = try? JSONDecoder().decode([Download].self, from: data),
+           let download = downloads.first(where: { $0.id == track.id }) {
+            videoID = download.videoID
+        }
+        
+        // Fallback: extract from filename (format: "videoID.m4a" or "title.m4a")
+        if videoID == nil || videoID?.isEmpty == true {
+            let filename = track.url.deletingPathExtension().lastPathComponent
+            // Check if filename looks like a YouTube ID (11 chars, alphanumeric + dash/underscore)
+            if filename.count == 11 && filename.range(of: "^[a-zA-Z0-9_-]+$", options: .regularExpression) != nil {
+                videoID = filename
+            } else {
+                videoID = filename
+            }
+        }
+        
+        guard let finalVideoID = videoID, !finalVideoID.isEmpty else {
+            print("⚠️ [Waveform] Could not determine videoID for track: \(track.name)")
+            waveform = nil
+            return
+        }
+        
+        let waveformURL = getWaveformURL(for: finalVideoID)
+        
+        if let loadedWaveform = WaveformGenerator.load(from: waveformURL) {
+            print("✅ [Waveform] Loaded \(loadedWaveform.count) samples for: \(finalVideoID)")
+            waveform = loadedWaveform
+        } else {
+            print("⚠️ [Waveform] File not found at: \(waveformURL.path)")
+            waveform = nil
+            
+            // Try to generate it now if file exists
+            if FileManager.default.fileExists(atPath: track.url.path) {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    if let generated = WaveformGenerator.generate(from: track.url, targetSamples: 100) {
+                        WaveformGenerator.save(generated, to: waveformURL)
+                        DispatchQueue.main.async {
+                            self.waveform = generated
+                            print("✅ [Waveform] Generated on-demand: \(generated.count) samples")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func getWaveformURL(for videoID: String) -> URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let waveformsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Waveforms", isDirectory: true)
-            .appendingPathComponent("\(videoID).waveform")
+        try? FileManager.default.createDirectory(at: waveformsDir, withIntermediateDirectories: true)
+        return waveformsDir.appendingPathComponent("\(videoID).waveform")
     }
 
     private static func extractYoutubeId(from url: String) -> String? {
@@ -448,6 +514,12 @@ struct NowPlayingView: View {
                 audioPlayer.playbackSpeed = rounded
             }
         )
+    }
+    
+    // ✅ NEW: Calculate current progress for waveform highlighting
+    private var playbackProgress: CGFloat {
+        guard audioPlayer.duration > 0 else { return 0 }
+        return CGFloat(audioPlayer.currentTime / audioPlayer.duration)
     }
     
     var body: some View {
@@ -515,6 +587,7 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
+                // ✅ FIXED: Thumbnail with pulsing waveform overlay
                 ZStack {
                     // Main thumbnail
                     if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
@@ -539,27 +612,73 @@ struct NowPlayingView: View {
                             )
                             .shadow(color: .black.opacity(1), radius: 40, y: 12)
                     }
-                
-                    // ✅ FIXED: Waveform overlay with conditional rendering
+                    
+                    // ✅ FIXED: Pulsing waveform overlay
                     if let waveformData = waveform, !waveformData.isEmpty {
-                        // Top edge
+                        // Top waveform
                         VStack {
-                            WaveformView(waveform: waveformData, barCount: 50, color: .white)
-                                .frame(height: 40)
-                                .padding(.horizontal, 20)
-                                .padding(.top, 10)
+                            PulsingWaveformView(
+                                waveform: waveformData,
+                                progress: playbackProgress,
+                                pulsePhase: pulsePhase,
+                                isPlaying: audioPlayer.isPlaying
+                            )
+                            .frame(height: 35)
+                            .padding(.horizontal, 15)
+                            .padding(.top, 8)
                             Spacer()
                         }
                         .frame(width: 290, height: 290)
                         .clipShape(RoundedRectangle(cornerRadius: 20))
                         
-                        // Bottom edge
+                        // Bottom waveform (mirrored)
                         VStack {
                             Spacer()
-                            WaveformView(waveform: waveformData, barCount: 50, color: .white)
-                                .frame(height: 40)
-                                .padding(.horizontal, 20)
-                                .padding(.bottom, 10)
+                            PulsingWaveformView(
+                                waveform: waveformData,
+                                progress: playbackProgress,
+                                pulsePhase: pulsePhase,
+                                isPlaying: audioPlayer.isPlaying,
+                                flipped: true
+                            )
+                            .frame(height: 35)
+                            .padding(.horizontal, 15)
+                            .padding(.bottom, 8)
+                        }
+                        .frame(width: 290, height: 290)
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                        
+                        // Left waveform (vertical)
+                        HStack {
+                            PulsingWaveformView(
+                                waveform: waveformData,
+                                progress: playbackProgress,
+                                pulsePhase: pulsePhase,
+                                isPlaying: audioPlayer.isPlaying,
+                                vertical: true
+                            )
+                            .frame(width: 35)
+                            .padding(.vertical, 50)
+                            .padding(.leading, 8)
+                            Spacer()
+                        }
+                        .frame(width: 290, height: 290)
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                        
+                        // Right waveform (vertical, mirrored)
+                        HStack {
+                            Spacer()
+                            PulsingWaveformView(
+                                waveform: waveformData,
+                                progress: playbackProgress,
+                                pulsePhase: pulsePhase,
+                                isPlaying: audioPlayer.isPlaying,
+                                vertical: true,
+                                flipped: true
+                            )
+                            .frame(width: 35)
+                            .padding(.vertical, 50)
+                            .padding(.trailing, 8)
                         }
                         .frame(width: 290, height: 290)
                         .clipShape(RoundedRectangle(cornerRadius: 20))
