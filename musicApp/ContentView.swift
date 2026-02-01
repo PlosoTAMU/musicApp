@@ -107,6 +107,19 @@ struct ContentView: View {
             startDownload(from: urlString, source: .spotify)
         }
     }
+
+    private func startDownload(from urlString: String) {
+        let videoID = Self.extractYoutubeId(from: urlString) ?? ""
+        
+        if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) == nil {
+            downloadManager.startBackgroundDownload(
+                url: urlString,
+                videoID: videoID,
+                source: .youtube,
+                title: "Downloading..."
+            )
+        }
+    }
     
     // ✅ FIXED: Moved outside body, made static helper functions
     private func processIncomingShares() {
