@@ -88,27 +88,23 @@ struct ContentView: View {
     }
 
     private func handleIncomingURL(_ url: URL) {
+        print("📥 App opened with URL: \(url)")
+        
         let urlString = url.absoluteString
         
-        // Handle both custom scheme and universal links
-        if url.scheme == "pulsor" {
-            processIncomingShares()
-        } else if urlString.contains("youtube.com") || urlString.contains("youtu.be") {
-            // Direct YouTube URL
-            startDownload(from: urlString)
+        // Handle custom scheme (from Share Extension)
+        if url.scheme == "musicApp" || url.scheme == "pulsor" {
+            // Don't process immediately - let onAppear/onReceive handle the queue drain
+            // This prevents double processing
+            print("📥 Deep link detected, queue will be processed on appear")
+            return
         }
-    }
-
-    private func startDownload(from urlString: String) {
-        let videoID = Self.extractYoutubeId(from: urlString) ?? ""
         
-        if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) == nil {
-            downloadManager.startBackgroundDownload(
-                url: urlString,
-                videoID: videoID,
-                source: .youtube,
-                title: "Downloading..."
-            )
+        // Handle direct YouTube/Spotify URLs (not from Share Extension)
+        if urlString.contains("youtube.com") || urlString.contains("youtu.be") {
+            startDownload(from: urlString, source: .youtube)
+        } else if urlString.contains("spotify.com") || urlString.contains("open.spotify.com") {
+            startDownload(from: urlString, source: .spotify)
         }
     }
     
