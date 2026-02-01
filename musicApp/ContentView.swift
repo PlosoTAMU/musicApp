@@ -829,6 +829,11 @@ struct NowPlayingView: View {
             updateBackgroundImage()
             loadWaveform()
         }
+        .onReceive(pulseTimer) { _ in
+            if audioPlayer.isPlaying {
+                pulsePhase += 0.1
+            }
+        }
         .gesture(
             DragGesture()
                 .onEnded { value in
@@ -842,11 +847,7 @@ struct NowPlayingView: View {
                 .padding()
         }
     }
-    .onReceive(pulseTimer) { _ in
-        if audioPlayer.isPlaying {
-            pulsePhase += 0.1
-        }
-    }
+    
     
     private func updateBackgroundImage() {
         guard let track = audioPlayer.currentTrack else {
