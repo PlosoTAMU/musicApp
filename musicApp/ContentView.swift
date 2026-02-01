@@ -539,12 +539,12 @@ struct NowPlayingView: View {
                             )
                             .shadow(color: .black.opacity(1), radius: 40, y: 12)
                     }
-                    
-                    // Waveform overlay around edges
-                    if let waveform = waveform {
+                
+                    // ✅ FIXED: Waveform overlay with conditional rendering
+                    if let waveformData = waveform, !waveformData.isEmpty {
                         // Top edge
                         VStack {
-                            WaveformView(waveform: waveform, barCount: 50, color: .white)
+                            WaveformView(waveform: waveformData, barCount: 50, color: .white)
                                 .frame(height: 40)
                                 .padding(.horizontal, 20)
                                 .padding(.top, 10)
@@ -556,7 +556,7 @@ struct NowPlayingView: View {
                         // Bottom edge
                         VStack {
                             Spacer()
-                            WaveformView(waveform: waveform, barCount: 50, color: .white)
+                            WaveformView(waveform: waveformData, barCount: 50, color: .white)
                                 .frame(height: 40)
                                 .padding(.horizontal, 20)
                                 .padding(.bottom, 10)
@@ -572,6 +572,7 @@ struct NowPlayingView: View {
                         audioPlayer.resume()
                     }
                 }
+                
                 Spacer()
                 
                 VStack(spacing: 6) {
