@@ -92,10 +92,8 @@ struct ContentView: View {
         
         let urlString = url.absoluteString
         
-        // Handle custom scheme (from Share Extension)
+        // Handle custom scheme (from Share Extension) - don't process, let queue drain handle it
         if url.scheme == "musicApp" || url.scheme == "pulsor" {
-            // Don't process immediately - let onAppear/onReceive handle the queue drain
-            // This prevents double processing
             print("📥 Deep link detected, queue will be processed on appear")
             return
         }
@@ -108,20 +106,27 @@ struct ContentView: View {
         }
     }
 
-    private func startDownload(from urlString: String) {
-        let videoID = Self.extractYoutubeId(from: urlString) ?? ""
+    // ✅ FIXED: New helper method with proper source detection
+    private func startDownload(from urlString: String, source: DownloadSource) {
+        guard let (detectedSource, videoID) = Self.extractVideoID(from: urlString) else {
+            print("⚠️ Invalid URL format: \(urlString)")
+            return
+        }
         
-        if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) == nil {
+        // Check for duplicates
+        if downloadManager.findDuplicateByVideoID(videoID: videoID, source: detectedSource) == nil {
             downloadManager.startBackgroundDownload(
                 url: urlString,
                 videoID: videoID,
-                source: .youtube,
-                title: "Downloading..."
+                source: detectedSource,
+                title: detectedSource == .spotify ? "Converting Spotify..." : "Downloading..."
             )
+        } else {
+            print("⚠️ Skipping duplicate: \(videoID)")
         }
     }
     
-    // ✅ FIXED: Moved outside body, made static helper functions
+    // ✅ FIXED: Process shared URLs with proper source detection
     private func processIncomingShares() {
         let urls = IncomingShareQueue.drain()
         
@@ -130,18 +135,24 @@ struct ContentView: View {
         print("📥 Processing \(urls.count) shared URLs")
         
         for urlString in urls {
-            let videoID = Self.extractYoutubeId(from: urlString) ?? ""
+            // ✅ FIXED: Use extractVideoID that returns (source, id)
+            guard let (source, videoID) = Self.extractVideoID(from: urlString) else {
+                print("⚠️ Invalid URL format: \(urlString)")
+                continue
+            }
             
-            if downloadManager.findDuplicateByVideoID(videoID: videoID, source: .youtube) != nil {
+            // Check for duplicates
+            if downloadManager.findDuplicateByVideoID(videoID: videoID, source: source) != nil {
                 print("⚠️ Skipping duplicate: \(videoID)")
                 continue
             }
             
+            // ✅ FIXED: Pass source parameter
             downloadManager.startBackgroundDownload(
                 url: urlString,
                 videoID: videoID,
-                source: .youtube,
-                title: "Downloading from share..."
+                source: source,
+                title: source == .spotify ? "Converting Spotify..." : "Downloading..."
             )
         }
     }
@@ -164,13 +175,40 @@ struct ContentView: View {
             .appendingPathComponent("\(videoID).waveform")
     }
     
-    private static func extractYoutubeId(from url: String) -> String? {
-        guard let urlComponents = URLComponents(string: url) else { return nil }
-        if url.contains("youtu.be") {
-            return urlComponents.path.replacingOccurrences(of: "/", with: "")
-        } else {
-            return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
+    // ✅ FIXED: Updated to return (DownloadSource, String) tuple
+    private static func extractVideoID(from urlString: String) -> (source: DownloadSource, id: String)? {
+        guard let url = URL(string: urlString) else { return nil }
+        let host = url.host?.lowercased() ?? ""
+        
+        // YouTube detection
+        if host.contains("youtube.com") || host.contains("youtu.be") || host.contains("m.youtube.com") {
+            if host.contains("youtu.be") {
+                let pathComponents = url.pathComponents.filter { $0 != "/" }
+                if let videoID = pathComponents.first {
+                    return (.youtube, videoID)
+                }
+            } else if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                      let queryItems = components.queryItems,
+                      let videoID = queryItems.first(where: { $0.name == "v" })?.value {
+                return (.youtube, videoID)
+            }
         }
+        
+        // Spotify detection
+        if host.contains("spotify.com") || host.contains("open.spotify.com") {
+            let pathComponents = url.pathComponents.filter { $0 != "/" }
+            if let trackIndex = pathComponents.firstIndex(of: "track"), 
+               trackIndex + 1 < pathComponents.count {
+                var trackID = pathComponents[trackIndex + 1]
+                // Remove query parameters
+                if let queryIndex = trackID.firstIndex(of: "?") {
+                    trackID = String(trackID[..<queryIndex])
+                }
+                return (.spotify, trackID)
+            }
+        }
+        
+        return nil
     }
 }
 
