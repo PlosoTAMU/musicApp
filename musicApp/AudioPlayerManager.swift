@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import MediaPlayer
+import Accelerate
 
 class AudioPlayerManager: NSObject, ObservableObject {
     @Published var isPlaying = false
@@ -37,6 +38,17 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var timePitchNode: AVAudioUnitTimePitch?
     
     private var timeUpdateTimer: Timer?
+    
+    // ✅ ADD: Visualization data for external consumers
+    @Published var visualizationData: [Float] = Array(repeating: 0, count: 200)
+    @Published var bassLevel: Float = 0
+    
+    // ✅ ADD: FFT setup for visualization
+    private var fftSetup: FFTSetup?
+    private let fftSize = 4096
+    private var frequencyData = [Float](repeating: 0, count: 2048)
+    private var timeDomainData = [Float](repeating: 0, count: 4096)
+    private var visualizationTapInstalled = false
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -407,6 +419,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 }
                 
                 player.play()
+
+                self.installVisualizationTap()
                 
                 let frameCount = Double(file.length)
                 let sampleRate = file.fileFormat.sampleRate
@@ -570,6 +584,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     func stop() {
         currentPlaybackSessionID = UUID()
+
+        removeVisualizationTap()
         
         audioQueue.async {
             self.playerNode?.stop()
@@ -856,5 +872,126 @@ class AudioPlayerManager: NSObject, ObservableObject {
     deinit {
         stopTimeUpdates()
         NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - Visualization Support
+
+    private func setupFFT() {
+        let log2n = vDSP_Length(log2(Float(fftSize)))
+        fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
+    }
+
+    private func installVisualizationTap() {
+        guard let player = playerNode, !visualizationTapInstalled else { return }
+        
+        if fftSetup == nil {
+            setupFFT()
+        }
+        
+        let format = player.outputFormat(forBus: 0)
+        
+        player.installTap(onBus: 0, bufferSize: AVAudioFrameCount(fftSize), format: format) { [weak self] buffer, _ in
+            self?.processVisualizationBuffer(buffer)
+        }
+        
+        visualizationTapInstalled = true
+        print("✅ [AudioPlayer] Visualization tap installed")
+    }
+
+    private func removeVisualizationTap() {
+        guard visualizationTapInstalled else { return }
+        playerNode?.removeTap(onBus: 0)
+        visualizationTapInstalled = false
+        print("✅ [AudioPlayer] Visualization tap removed")
+    }
+
+    private func processVisualizationBuffer(_ buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.floatChannelData else { return }
+        let frameLength = Int(buffer.frameLength)
+        let data = channelData[0]
+        
+        // Copy to time domain data
+        for i in 0..<min(frameLength, timeDomainData.count) {
+            timeDomainData[i] = data[i]
+        }
+        
+        // Perform FFT
+        performFFT(data: data, frameLength: frameLength)
+        
+        // Process and publish visualization data
+        processAudioForVisualization()
+    }
+
+    private func performFFT(data: UnsafePointer<Float>, frameLength: Int) {
+        var realp = [Float](repeating: 0, count: fftSize / 2)
+        var imagp = [Float](repeating: 0, count: fftSize / 2)
+        
+        realp.withUnsafeMutableBufferPointer { realPtr in
+            imagp.withUnsafeMutableBufferPointer { imagPtr in
+                var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
+                
+                data.withMemoryRebound(to: DSPComplex.self, capacity: frameLength / 2) { complexPtr in
+                    vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
+                }
+                
+                if let setup = fftSetup {
+                    vDSP_fft_zrip(setup, &splitComplex, 1, vDSP_Length(log2(Float(fftSize))), FFTDirection(kFFTDirection_Forward))
+                }
+                
+                // Calculate magnitudes
+                var magnitudes = [Float](repeating: 0, count: fftSize / 2)
+                vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(fftSize / 2))
+                
+                // Normalize and store
+                for i in 0..<min(magnitudes.count, frequencyData.count) {
+                    frequencyData[i] = sqrt(magnitudes[i]) / Float(fftSize)
+                }
+            }
+        }
+    }
+
+    private func processAudioForVisualization() {
+        let segments = 200
+        let threshold: Float = 0.1
+        let strengthMultiplier: Float = 3.5
+        let power: Float = 0.2
+        let smoothingFactor: Float = 0.4
+        
+        // Calculate bass for pulse effect
+        var bass: Float = 0
+        for i in 0..<40 {
+            bass += frequencyData[i]
+        }
+        bass /= 10200.0
+        
+        // Create new visualization data
+        var newData = [Float](repeating: 0, count: segments)
+        
+        for i in 0..<segments {
+            let dataIndex = Int((Float(i) / Float(segments)) * Float(timeDomainData.count))
+            let wave = timeDomainData[dataIndex]
+            
+            let rawStrength = abs(wave)
+            var strength: Float = 0
+            
+            if rawStrength > threshold {
+                let normalized = (rawStrength - threshold) / 0.9
+                strength = pow(normalized, power) * strengthMultiplier
+            }
+            
+            // Smooth with previous value
+            let previousValue = visualizationData.count > i ? visualizationData[i] : 0
+            newData[i] = previousValue + (strength * 25 - previousValue) * smoothingFactor
+            
+            if newData[i] < 2 {
+                newData[i] = 0
+            }
+        }
+        
+        // Publish on main thread
+        DispatchQueue.main.async { [weak self] in
+            self?.visualizationData = newData
+            self?.bassLevel = bass
+        }
     }
 }

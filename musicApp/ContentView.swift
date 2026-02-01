@@ -466,7 +466,6 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // ✅ REPLACED: Thumbnail with AudioVisualizerView overlay
                 ZStack {
                     // Main thumbnail
                     if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
@@ -492,9 +491,9 @@ struct NowPlayingView: View {
                             .shadow(color: .black.opacity(1), radius: 40, y: 12)
                     }
                     
-                    // ✅ NEW: AudioVisualizerView overlay
-                    if let track = audioPlayer.currentTrack, audioPlayer.isPlaying {
-                        VisualizerOverlay(audioFileURL: track.url)
+                    // ✅ FIXED: Pass audioPlayer instead of file URL
+                    if audioPlayer.isPlaying {
+                        VisualizerOverlay(audioPlayer: audioPlayer)
                             .frame(width: 290, height: 290)
                             .clipShape(RoundedRectangle(cornerRadius: 20))
                             .allowsHitTesting(false)
@@ -880,52 +879,37 @@ struct DownloadBanner: View {
     }
 }
 
-// MARK: - Visualizer Overlay
+
+
+// MARK: - Visualizer Overlay (Uses AudioPlayerManager data)
 struct VisualizerOverlay: View {
-    let audioFileURL: URL
-    @StateObject private var audioEngine = AudioVisualizerEngine()
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    @State private var pulse: CGFloat = 1.0
+    @State private var lineGroups: [Bool] = (0..<200).map { _ in Float.random(in: 0...1) > 0.7 }
     
     var body: some View {
-        ZStack {
-            // Semi-transparent background to make visualizer visible
-            Color.black.opacity(0.3)
-            
-            VisualizerCanvas(audioEngine: audioEngine)
-        }
-        .onAppear {
-            audioEngine.loadAudio(from: audioFileURL)
-        }
-        .onDisappear {
-            audioEngine.stop()
-        }
-    }
-}
-
-
-struct VisualizerCanvas: View {
-    @ObservedObject var audioEngine: AudioVisualizerEngine
-    
-    var body: some View {
-        GeometryReader { geometry in
+        TimelineView(.animation(minimumInterval: 1/60)) { timeline in
             Canvas { context, size in
-                // Semi-transparent dark overlay for visibility
-                context.fill(
-                    Path(CGRect(origin: .zero, size: size)),
-                    with: .color(Color.black.opacity(0.2))
-                )
-                
-                let scale = min(size.width, size.height) / 1000.0
+                let scale = min(size.width, size.height) / 350.0
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 
+                // Calculate pulse from bass
+                let bassThreshold: Float = 0.1
+                let bassMultiplier: CGFloat = 0.6
+                let bassPulse = audioPlayer.bassLevel > bassThreshold ? 
+                    CGFloat((audioPlayer.bassLevel - bassThreshold) / 0.9) : 0
+                let targetPulse = 1.0 + bassPulse * bassMultiplier
+                let currentPulse = pulse + (targetPulse - pulse) * 0.45
+                
                 // Apply pulse transform
                 context.translateBy(x: centerX, y: centerY)
-                context.scaleBy(x: audioEngine.pulse, y: audioEngine.pulse)
+                context.scaleBy(x: currentPulse, y: currentPulse)
                 context.translateBy(x: -centerX, y: -centerY)
                 
                 // Draw rounded square outline
-                let boxSize: CGFloat = 300 * scale
-                let radius: CGFloat = 40 * scale
+                let boxSize: CGFloat = 290 * scale
+                let radius: CGFloat = 20 * scale
                 
                 let rect = CGRect(
                     x: centerX - boxSize / 2,
@@ -942,15 +926,39 @@ struct VisualizerCanvas: View {
                 )
                 
                 // Draw visualization lines
-                drawLines(context: context, size: size, scale: scale, centerX: centerX, centerY: centerY)
+                drawLines(
+                    context: context,
+                    size: size,
+                    scale: scale,
+                    centerX: centerX,
+                    centerY: centerY,
+                    boxSize: boxSize,
+                    radius: radius
+                )
+            }
+            .onChange(of: timeline.date) { _ in
+                // Update pulse smoothly
+                let bassThreshold: Float = 0.1
+                let bassMultiplier: CGFloat = 0.6
+                let bassPulse = audioPlayer.bassLevel > bassThreshold ? 
+                    CGFloat((audioPlayer.bassLevel - bassThreshold) / 0.9) : 0
+                let targetPulse = 1.0 + bassPulse * bassMultiplier
+                pulse = pulse + (targetPulse - pulse) * 0.45
             }
         }
     }
     
-    private func drawLines(context: GraphicsContext, size: CGSize, scale: CGFloat, centerX: CGFloat, centerY: CGFloat) {
-        let boxSize: CGFloat = 300 * scale
-        let radius: CGFloat = 40 * scale
+    private func drawLines(
+        context: GraphicsContext,
+        size: CGSize,
+        scale: CGFloat,
+        centerX: CGFloat,
+        centerY: CGFloat,
+        boxSize: CGFloat,
+        radius: CGFloat
+    ) {
         let maxOut: CGFloat = 25 * scale
+        let segments = 200
         
         let straightEdge = boxSize - 2 * radius
         let cornerArc = (.pi / 2) * radius
@@ -959,12 +967,18 @@ struct VisualizerCanvas: View {
         let baseX = centerX - boxSize / 2
         let baseY = centerY - boxSize / 2
         
-        for i in 0..<audioEngine.segments {
-            let out = audioEngine.lineSmoothing[i] * scale
+        for i in 0..<segments {
+            // Get amplitude from AudioPlayerManager
+            var out = CGFloat(audioPlayer.visualizationData.count > i ? audioPlayer.visualizationData[i] : 0) * scale
+            
+            // Apply group B multiplier (2/3 amplitude) for variation
+            if lineGroups[i] {
+                out *= 0.6666666666666666
+            }
             
             if out < 2 { continue }
             
-            let distance = (CGFloat(i) / CGFloat(audioEngine.segments)) * totalPerimeter
+            let distance = (CGFloat(i) / CGFloat(segments)) * totalPerimeter
             var x: CGFloat = 0
             var y: CGFloat = 0
             var nx: CGFloat = 0
@@ -1018,8 +1032,8 @@ struct VisualizerCanvas: View {
             
             if isCorner { continue }
             
-            // Rainbow gradient
-            let t = CGFloat(i) / CGFloat(audioEngine.segments)
+            // Rainbow gradient (matching HTML exactly)
+            let t = CGFloat(i) / CGFloat(segments)
             let hue = (t * 360 + 180).truncatingRemainder(dividingBy: 360) / 360.0
             let opacity = 0.6 + (out / maxOut) * 0.4
             
@@ -1035,197 +1049,6 @@ struct VisualizerCanvas: View {
                 style: StrokeStyle(lineWidth: 2.5 * scale, lineCap: .round)
             )
         }
-    }
-}
-
-class AudioVisualizerEngine: ObservableObject {
-    // Audio engine
-    private var audioEngine: AVAudioEngine
-    private var playerNode: AVAudioPlayerNode
-    
-    // Audio analysis
-    private var fftSetup: FFTSetup?
-    private let fftSize = 4096
-    private var frequencyData = [Float](repeating: 0, count: 2048)
-    private var timeDomainData = [Float](repeating: 0, count: 4096)
-    
-    // Visualization state
-    @Published var pulse: CGFloat = 1.0
-    @Published var lineSmoothing = [CGFloat](repeating: 0, count: 200)
-    
-    let segments = 200
-    private var targetPulse: CGFloat = 1.0
-    
-    // Constants
-    private let smoothingFactor: CGFloat = 0.4
-    private let threshold: CGFloat = 0.1
-    private let strengthMultiplier: CGFloat = 3.5
-    private let power: CGFloat = 0.2
-    private let maxOut: CGFloat = 25
-    private let bassThreshold: CGFloat = 0.1
-    private let bassMultiplier: CGFloat = 0.6
-    private let pulseSmooth: CGFloat = 0.45
-    
-    // Line groups (true = group B with 2/3 amplitude)
-    private var lineGroups = [Bool](repeating: false, count: 200)
-    
-    // Display link for rendering
-    private var displayLink: CADisplayLink?
-    private var tapInstalled = false
-    
-    init() {
-        audioEngine = AVAudioEngine()
-        playerNode = AVAudioPlayerNode()
-        
-        // Initialize random groups (70% group A, 30% group B)
-        for i in 0..<200 {
-            lineGroups[i] = Float.random(in: 0...1) > 0.7
-        }
-        
-        setupAudioEngine()
-        startDisplayLink()
-    }
-    
-    deinit {
-        stop()
-    }
-    
-    private func setupAudioEngine() {
-        audioEngine.attach(playerNode)
-        
-        // Setup FFT
-        let log2n = vDSP_Length(log2(Float(fftSize)))
-        fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
-    }
-    
-    func loadAudio(from url: URL) {
-        do {
-            let audioFile = try AVAudioFile(forReading: url)
-            let format = audioFile.processingFormat
-            
-            audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
-            
-            // Install tap for audio analysis
-            playerNode.installTap(onBus: 0, bufferSize: AVAudioFrameCount(fftSize), format: format) { [weak self] buffer, _ in
-                self?.processBuffer(buffer)
-            }
-            tapInstalled = true
-            
-            playerNode.scheduleFile(audioFile, at: nil)
-            
-            try audioEngine.start()
-            playerNode.play()
-            
-        } catch {
-            print("Error loading audio: \(error)")
-        }
-    }
-    
-    func stop() {
-        displayLink?.invalidate()
-        displayLink = nil
-        
-        if tapInstalled {
-            playerNode.removeTap(onBus: 0)
-            tapInstalled = false
-        }
-        
-        playerNode.stop()
-        audioEngine.stop()
-    }
-    
-    private func startDisplayLink() {
-        displayLink = CADisplayLink(target: self, selector: #selector(updateVisualization))
-        displayLink?.add(to: .main, forMode: .common)
-    }
-    
-    @objc private func updateVisualization() {
-        processAudioData()
-    }
-    
-    private func processBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.floatChannelData else { return }
-        let frameLength = Int(buffer.frameLength)
-        let data = channelData[0]
-        
-        // Copy to time domain data
-        for i in 0..<min(frameLength, timeDomainData.count) {
-            timeDomainData[i] = data[i]
-        }
-        
-        // Perform FFT for frequency data
-        performFFT(data: data, frameLength: frameLength)
-    }
-    
-    private func performFFT(data: UnsafePointer<Float>, frameLength: Int) {
-        var realp = [Float](repeating: 0, count: fftSize / 2)
-        var imagp = [Float](repeating: 0, count: fftSize / 2)
-        
-        realp.withUnsafeMutableBufferPointer { realPtr in
-            imagp.withUnsafeMutableBufferPointer { imagPtr in
-                var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
-                
-                data.withMemoryRebound(to: DSPComplex.self, capacity: frameLength / 2) { complexPtr in
-                    vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
-                }
-                
-                if let setup = fftSetup {
-                    vDSP_fft_zrip(setup, &splitComplex, 1, vDSP_Length(log2(Float(fftSize))), FFTDirection(kFFTDirection_Forward))
-                }
-                
-                // Calculate magnitudes
-                var magnitudes = [Float](repeating: 0, count: fftSize / 2)
-                vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(fftSize / 2))
-                
-                // Normalize and store
-                for i in 0..<min(magnitudes.count, frequencyData.count) {
-                    frequencyData[i] = sqrt(magnitudes[i]) / Float(fftSize)
-                }
-            }
-        }
-    }
-    
-    private func processAudioData() {
-        // Calculate bass
-        var bass: Float = 0
-        for i in 0..<40 {
-            bass += frequencyData[i]
-        }
-        bass /= 10200.0 // 40 * 255
-        
-        // Calculate pulse
-        let bassPulse = bass > Float(bassThreshold) ? CGFloat((bass - Float(bassThreshold)) / 0.9) : 0
-        targetPulse = 1.0 + bassPulse * bassMultiplier
-        pulse += (targetPulse - pulse) * pulseSmooth
-        
-        // Update line smoothing
-        for i in 0..<segments {
-            let dataIndex = Int((Float(i) / Float(segments)) * Float(timeDomainData.count))
-            let wave = (timeDomainData[dataIndex] - 128.0) / 128.0
-            
-            let rawStrength = abs(wave)
-            var strength: CGFloat = 0
-            
-            if rawStrength > Float(threshold) {
-                let normalized = CGFloat((rawStrength - Float(threshold)) / 0.9)
-                strength = pow(normalized, power) * strengthMultiplier
-                
-                // Apply group B multiplier (2/3 amplitude)
-                if lineGroups[i] {
-                    strength *= 0.6666666666666666
-                }
-            }
-            
-            let targetOut = strength * maxOut
-            lineSmoothing[i] += (targetOut - lineSmoothing[i]) * smoothingFactor
-            
-            if lineSmoothing[i] < 2 {
-                lineSmoothing[i] = 0
-            }
-        }
-        
-        // Trigger UI update
-        objectWillChange.send()
     }
 }
 
