@@ -120,15 +120,7 @@ class DownloadManager: ObservableObject {
                     source: source  // Keep original source (.spotify) for UI icon
                 )
 
-                DispatchQueue.global(qos: .utility).async {
-                    if let audioURL = self.getDownloadedFileURL(for: finalVideoID),
-                    let waveform = WaveformGenerator.generate(from: audioURL, targetSamples: 100) {
-                        
-                        let waveformURL = self.getWaveformURL(for: finalVideoID)
-                        WaveformGenerator.save(waveform, to: waveformURL)
-                        print("✅ Waveform saved: \(waveform.count) samples")
-                    }
-                }
+
                 
                 await MainActor.run {
                     self.activeDownloads.removeAll { $0.videoID == videoID }
