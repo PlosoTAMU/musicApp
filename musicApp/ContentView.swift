@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import MediaPlayer
+import Accelerate
 
 struct ContentView: View {
     @StateObject private var audioPlayer = AudioPlayerManager()
@@ -372,7 +373,7 @@ struct NowPlayingView: View {
     @State private var localSeekPosition: Double = 0
     @State private var showPlaylistPicker = false
     @State private var backgroundImage: UIImage?
-  
+    
     private var sliderBinding: Binding<Double> {
         Binding(
             get: { isSeeking ? localSeekPosition : audioPlayer.currentTime },
@@ -652,11 +653,6 @@ struct NowPlayingView: View {
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             updateBackgroundImage()
-        }
-        .onReceive(pulseTimer) { _ in
-            if audioPlayer.isPlaying {
-                pulsePhase += 0.1
-            }
         }
         .gesture(
             DragGesture()
