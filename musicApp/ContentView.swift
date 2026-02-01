@@ -9,7 +9,6 @@ struct ContentView: View {
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
-    @State private var waveform: [Float]? = nil
     
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -157,32 +156,7 @@ struct ContentView: View {
         }
     }
     
-    private func loadWaveform() {
-        guard let track = audioPlayer.currentTrack else {
-            waveform = nil
-            return
-        }
-        
-        let videoID = Self.extractYoutubeId(from: track.url.absoluteString) ?? track.url.lastPathComponent
-        let waveformURL = getWaveformURL(for: videoID)
-        
-        waveform = WaveformGenerator.load(from: waveformURL)
-    }
-    private static func extractYoutubeId(from url: String) -> String? {
-        guard let urlComponents = URLComponents(string: url) else { return nil }
-        if url.contains("youtu.be") {
-            return urlComponents.path.replacingOccurrences(of: "/", with: "")
-        } else {
-            return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
-        }
-    }
-    
-    private func getWaveformURL(for videoID: String) -> URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Waveforms", isDirectory: true)
-            .appendingPathComponent("\(videoID).waveform")
-    }
-    
+
     // ✅ FIXED: Updated to return (DownloadSource, String) tuple
     private static func extractVideoID(from urlString: String) -> (source: DownloadSource, id: String)? {
         guard let url = URL(string: urlString) else { return nil }
@@ -398,7 +372,6 @@ struct NowPlayingView: View {
     @State private var localSeekPosition: Double = 0
     @State private var showPlaylistPicker = false
     @State private var backgroundImage: UIImage?
-    @State private var orientation = UIDeviceOrientation.unknown
   
     private var sliderBinding: Binding<Double> {
         Binding(
@@ -411,96 +384,6 @@ struct NowPlayingView: View {
             }
         )
     }
-
-    // ✅ FIXED: Load waveform using the correct videoID from Download object
-    private func loadWaveform() {
-        guard let track = audioPlayer.currentTrack else {
-            waveform = nil
-            return
-        }
-        
-        // ✅ FIXED: Get videoID from the track's ID by looking up the Download
-        let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let downloadsFile = documentsDir.appendingPathComponent("downloads.json")
-        
-        var videoID: String? = nil
-        
-        // Try to find the videoID from saved downloads
-        if let data = try? Data(contentsOf: downloadsFile),
-           let downloads = try? JSONDecoder().decode([Download].self, from: data),
-           let download = downloads.first(where: { $0.id == track.id }) {
-            videoID = download.videoID
-        }
-        
-        // Fallback: extract from filename (format: "videoID.m4a" or "title.m4a")
-        if videoID == nil || videoID?.isEmpty == true {
-            let filename = track.url.deletingPathExtension().lastPathComponent
-            // Check if filename looks like a YouTube ID (11 chars, alphanumeric + dash/underscore)
-            if filename.count == 11 && filename.range(of: "^[a-zA-Z0-9_-]+$", options: .regularExpression) != nil {
-                videoID = filename
-            } else {
-                videoID = filename
-            }
-        }
-        
-        guard let finalVideoID = videoID, !finalVideoID.isEmpty else {
-            print("⚠️ [Waveform] Could not determine videoID for track: \(track.name)")
-            waveform = nil
-            return
-        }
-        
-        let waveformURL = getWaveformURL(for: finalVideoID)
-        
-        if let loadedWaveform = WaveformGenerator.load(from: waveformURL) {
-            print("✅ [Waveform] Loaded \(loadedWaveform.count) samples for: \(finalVideoID)")
-            waveform = loadedWaveform
-        } else {
-            print("⚠️ [Waveform] File not found at: \(waveformURL.path)")
-            waveform = nil
-            
-            // Try to generate it now if file exists
-            if FileManager.default.fileExists(atPath: track.url.path) {
-                DispatchQueue.global(qos: .userInitiated).async {
-                    if let generated = WaveformGenerator.generate(from: track.url, targetSamples: 100) {
-                        WaveformGenerator.save(generated, to: waveformURL)
-                        DispatchQueue.main.async {
-                            self.waveform = generated
-                            print("✅ [Waveform] Generated on-demand: \(generated.count) samples")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func getWaveformURL(for videoID: String) -> URL {
-        let waveformsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Waveforms", isDirectory: true)
-        try? FileManager.default.createDirectory(at: waveformsDir, withIntermediateDirectories: true)
-        return waveformsDir.appendingPathComponent("\(videoID).waveform")
-    }
-
-    private static func extractYoutubeId(from url: String) -> String? {
-        guard let urlComponents = URLComponents(string: url) else { return nil }
-        if url.contains("youtu.be") {
-            return urlComponents.path.replacingOccurrences(of: "/", with: "")
-        } else {
-            return urlComponents.queryItems?.first(where: { $0.name == "v" })?.value
-        }
-    }
-    
-    private var sliderBinding: Binding<Double> {
-        Binding(
-            get: { isSeeking ? localSeekPosition : audioPlayer.currentTime },
-            set: { newValue in
-                localSeekPosition = newValue
-                if !isSeeking {
-                    audioPlayer.seek(to: newValue)
-                }
-            }
-        )
-    }
-    
     private var speedBinding: Binding<Double> {
         Binding(
             get: { audioPlayer.playbackSpeed },
@@ -763,14 +646,12 @@ struct NowPlayingView: View {
         .onAppear {
             updateBackgroundImage()
             lockOrientation(.portrait)
-            loadWaveform()
         }
         .onDisappear {
             unlockOrientation()
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             updateBackgroundImage()
-            loadWaveform()
         }
         .onReceive(pulseTimer) { _ in
             if audioPlayer.isPlaying {
