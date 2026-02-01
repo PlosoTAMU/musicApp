@@ -401,17 +401,6 @@ struct NowPlayingView: View {
     @State private var orientation = UIDeviceOrientation.unknown
     @State private var waveform: [Float]? = nil
     
-    private var sliderBinding: Binding<Double> {
-        Binding(
-            get: { isSeeking ? localSeekPosition : audioPlayer.currentTime },
-            set: { newValue in
-                localSeekPosition = newValue
-                if !isSeeking {
-                    audioPlayer.seek(to: newValue)
-                }
-            }
-        )
-    }
     
     // ✅ NEW: For pulsing animation
     @State private var pulsePhase: Double = 0
@@ -851,6 +840,11 @@ struct NowPlayingView: View {
         .sheet(isPresented: $showPlaylistPicker) {
             Text("Playlist picker coming soon")
                 .padding()
+        }
+    }
+    .onReceive(pulseTimer) { _ in
+        if audioPlayer.isPlaying {
+            pulsePhase += 0.1
         }
     }
     
