@@ -469,7 +469,7 @@ struct NowPlayingView: View {
                 Spacer()
                 
                 ZStack {
-                    // Main thumbnail - PULSES with bass
+                    // Main thumbnail
                     Group {
                         if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                             Image(uiImage: thumbnailImage)
@@ -494,13 +494,14 @@ struct NowPlayingView: View {
                                 .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
                         }
                     }
-                    .scaleEffect(thumbnailPulse)  // Thumbnail pulses!
                     
-                    // Visualizer overlay - ALWAYS visible, lines extend outward
+                    // Visualizer overlay - lines extend outward
                     EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailPulse: $thumbnailPulse)
                         .frame(width: 390, height: 390)  // Larger to fit outward lines
                         .allowsHitTesting(false)
                 }
+                // ✅ Ensure bars are attached to thumbnail by scaling the entire stack
+                .scaleEffect(thumbnailPulse)
                 .frame(width: 390, height: 390)  // Fixed frame prevents layout shifts
                 .onTapGesture {
                     if audioPlayer.isPlaying {
@@ -902,11 +903,16 @@ struct EdgeVisualizerView: View {
     private let pulseSmooth: CGFloat = 0.45
     
     var body: some View {
-        // ✅ PERFORMANCE: 30fps is smooth enough for visualizer
-        TimelineView(.animation(minimumInterval: 1.0/30.0)) { timeline in
+        // ✅ Match HTML: 60fps for smooth pulse and bar motion
+        TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
+
+                // ✅ Apply pulse scaling to the entire canvas (like HTML ctx.scale)
+                context.translateBy(x: centerX, y: centerY)
+                context.scaleBy(x: thumbnailPulse, y: thumbnailPulse)
+                context.translateBy(x: -centerX, y: -centerY)
                 
                 // Box matches thumbnail (290x290, 20 corner radius)
                 let boxSize: CGFloat = 290

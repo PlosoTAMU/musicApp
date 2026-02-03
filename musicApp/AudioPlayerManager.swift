@@ -52,7 +52,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     // ✅ PERFORMANCE: Throttle visualization updates to reduce main thread load
     private var visualizationUpdateCounter = 0
-    private let visualizationUpdateInterval = 3  // Only publish every 3rd buffer (~30fps instead of 100+fps)
+    private let visualizationUpdateInterval = 2  // Only publish every 2nd buffer (~50-60fps depending on buffer size)
 
     private func startTimeUpdates() {
         stopTimeUpdates()
