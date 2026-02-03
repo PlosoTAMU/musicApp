@@ -962,14 +962,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let normalizedBass = min(1.0, bassEnergy / maxRecentBass)
         
         // ==========================================
-        // PULSE CALCULATION
+        // PULSE CALCULATION - PUNCHY & RESPONSIVE
         // ==========================================
-        let bassThreshold: Float = 0.15  // Only react to significant bass hits
-        let bassMultiplier: Float = 0.4  // Max pulse = 1.4
-        let pulseSmooth: Float = 0.3     // Fast response
+        let bassThreshold: Float = 0.1   // Lower threshold = more reactive
+        let bassMultiplier: Float = 0.6  // Bigger pulse! Max = 1.6
         
-        // Smooth the normalized bass
-        smoothedBass = smoothedBass * 0.5 + normalizedBass * 0.5
+        // Less smoothing on bass = more responsive to transients
+        smoothedBass = smoothedBass * 0.3 + normalizedBass * 0.7
         
         // Calculate pulse - only above threshold
         let bassPulse: Float = smoothedBass > bassThreshold 
@@ -977,8 +976,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
             : 0
         let targetPulse: CGFloat = 1.0 + CGFloat(bassPulse) * CGFloat(bassMultiplier)
         
-        // Asymmetric smoothing: fast attack, slower decay
-        let smoothFactor: CGFloat = targetPulse > currentPulse ? 0.4 : 0.15
+        // FAST attack (0.6), FAST decay (0.35) for punchy feel
+        let smoothFactor: CGFloat = targetPulse > currentPulse ? 0.6 : 0.35
         currentPulse += (targetPulse - currentPulse) * smoothFactor
         
         // ==========================================
