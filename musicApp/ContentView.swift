@@ -468,9 +468,9 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Single container - no extra TimelineView needed
+                // Single container
                 ZStack {
-                    // Main thumbnail - 220px static (bars handle the pulse effect)
+                    // Main thumbnail with bass pulse
                     Group {
                         if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                             Image(uiImage: thumbnailImage)
@@ -495,8 +495,9 @@ struct NowPlayingView: View {
                                 .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                         }
                     }
+                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.15)
                     
-                    // Visualizer overlay - OPTIMIZED (no @ObservedObject)
+                    // Visualizer overlay
                     EdgeVisualizerView(audioPlayer: audioPlayer)
                         .frame(width: 320, height: 320)
                         .allowsHitTesting(false)
@@ -885,7 +886,7 @@ struct DownloadBanner: View {
 
 // MARK: - Edge Visualizer (PUNCHY and responsive)
 struct EdgeVisualizerView: View {
-    @ObservedObject var audioPlayer: AudioPlayerManager  // Need this for isPlaying state
+    @ObservedObject var audioPlayer: AudioPlayerManager
     
     // Geometry - 220px fixed thumbnail
     private let boxSize: CGFloat = 220
@@ -894,61 +895,52 @@ struct EdgeVisualizerView: View {
     private let barsPerSide = 16  // 64 total bars = exact match to bins
     
     var body: some View {
-        // Always animate - TimelineView handles the updates
-        TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
-            Canvas { context, size in
-                let centerX = size.width / 2
-                let centerY = size.height / 2
-                
-                // Get data atomically - thread-safe
-                let (bins, bass) = audioPlayer.getVisualizationData()
-                guard bins.count >= 64 else { return }
-                
-                // DEBUG: Print to verify data is being read
-                if Int.random(in: 0..<120) == 0 {
-                    print("🎨 Canvas: bass=\(String(format: "%.2f", bass)), bin0=\(String(format: "%.2f", bins[0]))")
-                }
-                
-                let halfBox = boxSize / 2
-                let straightEdge = boxSize - 2 * cornerRadius
-                let spacing = straightEdge / CGFloat(barsPerSide)
-                
-                var barIndex = 0
-                
-                // TOP (bins 0-15)
-                for i in 0..<barsPerSide {
-                    let x = centerX - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
-                    let y = centerY - halfBox
-                    drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex])
-                    barIndex += 1
-                }
-                
-                // RIGHT (bins 16-31)
-                for i in 0..<barsPerSide {
-                    let x = centerX + halfBox
-                    let y = centerY - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
-                    drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex])
-                    barIndex += 1
-                }
-                
-                // BOTTOM (bins 32-47)
-                for i in 0..<barsPerSide {
-                    let x = centerX + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
-                    let y = centerY + halfBox
-                    drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex])
-                    barIndex += 1
-                }
-                
-                // LEFT (bins 48-63)
-                for i in 0..<barsPerSide {
-                    let x = centerX - halfBox
-                    let y = centerY + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
-                    drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex])
-                    barIndex += 1
-                }
+        Canvas { context, size in
+            let centerX = size.width / 2
+            let centerY = size.height / 2
+            
+            let bins = audioPlayer.frequencyBins
+            guard bins.count >= 64 else { return }
+            
+            let halfBox = boxSize / 2
+            let straightEdge = boxSize - 2 * cornerRadius
+            let spacing = straightEdge / CGFloat(barsPerSide)
+            
+            var barIndex = 0
+            
+            // TOP (bins 0-15)
+            for i in 0..<barsPerSide {
+                let x = centerX - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
+                let y = centerY - halfBox
+                drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex])
+                barIndex += 1
             }
-            .drawingGroup()
+            
+            // RIGHT (bins 16-31)
+            for i in 0..<barsPerSide {
+                let x = centerX + halfBox
+                let y = centerY - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
+                drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex])
+                barIndex += 1
+            }
+            
+            // BOTTOM (bins 32-47)
+            for i in 0..<barsPerSide {
+                let x = centerX + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
+                let y = centerY + halfBox
+                drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex])
+                barIndex += 1
+            }
+            
+            // LEFT (bins 48-63)
+            for i in 0..<barsPerSide {
+                let x = centerX - halfBox
+                let y = centerY + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
+                drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex])
+                barIndex += 1
+            }
         }
+        .drawingGroup()
     }
     
     @inline(__always)

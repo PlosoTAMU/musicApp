@@ -39,17 +39,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var timeUpdateTimer: Timer?
     
-    // ✅ Visualization data - Thread-safe, NOT @Published to avoid SwiftUI overhead
-    private var _bassLevel: Float = 0
-    private var _frequencyBins: [Float] = Array(repeating: 0, count: 64)
-    private let visualizationQueue = DispatchQueue(label: "com.musicapp.visualization", qos: .userInteractive)
+    // ✅ Visualization data - @Published with throttling to limit SwiftUI updates
+    @Published var bassLevel: Float = 0
+    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 64)
     
-    // Thread-safe accessor for visualization data
-    func getVisualizationData() -> (bins: [Float], bass: Float) {
-        return visualizationQueue.sync {
-            return (_frequencyBins, _bassLevel)
-        }
-    }
+    // Throttle visualization updates to ~30fps instead of ~86fps
+    private var lastVisualizationUpdate: CFAbsoluteTime = 0
+    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 30.0  // 30fps
     
     // FFT setup - use 1024 for better quality, fewer callbacks (~43/sec)
     private var fftSetup: FFTSetup?
@@ -1047,20 +1043,25 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 7: Thread-safe update (no @Published, no main thread)
-        // TimelineView will poll via getVisualizationData() at 60fps
+        // STEP 7: Throttled @Published update to limit SwiftUI redraws
+        // Update at max 30fps instead of 86fps
         // ==========================================
         let finalBins = newBins
         let finalBass = smoothedBass
         
-        // DEBUG: Print to verify FFT is processing
-        if Int.random(in: 0..<60) == 0 {
-            print("🎵 FFT: bass=\(String(format: "%.2f", finalBass)), bin0=\(String(format: "%.2f", finalBins[0]))")
-        }
-        
-        visualizationQueue.async(flags: .barrier) { [weak self] in
-            self?._frequencyBins = finalBins
-            self?._bassLevel = finalBass
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - lastVisualizationUpdate >= visualizationUpdateInterval {
+            lastVisualizationUpdate = now
+            
+            // DEBUG: Print to verify FFT is processing
+            if Int.random(in: 0..<30) == 0 {
+                print("🎵 FFT: bass=\(String(format: "%.2f", finalBass)), bin0=\(String(format: "%.2f", finalBins[0]))")
+            }
+            
+            DispatchQueue.main.async { [weak self] in
+                self?.frequencyBins = finalBins
+                self?.bassLevel = finalBass
+            }
         }
     }
 }
