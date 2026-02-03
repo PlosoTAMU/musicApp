@@ -50,7 +50,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // Bass detection state (persists across frames)
     private var smoothedBass: Float = 0
     private var currentPulse: CGFloat = 1.0
-    private var previousSamples: [Float] = Array(repeating: 0, count: 64)  // For simple low-pass
+    
+    // ✅ CRITICAL: Low-pass filter state for isolating bass
+    private var lpfState: Float = 0  // Single-pole IIR filter state
+    private var bassHistory: [Float] = Array(repeating: 0, count: 30)  // ~0.5 sec history for normalization
+    private var bassHistoryIndex = 0
+    private var maxRecentBass: Float = 0.001  // Adaptive maximum (avoid divide by zero)
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -915,50 +920,69 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let samples = channelData[0]
         
         // ==========================================
-        // ULTRA-SIMPLE BASS DETECTION (NO FFT!)
+        // REAL LOW-PASS FILTER FOR BASS ISOLATION
         // ==========================================
-        // Use a simple low-pass filter approach:
-        // Bass frequencies cause slow, large amplitude changes
-        // We detect this by measuring RMS energy of downsampled signal
+        // Single-pole IIR low-pass filter: y[n] = α * x[n] + (1-α) * y[n-1]
+        // Cutoff ~100Hz at 44.1kHz: α ≈ 2π * fc / fs ≈ 0.014
+        // We'll use α = 0.02 for ~140Hz cutoff (captures kick drums)
+        let lpfAlpha: Float = 0.02
         
-        // Step 1: Downsample by taking every 8th sample (reduces 512 -> 64)
-        // This naturally low-pass filters to ~2.75kHz at 44.1kHz sample rate
-        // Bass is < 250Hz so we're capturing it
         var bassEnergy: Float = 0
-        let downsampleFactor = 8
-        let downsampledCount = frameLength / downsampleFactor
-        
-        for i in 0..<downsampledCount {
-            let sample = samples[i * downsampleFactor]
-            // Accumulate squared amplitude (RMS)
-            bassEnergy += sample * sample
+        for i in 0..<frameLength {
+            // Apply low-pass filter to isolate bass frequencies
+            lpfState = lpfAlpha * samples[i] + (1.0 - lpfAlpha) * lpfState
+            // Accumulate energy of FILTERED signal (bass only!)
+            bassEnergy += lpfState * lpfState
         }
         
-        // Normalize to 0-1 range (RMS)
-        bassEnergy = sqrt(bassEnergy / Float(max(1, downsampledCount)))
-        
-        // Amplify to useful range (audio is often quiet)
-        bassEnergy = min(1.0, bassEnergy * 4.0)
+        // RMS of bass-filtered signal
+        bassEnergy = sqrt(bassEnergy / Float(max(1, frameLength)))
         
         // ==========================================
-        // PULSE CALCULATION (matches HTML logic)
+        // ADAPTIVE NORMALIZATION
         // ==========================================
-        let bassThreshold: Float = 0.08
-        let bassMultiplier: Float = 0.5
-        let pulseSmooth: Float = 0.35  // Faster response than before
+        // Track recent bass levels to normalize relative to song dynamics
+        // This prevents always-maxed-out visualization
+        bassHistory[bassHistoryIndex] = bassEnergy
+        bassHistoryIndex = (bassHistoryIndex + 1) % bassHistory.count
         
-        // Smooth the bass energy
-        smoothedBass = smoothedBass * 0.6 + bassEnergy * 0.4
+        // Find max in recent history (with decay)
+        var recentMax: Float = 0.001
+        for val in bassHistory {
+            if val > recentMax { recentMax = val }
+        }
+        // Slowly adapt the max (fast rise, slow fall)
+        if recentMax > maxRecentBass {
+            maxRecentBass = recentMax
+        } else {
+            maxRecentBass = maxRecentBass * 0.995 + recentMax * 0.005
+        }
         
-        // Calculate pulse
+        // Normalize bass energy relative to recent maximum
+        let normalizedBass = min(1.0, bassEnergy / maxRecentBass)
+        
+        // ==========================================
+        // PULSE CALCULATION
+        // ==========================================
+        let bassThreshold: Float = 0.15  // Only react to significant bass hits
+        let bassMultiplier: Float = 0.4  // Max pulse = 1.4
+        let pulseSmooth: Float = 0.3     // Fast response
+        
+        // Smooth the normalized bass
+        smoothedBass = smoothedBass * 0.5 + normalizedBass * 0.5
+        
+        // Calculate pulse - only above threshold
         let bassPulse: Float = smoothedBass > bassThreshold 
             ? (smoothedBass - bassThreshold) / (1.0 - bassThreshold) 
             : 0
         let targetPulse: CGFloat = 1.0 + CGFloat(bassPulse) * CGFloat(bassMultiplier)
-        currentPulse += (targetPulse - currentPulse) * CGFloat(pulseSmooth)
+        
+        // Asymmetric smoothing: fast attack, slower decay
+        let smoothFactor: CGFloat = targetPulse > currentPulse ? 0.4 : 0.15
+        currentPulse += (targetPulse - currentPulse) * smoothFactor
         
         // ==========================================
-        // PUBLISH TO MAIN THREAD (minimal data)
+        // PUBLISH TO MAIN THREAD
         // ==========================================
         let finalPulse = currentPulse
         let finalBass = smoothedBass
@@ -969,4 +993,3 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
 }
-
