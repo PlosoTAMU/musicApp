@@ -883,54 +883,70 @@ struct DownloadBanner: View {
 }
 
 
-// MARK: - Edge Visualizer (Matches HTML exactly)
+// MARK: - Edge Visualizer (Uses real audio data from AudioPlayerManager)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @Binding var thumbnailPulse: CGFloat
     
-    // Visualization state
-    @State private var lineAmplitudes: [CGFloat] = Array(repeating: 0, count: 200)
-    @State private var currentPulse: CGFloat = 1.0
+    // Pre-computed random groups (like HTML lineGroups)
     @State private var lineGroups: [Bool] = (0..<200).map { _ in Float.random(in: 0...1) > 0.7 }
+    
+    // Pulse state for smooth animation
+    @State private var currentPulse: CGFloat = 1.0
     
     // Match HTML constants exactly
     private let segments = 200
-    private let smoothingFactor: CGFloat = 0.4
-    private let threshold: CGFloat = 0.1
-    private let strengthMultiplier: CGFloat = 3.5
-    private let power: CGFloat = 0.2
-    private let maxOut: CGFloat = 50  // Longer lines
+    private let groupBMultiplier: CGFloat = 0.6666666666666666 // 2/3
     private let bassThreshold: CGFloat = 0.1
     private let bassMultiplier: CGFloat = 0.6
     private let pulseSmooth: CGFloat = 0.45
     
     var body: some View {
-        // ✅ PERFORMANCE: Reduce to 30fps instead of 60fps
+        // ✅ PERFORMANCE: 30fps is smooth enough for visualizer
         TimelineView(.animation(minimumInterval: 1.0/30.0)) { timeline in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 
                 // Box matches thumbnail (290x290, 20 corner radius)
-                // But we need to account for lines extending outward
                 let boxSize: CGFloat = 290
                 let radius: CGFloat = 20
                 
                 let baseX = centerX - boxSize / 2
                 let baseY = centerY - boxSize / 2
                 
-                // Calculate perimeter
-                let straightEdge = boxSize - 2 * radius
-                let cornerArc = (.pi / 2) * radius
-                let totalPerimeter = 4 * straightEdge + 4 * cornerArc
+                // Calculate perimeter (pre-computed for performance)
+                let straightEdge = boxSize - 2 * radius  // 250
+                let cornerArc = (.pi / 2) * radius       // ~31.4
+                let totalPerimeter = 4 * straightEdge + 4 * cornerArc  // ~1125.6
+                
+                // Edge boundaries
+                let edge1 = straightEdge
+                let edge2 = straightEdge + cornerArc
+                let edge3 = 2 * straightEdge + cornerArc
+                let edge4 = 2 * straightEdge + 2 * cornerArc
+                let edge5 = 3 * straightEdge + 2 * cornerArc
+                let edge6 = 3 * straightEdge + 3 * cornerArc
+                let edge7 = 4 * straightEdge + 3 * cornerArc
+                
+                // Pre-computed positions
+                let padPlusRadius = baseX + radius
+                let padPlusSize = baseX + boxSize
+                let padPlusSizeMinusRadius = baseX + boxSize - radius
+                
+                // Get real audio data from AudioPlayerManager
+                let vizData = audioPlayer.visualizationData
                 
                 // Draw lines extending outward
                 for i in 0..<segments {
-                    var amplitude = lineAmplitudes[i]
+                    guard i < vizData.count else { continue }
+                    
+                    // Get amplitude from real audio data
+                    var amplitude = CGFloat(vizData[i])
                     
                     // Apply group B multiplier (2/3 amplitude) like HTML
                     if i < lineGroups.count && lineGroups[i] {
-                        amplitude *= 0.6666666666666666
+                        amplitude *= groupBMultiplier
                     }
                     
                     // Skip very small amplitudes
@@ -944,46 +960,46 @@ struct EdgeVisualizerView: View {
                     var isCorner = false
                     
                     // Top edge
-                    if distance < straightEdge {
-                        x = baseX + radius + distance
+                    if distance < edge1 {
+                        x = padPlusRadius + distance
                         y = baseY
                         nx = 0
                         ny = -1
                     }
-                    // Top-right corner
-                    else if distance < straightEdge + cornerArc {
+                    // Top-right corner - skip
+                    else if distance < edge2 {
                         isCorner = true
                     }
                     // Right edge
-                    else if distance < 2 * straightEdge + cornerArc {
-                        x = baseX + boxSize
-                        y = baseY + radius + (distance - straightEdge - cornerArc)
+                    else if distance < edge3 {
+                        x = padPlusSize
+                        y = baseY + radius + (distance - edge2)
                         nx = 1
                         ny = 0
                     }
-                    // Bottom-right corner
-                    else if distance < 2 * straightEdge + 2 * cornerArc {
+                    // Bottom-right corner - skip
+                    else if distance < edge4 {
                         isCorner = true
                     }
                     // Bottom edge
-                    else if distance < 3 * straightEdge + 2 * cornerArc {
-                        x = baseX + boxSize - radius - (distance - 2 * straightEdge - 2 * cornerArc)
+                    else if distance < edge5 {
+                        x = padPlusSizeMinusRadius - (distance - edge4)
                         y = baseY + boxSize
                         nx = 0
                         ny = 1
                     }
-                    // Bottom-left corner
-                    else if distance < 3 * straightEdge + 3 * cornerArc {
+                    // Bottom-left corner - skip
+                    else if distance < edge6 {
                         isCorner = true
                     }
                     // Left edge
-                    else if distance < 4 * straightEdge + 3 * cornerArc {
+                    else if distance < edge7 {
                         x = baseX
-                        y = baseY + boxSize - radius - (distance - 3 * straightEdge - 3 * cornerArc)
+                        y = baseY + boxSize - radius - (distance - edge6)
                         nx = -1
                         ny = 0
                     }
-                    // Top-left corner
+                    // Top-left corner - skip
                     else {
                         isCorner = true
                     }
@@ -993,6 +1009,7 @@ struct EdgeVisualizerView: View {
                     // Rainbow gradient (matching HTML: hue offset by 180)
                     let t = CGFloat(i) / CGFloat(segments)
                     let hue = (t * 360 + 180).truncatingRemainder(dividingBy: 360) / 360.0
+                    let maxOut: CGFloat = 25.0
                     let opacity = 0.6 + (amplitude / maxOut) * 0.4
                     
                     let color = Color(hue: hue, saturation: 1.0, brightness: 0.6).opacity(opacity)
@@ -1010,67 +1027,28 @@ struct EdgeVisualizerView: View {
                 }
             }
             .onChange(of: timeline.date) { _ in
-                updateVisualization()
+                updatePulse()
             }
         }
     }
     
-    private func updateVisualization() {
-        let time = Date().timeIntervalSince1970
+    private func updatePulse() {
+        // Use real bass level from AudioPlayerManager
+        let bass = CGFloat(audioPlayer.bassLevel)
         
         if audioPlayer.isPlaying {
-            // Simulate bass from multiple sine waves (like real audio)
-            let bassWave1 = sin(time * 8.0) * 0.5 + 0.5
-            let bassWave2 = sin(time * 3.7) * 0.3 + 0.7
-            let bassWave3 = sin(time * 12.1) * 0.2 + 0.8
-            let bass = Float(bassWave1 * bassWave2 * bassWave3 * 0.25)
-            
             // Calculate pulse from bass (matching HTML exactly)
-            let bassPulse = bass > Float(bassThreshold) ?
-                CGFloat((bass - Float(bassThreshold)) / 0.9) : 0
+            let bassPulse = bass > bassThreshold ?
+                (bass - bassThreshold) / 0.9 : 0
             let targetPulse = 1.0 + bassPulse * bassMultiplier
             currentPulse += (targetPulse - currentPulse) * pulseSmooth
             
             // Update thumbnail pulse binding
             thumbnailPulse = currentPulse
-            
-            // Update line amplitudes with varied frequencies per segment
-            for i in 0..<segments {
-                let phase1 = time * 10.0 + Double(i) * 0.12
-                let phase2 = time * 6.3 + Double(i) * 0.19
-                let phase3 = time * 3.7 + Double(i) * 0.27
-                
-                // Combine multiple frequencies for organic look
-                let wave = sin(phase1) * 0.35 + sin(phase2) * 0.4 + sin(phase3) * 0.25
-                let rawStrength = abs(Float(wave))
-                
-                var strength: CGFloat = 0
-                
-                if rawStrength > Float(threshold) {
-                    let normalized = CGFloat((rawStrength - Float(threshold)) / 0.9)
-                    strength = pow(normalized, power) * strengthMultiplier
-                }
-                
-                // Smooth transition (matching HTML smoothingFactor)
-                let targetOut = strength * maxOut
-                lineAmplitudes[i] += (targetOut - lineAmplitudes[i]) * smoothingFactor
-                
-                // Minimum threshold
-                if lineAmplitudes[i] < 2 {
-                    lineAmplitudes[i] = 0
-                }
-            }
         } else {
-            // When paused: decay all values smoothly
+            // When paused: decay pulse smoothly
             thumbnailPulse += (1.0 - thumbnailPulse) * 0.1
             currentPulse += (1.0 - currentPulse) * 0.1
-            
-            for i in 0..<segments {
-                lineAmplitudes[i] *= 0.92  // Smooth decay
-                if lineAmplitudes[i] < 1 {
-                    lineAmplitudes[i] = 0
-                }
-            }
         }
     }
 }

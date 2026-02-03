@@ -575,6 +575,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             player.play()
             
+            // ✅ FIX: Reinstall visualization tap after resume (player.stop() removes it)
+            self.installVisualizationTap()
+            
             DispatchQueue.main.async {
                 self.needsReschedule = false
                 self.isPlaying = true
@@ -886,7 +889,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func installVisualizationTap() {
-        guard let player = playerNode, !visualizationTapInstalled else { return }
+        guard let player = playerNode else { return }
+        
+        // Remove existing tap if any (player.stop() may have removed it)
+        if visualizationTapInstalled {
+            player.removeTap(onBus: 0)
+            visualizationTapInstalled = false
+        }
         
         if fftSetup == nil {
             setupFFT()
@@ -960,27 +969,37 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func processAudioForVisualization() {
+        // Match HTML visualizer constants exactly
         let segments = 200
         let threshold: Float = 0.1
         let strengthMultiplier: Float = 3.5
         let power: Float = 0.2
         let smoothingFactor: Float = 0.4
+        let maxOut: Float = 25.0
+        let groupBMultiplier: Float = 0.6666666666666666  // 2/3
+        let bassThreshold: Float = 0.1
+        let bassDivisor: Float = 10200.0  // 40 * 255
         
-        // Calculate bass for pulse effect
+        // Calculate bass from frequency data (first 40 bins)
+        // frequencyData is normalized 0-1, scale to 0-255 range like HTML
         var bass: Float = 0
-        for i in 0..<40 {
-            bass += frequencyData[i]
+        for i in 0..<min(40, frequencyData.count) {
+            bass += frequencyData[i] * 255.0
         }
-        bass /= 10200.0
+        bass /= bassDivisor
         
-        // Create new visualization data
+        // Create new visualization data using time domain (waveform) data
         var newData = [Float](repeating: 0, count: segments)
         
+        let dataIndexMult = Float(timeDomainData.count) / Float(segments)
+        
         for i in 0..<segments {
-            let dataIndex = Int((Float(i) / Float(segments)) * Float(timeDomainData.count))
-            let wave = timeDomainData[dataIndex]
+            let dataIndex = Int(Float(i) * dataIndexMult)
             
+            // timeDomainData contains float samples from -1 to 1
+            let wave = timeDomainData[dataIndex]
             let rawStrength = abs(wave)
+            
             var strength: Float = 0
             
             if rawStrength > threshold {
@@ -988,10 +1007,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 strength = pow(normalized, power) * strengthMultiplier
             }
             
-            // Smooth with previous value
-            let previousValue = visualizationData.count > i ? visualizationData[i] : 0
-            newData[i] = previousValue + (strength * 25 - previousValue) * smoothingFactor
+            let targetOut = strength * maxOut
             
+            // Smooth with previous value (like HTML lineSmoothing)
+            let previousValue = visualizationData.count > i ? visualizationData[i] : 0
+            newData[i] = previousValue + (targetOut - previousValue) * smoothingFactor
+            
+            // Minimum threshold
             if newData[i] < 2 {
                 newData[i] = 0
             }

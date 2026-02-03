@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Clean Audio Visualizer - Optimized</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<style>
+  body {
+    margin: 0;
+    background: #0a0a0f;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    overflow: hidden;
+  }
+
+  .container {
+    width: 100vw;
+    height: 100vh;
+    background: #0a0a0f;
+    padding: 0;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .file-input-wrapper {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    gap: 10px;
+  }
+
+  input[type="file"] {
+    display: none;
+  }
+
+  .upload-btn {
+    display: inline-block;
+    padding: 12px 24px;
+    background: rgba(0, 220, 255, 0.1);
+    border: 1px solid rgba(0, 220, 255, 0.3);
+    border-radius: 20px;
+    color: #00dcff;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+  }
+
+  .upload-btn:hover {
+    background: rgba(0, 220, 255, 0.15);
+    border-color: rgba(0, 220, 255, 0.5);
+  }
+
+  .pause-btn {
+    display: none;
+    padding: 12px 24px;
+    background: rgba(0, 220, 255, 0.1);
+    border: 1px solid rgba(0, 220, 255, 0.3);
+    border-radius: 20px;
+    color: #00dcff;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+  }
+
+  .pause-btn.active {
+    display: inline-block;
+  }
+
+  .pause-btn:hover {
+    background: rgba(0, 220, 255, 0.15);
+    border-color: rgba(0, 220, 255, 0.5);
+  }
+
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="file-input-wrapper">
+    <label for="audioFile" class="upload-btn">Choose Audio File</label>
+    <button class="pause-btn">Pause</button>
+    <input type="file" id="audioFile" accept="audio/*">
+  </div>
+  <canvas></canvas>
+</div>
+
+<script>
+const canvas = document.querySelector("canvas");
+const ctx = canvas.getContext("2d", { alpha: false }); // Optimization: disable alpha
+
+// High resolution canvas
+canvas.width = 1000;
+canvas.height = 1000;
+
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const analyser = audioCtx.createAnalyser();
+analyser.fftSize = 4096;
+analyser.smoothingTimeConstant = 0.6;
+
+const freqData = new Uint8Array(analyser.frequencyBinCount);
+const timeData = new Uint8Array(analyser.fftSize);
+
+let pulse = 1;
+let targetPulse = 1;
+let audioElement;
+let isPaused = false;
+let sourceNode;
+
+// Pre-allocated arrays
+const lineSmoothing = new Float32Array(200);
+const lineGroups = new Uint8Array(200); // 0 = group A, 1 = group B
+
+// Pre-compute random groups
+for (let i = 0; i < 200; i++) {
+  lineGroups[i] = Math.random() < 0.7 ? 0 : 1;
+}
+
+// Hardcoded constants
+const SEGMENTS = 200;
+const SMOOTH_FACTOR = 0.4;
+const THRESHOLD = 0.1;
+const STRENGTH_MULTIPLIER = 3.5;
+const POWER = 0.2;
+const GROUP_B_MULTIPLIER = 0.6666666666666666; // 2/3
+const MAX_OUT = 25;
+const BASS_THRESHOLD = 0.1;
+const BASS_MULTIPLIER = 0.6;
+const PULSE_SMOOTH = 0.45;
+const INV_BASS_THRESHOLD = 0.9; // 1 - 0.1
+const INV_THRESHOLD = 0.9; // 1 - 0.1
+const BASS_DIV = 10200; // 40 * 255
+const SEGMENTS_INV = 0.005; // 1 / 200
+
+// Hardcoded geometry constants
+const PAD = 350;
+const SIZE = 300;
+const RADIUS = 40;
+const HALF_WIDTH = 500; // canvas.width / 2
+const HALF_HEIGHT = 500; // canvas.height / 2
+const STRAIGHT_EDGE = 220; // SIZE - 2 * RADIUS
+const CORNER_ARC = 62.83185307179586; // (Math.PI / 2) * RADIUS
+const TOTAL_PERIMETER = 1131.3274122871834; // 4 * STRAIGHT_EDGE + 4 * CORNER_ARC
+
+// Edge boundaries (pre-computed)
+const EDGE_1 = STRAIGHT_EDGE; // 220
+const EDGE_2 = STRAIGHT_EDGE + CORNER_ARC; // 282.83
+const EDGE_3 = 2 * STRAIGHT_EDGE + CORNER_ARC; // 502.83
+const EDGE_4 = 2 * STRAIGHT_EDGE + 2 * CORNER_ARC; // 565.66
+const EDGE_5 = 3 * STRAIGHT_EDGE + 2 * CORNER_ARC; // 785.66
+const EDGE_6 = 3 * STRAIGHT_EDGE + 3 * CORNER_ARC; // 848.50
+const EDGE_7 = 4 * STRAIGHT_EDGE + 3 * CORNER_ARC; // 1068.50
+
+// Pre-computed position values
+const PAD_PLUS_RADIUS = 390; // PAD + RADIUS
+const PAD_PLUS_SIZE = 650; // PAD + SIZE
+const SIZE_MINUS_RADIUS = 260; // SIZE - RADIUS
+const PAD_PLUS_SIZE_MINUS_RADIUS = 610; // PAD + SIZE - RADIUS
+
+// Pre-computed data index multiplier
+const TIME_DATA_LENGTH = 4096;
+const DATA_INDEX_MULT = 20.48; // TIME_DATA_LENGTH / SEGMENTS
+
+const pauseBtn = document.querySelector(".pause-btn");
+
+document.querySelector("input").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  if (audioElement) {
+    audioElement.pause();
+    audioElement.src = "";
+  }
+
+  audioElement = new Audio();
+  audioElement.src = URL.createObjectURL(file);
+  
+  if (sourceNode) {
+    sourceNode.disconnect();
+  }
+  
+  sourceNode = audioCtx.createMediaElementSource(audioElement);
+  sourceNode.connect(analyser);
+  analyser.connect(audioCtx.destination);
+  
+  if (audioCtx.state === "suspended") {
+    await audioCtx.resume();
+  }
+
+  try {
+    await audioElement.play();
+    isPaused = false;
+    pauseBtn.textContent = "Pause";
+    pauseBtn.classList.add("active");
+  } catch (err) {
+    console.error("Playback error:", err);
+  }
+});
+
+pauseBtn.addEventListener("click", () => {
+  if (!audioElement) return;
+  
+  if (isPaused) {
+    audioElement.play();
+    pauseBtn.textContent = "Pause";
+    isPaused = false;
+  } else {
+    audioElement.pause();
+    pauseBtn.textContent = "Play";
+    isPaused = true;
+  }
+});
+
+function draw() {
+  requestAnimationFrame(draw);
+
+  analyser.getByteFrequencyData(freqData);
+  analyser.getByteTimeDomainData(timeData);
+
+  // Bass calculation (optimized loop)
+  let bass = 0;
+  for (let i = 0; i < 40; i++) {
+    bass += freqData[i];
+  }
+  bass /= BASS_DIV;
+
+  // Pulse calculation
+  const bassPulse = bass > BASS_THRESHOLD ? (bass - BASS_THRESHOLD) / INV_BASS_THRESHOLD : 0;
+  targetPulse = 1 + bassPulse * BASS_MULTIPLIER;
+  pulse += (targetPulse - pulse) * PULSE_SMOOTH;
+
+  // Clear canvas
+  ctx.fillStyle = "rgba(10, 10, 15, 0.3)";
+  ctx.fillRect(0, 0, 1000, 1000);
+
+  ctx.save();
+  ctx.translate(HALF_WIDTH, HALF_HEIGHT);
+  ctx.scale(pulse, pulse);
+  ctx.translate(-HALF_WIDTH, -HALF_HEIGHT);
+
+  // Draw rounded square outline
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(PAD_PLUS_RADIUS, PAD);
+  ctx.lineTo(PAD_PLUS_SIZE_MINUS_RADIUS, PAD);
+  ctx.quadraticCurveTo(PAD_PLUS_SIZE, PAD, PAD_PLUS_SIZE, PAD_PLUS_RADIUS);
+  ctx.lineTo(PAD_PLUS_SIZE, PAD_PLUS_SIZE_MINUS_RADIUS);
+  ctx.quadraticCurveTo(PAD_PLUS_SIZE, PAD_PLUS_SIZE, PAD_PLUS_SIZE_MINUS_RADIUS, PAD_PLUS_SIZE);
+  ctx.lineTo(PAD_PLUS_RADIUS, PAD_PLUS_SIZE);
+  ctx.quadraticCurveTo(PAD, PAD_PLUS_SIZE, PAD, PAD_PLUS_SIZE_MINUS_RADIUS);
+  ctx.lineTo(PAD, PAD_PLUS_RADIUS);
+  ctx.quadraticCurveTo(PAD, PAD, PAD_PLUS_RADIUS, PAD);
+  ctx.stroke();
+
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+
+  // Main visualization loop
+  for (let i = 0; i < SEGMENTS; i++) {
+    const dataIndex = (i * DATA_INDEX_MULT) | 0; // Bitwise OR for fast floor
+    const wave = (timeData[dataIndex] - 128) * 0.0078125; // Division by 128 as multiplication
+
+    const rawStrength = wave < 0 ? -wave : wave; // Faster than Math.abs
+    let strength = 0;
+    
+    if (rawStrength > THRESHOLD) {
+      const normalized = (rawStrength - THRESHOLD) / INV_THRESHOLD;
+      // Use lookup or approximation instead of Math.pow for common values
+      strength = Math.pow(normalized, POWER) * STRENGTH_MULTIPLIER;
+      
+      // Apply group B multiplier (avoid string comparison)
+      if (lineGroups[i]) {
+        strength *= GROUP_B_MULTIPLIER;
+      }
+    }
+    
+    const targetOut = strength * MAX_OUT;
+    
+    // Smooth the line movement (inlined function)
+    lineSmoothing[i] += (targetOut - lineSmoothing[i]) * SMOOTH_FACTOR;
+    let out = lineSmoothing[i];
+    
+    if (out < 2) out = 0;
+
+    const distance = i * TOTAL_PERIMETER * SEGMENTS_INV;
+    let x, y, nx, ny;
+
+    // Top edge
+    if (distance < EDGE_1) {
+      x = PAD_PLUS_RADIUS + distance;
+      y = PAD;
+      nx = 0; 
+      ny = -1;
+    }
+    // Top-right corner - skip
+    else if (distance < EDGE_2) {
+      continue;
+    }
+    // Right edge
+    else if (distance < EDGE_3) {
+      x = PAD_PLUS_SIZE;
+      y = PAD_PLUS_RADIUS + (distance - EDGE_2);
+      nx = 1; 
+      ny = 0;
+    }
+    // Bottom-right corner - skip
+    else if (distance < EDGE_4) {
+      continue;
+    }
+    // Bottom edge
+    else if (distance < EDGE_5) {
+      x = PAD_PLUS_SIZE_MINUS_RADIUS - (distance - EDGE_4);
+      y = PAD_PLUS_SIZE;
+      nx = 0; 
+      ny = 1;
+    }
+    // Bottom-left corner - skip
+    else if (distance < EDGE_6) {
+      continue;
+    }
+    // Left edge
+    else if (distance < EDGE_7) {
+      x = PAD;
+      y = PAD_PLUS_SIZE_MINUS_RADIUS - (distance - EDGE_6);
+      nx = -1; 
+      ny = 0;
+    }
+    // Top-left corner - skip
+    else {
+      continue;
+    }
+
+    // Rainbow gradient (optimized)
+    const hue = (i * 1.8 + 180) % 360; // i / SEGMENTS * 360 = i * 1.8
+    const opacity = 0.6 + (out * 0.016); // out / MAX_OUT * 0.4 = out * 0.016
+    
+    ctx.strokeStyle = `hsla(${hue}, 100%, 60%, ${opacity})`;
+    
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + nx * out, y + ny * out);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+draw();
+</script>
+
+</body>
+</html>
