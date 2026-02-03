@@ -888,11 +888,11 @@ struct DownloadBanner: View {
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     
-    // Geometry - 220px fixed thumbnail
-    private let boxSize: CGFloat = 220
+    // Geometry - matches thumbnail with pulse
+    private let baseBoxSize: CGFloat = 220
     private let cornerRadius: CGFloat = 16
     private let maxBarLength: CGFloat = 50
-    private let barsPerSide = 16  // 64 total bars = exact match to bins
+    private let barsPerSide = 16  // 64 total bars = matches FFT bins
     
     var body: some View {
         Canvas { context, size in
@@ -900,17 +900,22 @@ struct EdgeVisualizerView: View {
             let centerY = size.height / 2
             
             let bins = audioPlayer.frequencyBins
+            let bass = audioPlayer.bassLevel
             guard bins.count >= 64 else { return }
             
+            // Scale box with bass (matches thumbnail pulse of 0.15)
+            let pulseScale = 1.0 + CGFloat(bass) * 0.15
+            let boxSize = baseBoxSize * pulseScale
             let halfBox = boxSize / 2
-            let straightEdge = boxSize - 2 * cornerRadius
+            let scaledCorner = cornerRadius * pulseScale
+            let straightEdge = boxSize - 2 * scaledCorner
             let spacing = straightEdge / CGFloat(barsPerSide)
             
             var barIndex = 0
             
             // TOP (bins 0-15)
             for i in 0..<barsPerSide {
-                let x = centerX - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
+                let x = centerX - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
                 let y = centerY - halfBox
                 drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex])
                 barIndex += 1
@@ -919,14 +924,14 @@ struct EdgeVisualizerView: View {
             // RIGHT (bins 16-31)
             for i in 0..<barsPerSide {
                 let x = centerX + halfBox
-                let y = centerY - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
+                let y = centerY - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
                 drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex])
                 barIndex += 1
             }
             
             // BOTTOM (bins 32-47)
             for i in 0..<barsPerSide {
-                let x = centerX + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
+                let x = centerX + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
                 let y = centerY + halfBox
                 drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex])
                 barIndex += 1
@@ -935,7 +940,7 @@ struct EdgeVisualizerView: View {
             // LEFT (bins 48-63)
             for i in 0..<barsPerSide {
                 let x = centerX - halfBox
-                let y = centerY + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
+                let y = centerY + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
                 drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex])
                 barIndex += 1
             }
@@ -948,7 +953,7 @@ struct EdgeVisualizerView: View {
         let barLength = CGFloat(value) * maxBarLength
         guard barLength > 1 else { return }
         
-        // Hue based on intensity (red=high, green/cyan=low)
+        // Hue based on intensity - matches HTML (0-360 mapped to 0-0.35 for red-yellow-green)
         let hue = Double(value) * 0.35
         let color = Color(hue: hue, saturation: 1.0, brightness: 0.95)
         

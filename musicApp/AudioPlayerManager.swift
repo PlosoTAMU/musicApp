@@ -974,18 +974,22 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 3: Extract frequency data for 64 bins
+        // STEP 3: Extract BASS frequencies only (like HTML reference)
+        // At 44.1kHz with fftSize 1024: each bin = ~43Hz
+        // Bass range 20-250Hz = bins 1-6 approx
+        // We'll use bins 1-16 for more range (~43-700Hz)
         // ==========================================
-        // At 44.1kHz with fftSize 256: each bin = 172 Hz
-        // Use bins 1-64 for bass/mid frequencies
         
+        let bassEndBin = 16  // ~700Hz - covers bass and low-mids
         var rawBins = [Float](repeating: 0, count: 64)
         var peakMag: Float = 0
         
+        // Map 64 output bins to bass range (like HTML does with bassEndIndex)
         for i in 0..<64 {
-            let binIdx = i + 1  // Skip DC (bin 0)
-            guard binIdx < fftSizeHalf else { break }
-            let mag = sqrt(fftMagnitudes[binIdx])
+            // Map each output bin to bass frequency range
+            let dataIndex = 1 + (i * bassEndBin) / 64  // Spread bass across all bars
+            guard dataIndex < fftSizeHalf else { break }
+            let mag = sqrt(fftMagnitudes[dataIndex])
             rawBins[i] = mag
             if mag > peakMag { peakMag = mag }
         }
@@ -996,15 +1000,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
         if peakMag > maxMagnitude {
             maxMagnitude = peakMag  // Instant attack
         } else {
-            maxMagnitude = maxMagnitude * 0.985  // Faster decay = more dynamic
+            maxMagnitude = maxMagnitude * 0.95  // Even faster decay = more dynamic
         }
         maxMagnitude = max(maxMagnitude, 0.0001)
         
         // ==========================================
-        // STEP 5: SUPER PUNCHY - almost no smoothing
+        // STEP 5: SUPER PUNCHY - minimal smoothing
         // ==========================================
-        let smoothUp: Float = 0.95    // Near-instant rise
-        let smoothDown: Float = 0.6   // Fast fall
+        let smoothUp: Float = 0.9     // Very fast rise
+        let smoothDown: Float = 0.7   // Fast fall
         
         var newBins = [Float](repeating: 0, count: 64)
         
@@ -1052,11 +1056,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let now = CFAbsoluteTimeGetCurrent()
         if now - lastVisualizationUpdate >= visualizationUpdateInterval {
             lastVisualizationUpdate = now
-            
-            // DEBUG: Print to verify FFT is processing
-            if Int.random(in: 0..<30) == 0 {
-                print("🎵 FFT: bass=\(String(format: "%.2f", finalBass)), bin0=\(String(format: "%.2f", finalBins[0]))")
-            }
             
             DispatchQueue.main.async { [weak self] in
                 self?.frequencyBins = finalBins
