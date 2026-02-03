@@ -1014,6 +1014,7 @@ struct EdgeVisualizerView: View {
                     )
                 }
             }
+            .drawingGroup()
         }
     }
 }

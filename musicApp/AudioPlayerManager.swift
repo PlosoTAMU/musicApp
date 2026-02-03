@@ -46,11 +46,24 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     // FFT setup for visualization
     private var fftSetup: FFTSetup?
-    private let fftSize = 4096
+    private let fftSize = 4096  // Match HTML analyser.fftSize
+    private let visualizationBufferSize: AVAudioFrameCount = 1024  // ✅ Smaller tap buffer for higher FPS
     private var frequencyData = [Float](repeating: 0, count: 2048)
-    private var smoothedFrequencyData = [Float](repeating: 0, count: 2048)  // ✅ NEW: Smoothed like HTML's smoothingTimeConstant
+    private var smoothedFrequencyData = [Float](repeating: 0, count: 2048)  // Smoothed like HTML's smoothingTimeConstant
     private var timeDomainData = [Float](repeating: 0, count: 4096)
+    private var ringBuffer = [Float](repeating: 0, count: 4096)
+    private var ringWriteIndex = 0
     private var visualizationTapInstalled = false
+
+    // ✅ Pre-allocated FFT buffers to avoid per-frame allocations
+    private var fftReal = [Float](repeating: 0, count: 2048)
+    private var fftImag = [Float](repeating: 0, count: 2048)
+    private var fftMagnitudes = [Float](repeating: 0, count: 2048)
+    private var fftLog2n: vDSP_Length = 0
+
+    // ✅ Pre-allocated visualization buffers (avoid per-frame allocations)
+    private var visualizationBuffer = [Float](repeating: 0, count: 200)
+    private var lineSmoothing = [Float](repeating: 0, count: 200)
     
     // ✅ FIXED: No throttling - run at full 60fps like HTML requestAnimationFrame
     private var visualizationUpdateCounter = 0
@@ -892,8 +905,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // MARK: - Visualization Support
 
     private func setupFFT() {
-        let log2n = vDSP_Length(log2(Float(fftSize)))
-        fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
+        fftLog2n = vDSP_Length(log2(Float(fftSize)))
+        fftSetup = vDSP_create_fftsetup(fftLog2n, FFTRadix(kFFTRadix2))
     }
 
     private func installVisualizationTap() {
@@ -911,7 +924,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         let format = player.outputFormat(forBus: 0)
         
-        player.installTap(onBus: 0, bufferSize: AVAudioFrameCount(fftSize), format: format) { [weak self] buffer, _ in
+        player.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
             self?.processVisualizationBuffer(buffer)
         }
         
@@ -935,45 +948,65 @@ class AudioPlayerManager: NSObject, ObservableObject {
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
         let data = channelData[0]
-        
-        // Copy to time domain data
-        for i in 0..<min(frameLength, timeDomainData.count) {
-            timeDomainData[i] = data[i]
+
+        // ✅ Write into ring buffer (higher FPS with smaller tap buffer)
+        let copyCount = min(frameLength, fftSize)
+        for i in 0..<copyCount {
+            ringBuffer[ringWriteIndex] = data[i]
+            ringWriteIndex += 1
+            if ringWriteIndex >= fftSize { ringWriteIndex = 0 }
+        }
+
+        // ✅ Build contiguous time domain buffer from ring buffer
+        let tailCount = fftSize - ringWriteIndex
+        if tailCount > 0 {
+            timeDomainData.withUnsafeMutableBufferPointer { dest in
+                ringBuffer.withUnsafeBufferPointer { src in
+                    dest.baseAddress?.assign(from: src.baseAddress! + ringWriteIndex, count: tailCount)
+                }
+            }
+        }
+        if ringWriteIndex > 0 {
+            timeDomainData.withUnsafeMutableBufferPointer { dest in
+                ringBuffer.withUnsafeBufferPointer { src in
+                    dest.baseAddress?.advanced(by: tailCount).assign(from: src.baseAddress!, count: ringWriteIndex)
+                }
+            }
         }
         
-        // Perform FFT
-        performFFT(data: data, frameLength: frameLength)
+        // Perform FFT on contiguous buffer
+        timeDomainData.withUnsafeBufferPointer { ptr in
+            if let base = ptr.baseAddress {
+                performFFT(data: base, frameLength: fftSize)
+            }
+        }
         
         // Process and publish visualization data
         processAudioForVisualization()
     }
 
     private func performFFT(data: UnsafePointer<Float>, frameLength: Int) {
-        var realp = [Float](repeating: 0, count: fftSize / 2)
-        var imagp = [Float](repeating: 0, count: fftSize / 2)
-        
-        realp.withUnsafeMutableBufferPointer { realPtr in
-            imagp.withUnsafeMutableBufferPointer { imagPtr in
+        fftReal.withUnsafeMutableBufferPointer { realPtr in
+            fftImag.withUnsafeMutableBufferPointer { imagPtr in
                 var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
                 
-                data.withMemoryRebound(to: DSPComplex.self, capacity: frameLength / 2) { complexPtr in
+                data.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
                     vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
                 }
                 
                 if let setup = fftSetup {
-                    vDSP_fft_zrip(setup, &splitComplex, 1, vDSP_Length(log2(Float(fftSize))), FFTDirection(kFFTDirection_Forward))
+                    vDSP_fft_zrip(setup, &splitComplex, 1, fftLog2n, FFTDirection(kFFTDirection_Forward))
                 }
                 
                 // Calculate magnitudes
-                var magnitudes = [Float](repeating: 0, count: fftSize / 2)
-                vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(fftSize / 2))
+                vDSP_zvmags(&splitComplex, 1, &fftMagnitudes, 1, vDSP_Length(fftSize / 2))
                 
                 // ✅ FIXED: Convert to 0-255 range like HTML's getByteFrequencyData
                 // Then apply smoothing like HTML's smoothingTimeConstant = 0.6
                 let smoothingTimeConstant: Float = 0.6
-                for i in 0..<min(magnitudes.count, frequencyData.count) {
+                for i in 0..<min(fftMagnitudes.count, frequencyData.count) {
                     // Convert FFT magnitude to dB, then to 0-255 range like Web Audio API
-                    let magnitude = sqrt(magnitudes[i])
+                    let magnitude = sqrt(fftMagnitudes[i])
                     let db = 20 * log10(max(magnitude, 1e-10))  // Convert to dB
                     // Map dB range (-100 to 0) to byte range (0 to 255)
                     let byteValue = max(0, min(255, (db + 100) * 2.55))
@@ -1025,8 +1058,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         currentPulse += (targetPulse - currentPulse) * CGFloat(pulseSmooth)
         
         // Create new visualization data using time domain (waveform) data
-        var newData = [Float](repeating: 0, count: segments)
-        
         let dataIndexMult = Float(timeDomainData.count) / Float(segments)
         
         for i in 0..<segments {
@@ -1046,19 +1077,21 @@ class AudioPlayerManager: NSObject, ObservableObject {
             let targetOut = strength * maxOut
             
             // Smooth with previous value (like HTML lineSmoothing)
-            let previousValue = visualizationData.count > i ? visualizationData[i] : 0
-            newData[i] = previousValue + (targetOut - previousValue) * smoothingFactor
+            let previousValue = lineSmoothing[i]
+            let smoothed = previousValue + (targetOut - previousValue) * smoothingFactor
+            lineSmoothing[i] = smoothed
+            visualizationBuffer[i] = smoothed
             
             // Minimum threshold
-            if newData[i] < 2 {
-                newData[i] = 0
+            if visualizationBuffer[i] < 2 {
+                visualizationBuffer[i] = 0
             }
         }
         
         // Publish on main thread
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.visualizationData = newData
+            self.visualizationData = self.visualizationBuffer
             self.bassLevel = bass
             self.pulse = self.currentPulse  // ✅ Publish the smoothed pulse
         }
