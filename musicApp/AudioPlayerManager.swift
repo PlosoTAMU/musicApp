@@ -51,7 +51,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var smoothedBass: Float = 0
     private var currentPulse: CGFloat = 1.0
     private var previousSamples: [Float] = Array(repeating: 0, count: 64)  // For simple low-pass
-    private var smoothedBass: Float = 0
 
     private func startTimeUpdates() {
         stopTimeUpdates()
