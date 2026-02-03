@@ -991,21 +991,20 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 4: Adaptive normalization (FAST)
+        // STEP 4: Adaptive normalization - FAST decay
         // ==========================================
         if peakMag > maxMagnitude {
             maxMagnitude = peakMag  // Instant attack
         } else {
-            maxMagnitude = maxMagnitude * 0.99  // Fast decay for dynamic range
+            maxMagnitude = maxMagnitude * 0.985  // Faster decay = more dynamic
         }
         maxMagnitude = max(maxMagnitude, 0.0001)
         
         // ==========================================
-        // STEP 5: PUNCHY - minimal smoothing like HTML sample
+        // STEP 5: SUPER PUNCHY - almost no smoothing
         // ==========================================
-        // HTML uses NO smoothing - we use very light smoothing to avoid jitter
-        let smoothUp: Float = 0.85    // Almost instant rise (was 0.6)
-        let smoothDown: Float = 0.5   // Fast fall (was 0.25)
+        let smoothUp: Float = 0.95    // Near-instant rise
+        let smoothDown: Float = 0.6   // Fast fall
         
         var newBins = [Float](repeating: 0, count: 64)
         
@@ -1013,10 +1012,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
             // Normalize to 0-1
             var normalized = min(1.0, rawBins[i] / maxMagnitude)
             
-            // Power curve for punch
-            normalized = pow(normalized, 0.7)
+            // Power curve - sqrt makes quieter parts more visible, peaks punch harder
+            normalized = pow(normalized, 0.5)
             
-            // Smooth: fast attack, medium release
+            // Almost no smoothing - super responsive
             if normalized > smoothedBins[i] {
                 smoothedBins[i] = smoothedBins[i] + (normalized - smoothedBins[i]) * smoothUp
             } else {
@@ -1027,7 +1026,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 6: Bass level - PEAK for punch
+        // STEP 6: Bass level - PEAK, super punchy
         // ==========================================
         var peakBass: Float = 0
         for i in 0..<8 {
@@ -1036,11 +1035,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
         }
         
-        // Smooth bass
+        // Almost instant bass response
         if peakBass > smoothedBass {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.8
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.95  // Near-instant
         } else {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.4
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.5   // Fast decay
         }
         
         // ==========================================
