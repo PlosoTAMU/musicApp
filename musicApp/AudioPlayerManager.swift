@@ -1050,9 +1050,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // STEP 7: Thread-safe update (no @Published, no main thread)
         // TimelineView will poll via getVisualizationData() at 60fps
         // ==========================================
+        let finalBins = newBins
+        let finalBass = smoothedBass
         visualizationQueue.async(flags: .barrier) { [weak self] in
-            self?._frequencyBins = newBins
-            self?._bassLevel = smoothedBass
+            self?._frequencyBins = finalBins
+            self?._bassLevel = finalBass
         }
     }
 }
