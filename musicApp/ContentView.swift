@@ -468,45 +468,42 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Wrap in TimelineView so thumbnail updates at same rate as bars
-                TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
-                    ZStack {
-                        // Main thumbnail - scales with bassLevel directly (same as bars)
-                        Group {
-                            if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                                Image(uiImage: thumbnailImage)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 290, height: 290)
-                                    .clipShape(RoundedRectangle(cornerRadius: 20))
-                                    .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
-                            } else {
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(LinearGradient(
-                                        colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    ))
-                                    .frame(width: 290, height: 290)
-                                    .overlay(
-                                        Image(systemName: "music.note")
-                                            .font(.system(size: 80))
-                                            .foregroundColor(.white.opacity(0.5))
-                                    )
-                                    .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
-                            }
+                // Single container - no extra TimelineView needed
+                ZStack {
+                    // Main thumbnail
+                    Group {
+                        if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
+                            Image(uiImage: thumbnailImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 280, height: 280)
+                                .clipShape(RoundedRectangle(cornerRadius: 20))
+                                .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
+                        } else {
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(LinearGradient(
+                                    colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ))
+                                .frame(width: 280, height: 280)
+                                .overlay(
+                                    Image(systemName: "music.note")
+                                        .font(.system(size: 80))
+                                        .foregroundColor(.white.opacity(0.5))
+                                )
+                                .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
                         }
-                        // Thumbnail pulses with bass - MORE PUNCH!
-                        // Scale 1.0 to 1.35 (35% bigger on bass hits)
-                        .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.35)
-                        
-                        // Visualizer overlay - bars locked to thumbnail
-                        EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailScale: 1.0 + CGFloat(audioPlayer.bassLevel) * 0.35)
-                            .frame(width: 420, height: 420)
-                            .allowsHitTesting(false)
                     }
+                    // Thumbnail pulses with bass
+                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.2)
+                    
+                    // Visualizer overlay - single TimelineView here handles all animation
+                    EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailScale: 1.0 + CGFloat(audioPlayer.bassLevel) * 0.2)
+                        .frame(width: 380, height: 380)
+                        .allowsHitTesting(false)
                 }
-                .frame(width: 420, height: 420)  // Large enough for bars + scaling
+                .frame(width: 380, height: 380)
                 .onTapGesture {
                     if audioPlayer.isPlaying {
                         audioPlayer.pause()
@@ -888,24 +885,25 @@ struct DownloadBanner: View {
 }
 
 
-// MARK: - Edge Visualizer (PUNCHY bars locked to thumbnail)
+// MARK: - Edge Visualizer (OPTIMIZED for performance)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
-    let thumbnailScale: CGFloat  // Pass in current scale so bars stay locked
+    let thumbnailScale: CGFloat
     
-    // Geometry - MORE DRAMATIC
-    private let baseBoxSize: CGFloat = 290  // Thumbnail size before scaling
+    // Geometry - optimized sizes
+    private let baseBoxSize: CGFloat = 280
     private let cornerRadius: CGFloat = 20
-    private let maxBarLength: CGFloat = 65  // LONGER bars for more impact
-    private let barsPerSide = 25  // 100 total bars
+    private let maxBarLength: CGFloat = 50
+    private let barsPerSide = 20  // 80 total bars (reduced from 100)
     
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
+        // Single TimelineView drives all animation
+        TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 
-                // Scale the box size to match thumbnail
+                // Scale box to match thumbnail
                 let boxSize = baseBoxSize * thumbnailScale
                 let halfBox = boxSize / 2
                 let scaledCorner = cornerRadius * thumbnailScale
@@ -913,69 +911,70 @@ struct EdgeVisualizerView: View {
                 let spacing = straightEdge / CGFloat(barsPerSide)
                 
                 let bins = audioPlayer.frequencyBins
+                guard !bins.isEmpty else { return }
+                
                 let totalBars = barsPerSide * 4
                 var barIndex = 0
                 
-                // TOP edge (pointing up, -Y)
+                // Draw all 4 edges
+                // TOP
                 for i in 0..<barsPerSide {
                     let x = centerX - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
                     let y = centerY - halfBox
-                    let binIdx = min((barIndex * bins.count) / totalBars, bins.count - 1)
-                    let value = bins.isEmpty ? 0 : CGFloat(bins[binIdx])
+                    let binIdx = (barIndex * bins.count) / totalBars
+                    let value = CGFloat(bins[binIdx])
                     drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: value)
                     barIndex += 1
                 }
                 
-                // RIGHT edge (pointing right, +X)
+                // RIGHT
                 for i in 0..<barsPerSide {
                     let x = centerX + halfBox
                     let y = centerY - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
-                    let binIdx = min((barIndex * bins.count) / totalBars, bins.count - 1)
-                    let value = bins.isEmpty ? 0 : CGFloat(bins[binIdx])
+                    let binIdx = (barIndex * bins.count) / totalBars
+                    let value = CGFloat(bins[binIdx])
                     drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: value)
                     barIndex += 1
                 }
                 
-                // BOTTOM edge (pointing down, +Y)
+                // BOTTOM
                 for i in 0..<barsPerSide {
                     let x = centerX + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
                     let y = centerY + halfBox
-                    let binIdx = min((barIndex * bins.count) / totalBars, bins.count - 1)
-                    let value = bins.isEmpty ? 0 : CGFloat(bins[binIdx])
+                    let binIdx = (barIndex * bins.count) / totalBars
+                    let value = CGFloat(bins[binIdx])
                     drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: value)
                     barIndex += 1
                 }
                 
-                // LEFT edge (pointing left, -X)
+                // LEFT
                 for i in 0..<barsPerSide {
                     let x = centerX - halfBox
                     let y = centerY + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
-                    let binIdx = min((barIndex * bins.count) / totalBars, bins.count - 1)
-                    let value = bins.isEmpty ? 0 : CGFloat(bins[binIdx])
+                    let binIdx = (barIndex * bins.count) / totalBars
+                    let value = CGFloat(bins[binIdx])
                     drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: value)
                     barIndex += 1
                 }
             }
-            .drawingGroup()
+            .drawingGroup()  // GPU accelerated
         }
     }
     
+    @inline(__always)
     private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: CGFloat) {
         let barLength = value * maxBarLength
-        guard barLength > 2 else { return }
+        guard barLength > 1 else { return }
         
-        // PUNCHY colors - bright and saturated
-        let hue = Double(value) * 0.4  // Red -> Yellow -> Green
-        let brightness = 0.8 + Double(value) * 0.2  // Brighter when louder
-        let color = Color(hue: hue, saturation: 1.0, brightness: brightness)
+        // Simple color - less computation
+        let hue = Double(value) * 0.35
+        let color = Color(hue: hue, saturation: 1.0, brightness: 0.9)
         
         var path = Path()
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        // Thicker bars that scale slightly with value
-        let lineWidth: CGFloat = 3 + value * 2
-        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3, lineCap: .round))
     }
 }
 

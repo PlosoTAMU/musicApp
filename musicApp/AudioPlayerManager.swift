@@ -39,30 +39,34 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var timeUpdateTimer: Timer?
     
-    // ✅ FFT-based visualization - PUNCHY like HTML sample
+    // ✅ FFT-based visualization - OPTIMIZED for performance
     @Published var bassLevel: Float = 0  // For thumbnail pulsing
     @Published var frequencyBins: [Float] = Array(repeating: 0, count: 64)  // For bars
     
-    // FFT setup - use 256 for FASTEST response (~172 callbacks/sec)
+    // FFT setup - use 512 for good balance of speed and quality (~86 callbacks/sec)
     private var fftSetup: FFTSetup?
-    private let fftSize = 256
-    private let fftSizeHalf = 128
-    private let visualizationBufferSize: AVAudioFrameCount = 256
+    private let fftSize = 512
+    private let fftSizeHalf = 256
+    private let visualizationBufferSize: AVAudioFrameCount = 512
     private var visualizationTapInstalled = false
     
     // Pre-allocated FFT buffers
-    private var fftInputBuffer = [Float](repeating: 0, count: 256)
-    private var fftReal = [Float](repeating: 0, count: 128)
-    private var fftImag = [Float](repeating: 0, count: 128)
-    private var fftMagnitudes = [Float](repeating: 0, count: 128)
+    private var fftInputBuffer = [Float](repeating: 0, count: 512)
+    private var fftReal = [Float](repeating: 0, count: 256)
+    private var fftImag = [Float](repeating: 0, count: 256)
+    private var fftMagnitudes = [Float](repeating: 0, count: 256)
     private var fftLog2n: vDSP_Length = 0
     
-    // Minimal smoothing for PUNCHY response
+    // Smoothing for responsive but smooth animation
     private var smoothedBins = [Float](repeating: 0, count: 64)
     private var smoothedBass: Float = 0
     
     // Adaptive normalization
     private var maxMagnitude: Float = 0.01
+    
+    // Throttle UI updates to 60fps max
+    private var lastUIUpdate: CFAbsoluteTime = 0
+    private let uiUpdateInterval: CFAbsoluteTime = 1.0 / 60.0
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -1009,10 +1013,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
             // Normalize to 0-1
             var normalized = min(1.0, rawBins[i] / maxMagnitude)
             
-            // Power curve for PUNCH - emphasize peaks
-            normalized = pow(normalized, 0.6)  // Lower = more sensitive (was 0.8)
+            // Power curve for punch
+            normalized = pow(normalized, 0.7)
             
-            // Very light smoothing - almost raw values
+            // Smooth: fast attack, medium release
             if normalized > smoothedBins[i] {
                 smoothedBins[i] = smoothedBins[i] + (normalized - smoothedBins[i]) * smoothUp
             } else {
@@ -1023,7 +1027,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 6: Bass level - PEAK for maximum punch
+        // STEP 6: Bass level - PEAK for punch
         // ==========================================
         var peakBass: Float = 0
         for i in 0..<8 {
@@ -1032,19 +1036,26 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
         }
         
-        // Almost no smoothing on bass - PUNCHY!
+        // Smooth bass
         if peakBass > smoothedBass {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.9  // Near-instant attack
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.8
         } else {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.5  // Fast decay
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.4
         }
         
         // ==========================================
-        // STEP 7: Publish to main thread
+        // STEP 7: Throttled UI update (max 60fps)
         // ==========================================
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastUIUpdate >= uiUpdateInterval else { return }
+        lastUIUpdate = now
+        
+        let finalBins = newBins
+        let finalBass = smoothedBass
+        
         DispatchQueue.main.async { [weak self] in
-            self?.frequencyBins = newBins
-            self?.bassLevel = self?.smoothedBass ?? 0
+            self?.frequencyBins = finalBins
+            self?.bassLevel = finalBass
         }
     }
 }
