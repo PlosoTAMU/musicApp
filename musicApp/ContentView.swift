@@ -468,42 +468,43 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                ZStack {
-                    // Main thumbnail - PULSES with bass
-                    Group {
-                        if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                            Image(uiImage: thumbnailImage)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 290, height: 290)
-                                .clipShape(RoundedRectangle(cornerRadius: 20))
-                                .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
-                        } else {
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(LinearGradient(
-                                    colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ))
-                                .frame(width: 290, height: 290)
-                                .overlay(
-                                    Image(systemName: "music.note")
-                                        .font(.system(size: 80))
-                                        .foregroundColor(.white.opacity(0.5))
-                                )
-                                .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
+                // Wrap in TimelineView so thumbnail updates at same rate as bars
+                TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
+                    ZStack {
+                        // Main thumbnail - scales with bassLevel directly (same as bars)
+                        Group {
+                            if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
+                                Image(uiImage: thumbnailImage)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 290, height: 290)
+                                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                                    .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
+                            } else {
+                                RoundedRectangle(cornerRadius: 20)
+                                    .fill(LinearGradient(
+                                        colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ))
+                                    .frame(width: 290, height: 290)
+                                    .overlay(
+                                        Image(systemName: "music.note")
+                                            .font(.system(size: 80))
+                                            .foregroundColor(.white.opacity(0.5))
+                                    )
+                                    .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
+                            }
                         }
+                        // Scale directly from bassLevel - same source as bars, no animation delay
+                        .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.15)
+                        
+                        // Visualizer overlay - bars use same bassLevel
+                        EdgeVisualizerView(audioPlayer: audioPlayer)
+                            .frame(width: 390, height: 390)
+                            .allowsHitTesting(false)
                     }
-                    .scaleEffect(audioPlayer.pulse)  // Only thumbnail pulses
-                    .animation(.easeOut(duration: 0.08), value: audioPlayer.pulse)  // Snappy animation
-                    
-                    // Visualizer overlay - bars react to bass but don't scale
-                    EdgeVisualizerView(audioPlayer: audioPlayer)
-                        .frame(width: 390, height: 390)  // Larger to fit outward lines
-                        .frame(width: 390, height: 390)  // Larger to fit outward lines
-                        .allowsHitTesting(false)
                 }
-                // Thumbnail pulses, bars stay fixed size
                 .frame(width: 390, height: 390)  // Fixed frame prevents layout shifts
                 .onTapGesture {
                     if audioPlayer.isPlaying {
