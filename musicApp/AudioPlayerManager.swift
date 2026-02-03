@@ -41,19 +41,22 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     // ✅ FFT-based visualization (like the HTML reference)
     @Published var bassLevel: Float = 0
-    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 64)  // Bass frequency bins for bars
+    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 64)  // Raw frequency values 0-1
     
-    // FFT setup
+    // FFT setup - use 512 buffer for ~86 callbacks/sec (punchy!)
     private var fftSetup: FFTSetup?
-    private let fftSize = 2048  // Match HTML analyser.fftSize
-    private let visualizationBufferSize: AVAudioFrameCount = 2048
+    private let fftSize = 512  // Smaller = faster updates
+    private let visualizationBufferSize: AVAudioFrameCount = 512  // ~86 fps at 44.1kHz
     private var visualizationTapInstalled = false
     
     // Pre-allocated FFT buffers
-    private var fftReal = [Float](repeating: 0, count: 1024)
-    private var fftImag = [Float](repeating: 0, count: 1024)
-    private var fftMagnitudes = [Float](repeating: 0, count: 1024)
+    private var fftReal = [Float](repeating: 0, count: 256)
+    private var fftImag = [Float](repeating: 0, count: 256)
+    private var fftMagnitudes = [Float](repeating: 0, count: 256)
     private var fftLog2n: vDSP_Length = 0
+    
+    // Adaptive normalization for consistent 0-1 output
+    private var maxMagnitude: Float = 1.0
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -922,6 +925,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func processFFTBuffer(_ buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData else { return }
         let samples = channelData[0]
+        let frameCount = min(Int(buffer.frameLength), fftSize)
+        
+        // Copy samples to FFT input buffer (with windowing for cleaner FFT)
+        for i in 0..<frameCount {
+            // Hann window for smoother frequency response
+            let window = 0.5 * (1.0 - cos(2.0 * .pi * Float(i) / Float(frameCount - 1)))
+            fftReal[i] = samples[i] * window
+        }
         
         // Perform FFT
         fftReal.withUnsafeMutableBufferPointer { realPtr in
@@ -936,45 +947,66 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     vDSP_fft_zrip(setup, &splitComplex, 1, fftLog2n, FFTDirection(kFFTDirection_Forward))
                 }
                 
-                // Get magnitudes
+                // Get magnitudes (power spectrum)
                 vDSP_zvmags(&splitComplex, 1, &fftMagnitudes, 1, vDSP_Length(fftSize / 2))
             }
         }
         
         // ==========================================
-        // EXTRACT BASS FREQUENCY BINS (like HTML reference)
+        // HTML-STYLE BASS EXTRACTION
         // ==========================================
-        // HTML: bassEndIndex = Math.floor(250 / (sampleRate / fftSize))
-        // At 44.1kHz with fftSize 2048: bassEndIndex ≈ 11
-        // We'll use bins 0-63 for bass range (0-1378 Hz at 44.1kHz)
-        // Each bar maps to a frequency bin - NO SMOOTHING for punchy response
+        // At 44.1kHz with fftSize 512: each bin = 44100/512 = 86.1 Hz
+        // Bass range (0-350 Hz) = bins 0-4
+        // But we want 64 bars, so we map them with overlap
         
         var newBins = [Float](repeating: 0, count: 64)
+        let bassRange = 8  // Use first 8 bins (0-688 Hz) for bass punch
+        
+        // Find current max for adaptive normalization
+        var currentMax: Float = 0
+        for i in 0..<bassRange {
+            let mag = sqrt(fftMagnitudes[i])
+            if mag > currentMax { currentMax = mag }
+        }
+        
+        // Slowly adapt max (decay slowly, attack fast)
+        maxMagnitude = max(currentMax, maxMagnitude * 0.99)
+        if maxMagnitude < 0.001 { maxMagnitude = 0.001 }  // Avoid division by zero
+        
+        // Map 64 bars to bass frequency bins (like HTML does)
+        // Each bar maps to bass bins with interpolation
         var totalBass: Float = 0
         
         for i in 0..<64 {
-            // Convert magnitude to 0-1 range (like HTML dataArray[i] / 255)
-            let magnitude = sqrt(fftMagnitudes[i])
-            let db = 20 * log10(max(magnitude, 1e-10))
-            // Map dB (-80 to 0) to 0-1 range
-            let normalized = max(0, min(1, (db + 80) / 80))
-            newBins[i] = normalized
+            // Map bar index to bass bin (like HTML: dataIndex = (i / lines) * bassEndIndex)
+            let t = Float(i) / 64.0
+            let binFloat = t * Float(bassRange - 1)
+            let binLow = Int(binFloat)
+            let binHigh = min(binLow + 1, bassRange - 1)
+            let frac = binFloat - Float(binLow)
             
-            // Accumulate for overall bass level (first 16 bins = sub-bass)
-            if i < 16 {
-                totalBass += normalized
-            }
+            // Interpolate between bins
+            let magLow = sqrt(fftMagnitudes[binLow])
+            let magHigh = sqrt(fftMagnitudes[binHigh])
+            let magnitude = magLow * (1 - frac) + magHigh * frac
+            
+            // Normalize to 0-1 using adaptive max (like HTML 0-255 range)
+            let normalized = min(1.0, magnitude / maxMagnitude)
+            
+            // Apply some curve for punchier response
+            newBins[i] = normalized * normalized  // Square for more dynamic range
+            totalBass += normalized
         }
         
-        // Overall bass level (0-1)
-        let avgBass = totalBass / 16.0
+        // Overall bass level for thumbnail pulsing
+        let avgBass = totalBass / 64.0
         
         // ==========================================
-        // PUBLISH TO MAIN THREAD - NO SMOOTHING
+        // PUBLISH TO MAIN THREAD - RAW VALUES, NO SMOOTHING
         // ==========================================
         DispatchQueue.main.async { [weak self] in
             self?.frequencyBins = newBins
-            self?.bassLevel = avgBass
+            self?.bassLevel = avgBass * avgBass  // Squared for less "always big"
         }
     }
 }

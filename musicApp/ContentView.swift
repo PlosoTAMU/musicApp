@@ -497,8 +497,9 @@ struct NowPlayingView: View {
                             }
                         }
                         // Scale directly from bassLevel - punchy, no animation delay
-                        // Max scale = 1.0 + 0.2 = 1.2 (thumbnail 290 * 1.2 = 348px, fits screen)
-                        .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.2)
+                        // bassLevel is squared so quiet = 0, loud = punchy
+                        // Max scale = 1.0 + 0.25 = 1.25 (thumbnail 290 * 1.25 = 362px)
+                        .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.25)
                         
                         // Visualizer overlay - bars use same bassLevel
                         EdgeVisualizerView(audioPlayer: audioPlayer)
@@ -892,11 +893,11 @@ struct DownloadBanner: View {
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     
-    // Geometry
+    // Geometry - bars are ATTACHED to thumbnail edge
     private let boxSize: CGFloat = 290
     private let radius: CGFloat = 20
     private let barCount = 64  // Match frequencyBins count
-    private let maxBarLength: CGFloat = 40
+    private let maxBarLength: CGFloat = 50  // Longer bars for more visual impact
     
     // Pre-computed bar positions (edge of thumbnail, pointing outward)
     private let barData: [(x: CGFloat, y: CGFloat, nx: CGFloat, ny: CGFloat, binIndex: Int)]
@@ -907,64 +908,70 @@ struct EdgeVisualizerView: View {
         var bars: [(x: CGFloat, y: CGFloat, nx: CGFloat, ny: CGFloat, binIndex: Int)] = []
         
         let straightEdge: CGFloat = 250  // boxSize - 2 * radius
-        let cornerArc: CGFloat = .pi / 2 * 20
-        let totalPerimeter = 4 * straightEdge + 4 * cornerArc
         let halfBox = boxSize / 2
         
-        let edge1 = straightEdge
-        let edge2 = straightEdge + cornerArc
-        let edge3 = 2 * straightEdge + cornerArc
-        let edge4 = 2 * straightEdge + 2 * cornerArc
-        let edge5 = 3 * straightEdge + 2 * cornerArc
-        let edge6 = 3 * straightEdge + 3 * cornerArc
-        let edge7 = 4 * straightEdge + 3 * cornerArc
+        // Distribute bars evenly on all 4 sides (16 bars per side)
+        let barsPerSide = 16
+        let spacing = straightEdge / CGFloat(barsPerSide)
         
-        for i in 0..<barCount {
-            let t = CGFloat(i) / CGFloat(barCount)
-            let distance = t * totalPerimeter
-            
-            var x: CGFloat = 0, y: CGFloat = 0, nx: CGFloat = 0, ny: CGFloat = 0
-            var skip = false
-            
-            if distance < edge1 {
-                x = -halfBox + radius + distance; y = -halfBox; nx = 0; ny = -1
-            } else if distance < edge2 { skip = true }
-            else if distance < edge3 {
-                x = halfBox; y = -halfBox + radius + (distance - edge2); nx = 1; ny = 0
-            } else if distance < edge4 { skip = true }
-            else if distance < edge5 {
-                x = halfBox - radius - (distance - edge4); y = halfBox; nx = 0; ny = 1
-            } else if distance < edge6 { skip = true }
-            else if distance < edge7 {
-                x = -halfBox; y = halfBox - radius - (distance - edge6); nx = -1; ny = 0
-            } else { skip = true }
-            
-            if !skip {
-                bars.append((x: x, y: y, nx: nx, ny: ny, binIndex: i))
-            }
+        var barIndex = 0
+        
+        // TOP edge (pointing up, -Y direction)
+        for i in 0..<barsPerSide {
+            let x = -halfBox + radius + spacing * (CGFloat(i) + 0.5)
+            let y = -halfBox
+            bars.append((x: x, y: y, nx: 0, ny: -1, binIndex: barIndex))
+            barIndex += 1
+        }
+        
+        // RIGHT edge (pointing right, +X direction)
+        for i in 0..<barsPerSide {
+            let x = halfBox
+            let y = -halfBox + radius + spacing * (CGFloat(i) + 0.5)
+            bars.append((x: x, y: y, nx: 1, ny: 0, binIndex: barIndex))
+            barIndex += 1
+        }
+        
+        // BOTTOM edge (pointing down, +Y direction)
+        for i in 0..<barsPerSide {
+            let x = halfBox - radius - spacing * (CGFloat(i) + 0.5)
+            let y = halfBox
+            bars.append((x: x, y: y, nx: 0, ny: 1, binIndex: barIndex))
+            barIndex += 1
+        }
+        
+        // LEFT edge (pointing left, -X direction)
+        for i in 0..<barsPerSide {
+            let x = -halfBox
+            let y = halfBox - radius - spacing * (CGFloat(i) + 0.5)
+            bars.append((x: x, y: y, nx: -1, ny: 0, binIndex: barIndex))
+            barIndex += 1
         }
         
         self.barData = bars
     }
     
     var body: some View {
-        // TimelineView forces Canvas redraw at 60fps
-        TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
+        // TimelineView forces redraws - use fastest possible
+        TimelineView(.animation) { _ in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 let bins = audioPlayer.frequencyBins
                 
-                // Draw each bar with its own frequency bin value - NO SMOOTHING
+                // Draw each bar - NO SMOOTHING for maximum punch
                 for bar in barData {
                     let binValue = bar.binIndex < bins.count ? CGFloat(bins[bar.binIndex]) : 0
                     let barLength = binValue * maxBarLength
                     
-                    guard barLength > 0.5 else { continue }
+                    // Skip very short bars for cleaner look
+                    guard barLength > 1 else { continue }
                     
-                    // Color based on intensity (like HTML: hue from value)
-                    let hue = binValue  // 0-1 maps to red-violet
-                    let color = Color(hue: hue, saturation: 1.0, brightness: 1.0).opacity(0.8 + binValue * 0.2)
+                    // Color: low freq = red/orange, high = yellow/green
+                    // Maps binValue 0-1 to hue 0-0.4 (red to green)
+                    let hue = Double(binValue) * 0.35
+                    let brightness = 0.7 + Double(binValue) * 0.3
+                    let color = Color(hue: hue, saturation: 1.0, brightness: brightness)
                     
                     let x = centerX + bar.x
                     let y = centerY + bar.y
@@ -973,10 +980,11 @@ struct EdgeVisualizerView: View {
                     path.move(to: CGPoint(x: x, y: y))
                     path.addLine(to: CGPoint(x: x + bar.nx * barLength, y: y + bar.ny * barLength))
                     
-                    context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+                    // Thicker bars for more visibility
+                    context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 4, lineCap: .round))
                 }
             }
-            .drawingGroup()
+            .drawingGroup()  // GPU accelerated
         }
     }
 }
