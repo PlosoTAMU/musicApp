@@ -496,16 +496,17 @@ struct NowPlayingView: View {
                                     .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
                             }
                         }
-                        // Thumbnail pulses with bass - direct, no SwiftUI animation (smoother)
-                        .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.25)
+                        // Thumbnail pulses with bass - MORE PUNCH!
+                        // Scale 1.0 to 1.35 (35% bigger on bass hits)
+                        .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.35)
                         
-                        // Visualizer overlay - larger frame to contain outward-pointing bars
-                        EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailScale: 1.0 + CGFloat(audioPlayer.bassLevel) * 0.25)
-                            .frame(width: 400, height: 400)
+                        // Visualizer overlay - bars locked to thumbnail
+                        EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailScale: 1.0 + CGFloat(audioPlayer.bassLevel) * 0.35)
+                            .frame(width: 420, height: 420)
                             .allowsHitTesting(false)
                     }
                 }
-                .frame(width: 400, height: 400)  // Large enough for bars
+                .frame(width: 420, height: 420)  // Large enough for bars + scaling
                 .onTapGesture {
                     if audioPlayer.isPlaying {
                         audioPlayer.pause()
@@ -887,15 +888,15 @@ struct DownloadBanner: View {
 }
 
 
-// MARK: - Edge Visualizer (bars locked to thumbnail, pointing outward)
+// MARK: - Edge Visualizer (PUNCHY bars locked to thumbnail)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     let thumbnailScale: CGFloat  // Pass in current scale so bars stay locked
     
-    // Geometry
+    // Geometry - MORE DRAMATIC
     private let baseBoxSize: CGFloat = 290  // Thumbnail size before scaling
     private let cornerRadius: CGFloat = 20
-    private let maxBarLength: CGFloat = 50
+    private let maxBarLength: CGFloat = 65  // LONGER bars for more impact
     private let barsPerSide = 25  // 100 total bars
     
     var body: some View {
@@ -961,17 +962,20 @@ struct EdgeVisualizerView: View {
     
     private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: CGFloat) {
         let barLength = value * maxBarLength
-        guard barLength > 1 else { return }
+        guard barLength > 2 else { return }
         
-        // Color gradient based on intensity
-        let hue = Double(value) * 0.35
-        let color = Color(hue: hue, saturation: 1.0, brightness: 0.95)
+        // PUNCHY colors - bright and saturated
+        let hue = Double(value) * 0.4  // Red -> Yellow -> Green
+        let brightness = 0.8 + Double(value) * 0.2  // Brighter when louder
+        let color = Color(hue: hue, saturation: 1.0, brightness: brightness)
         
         var path = Path()
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+        // Thicker bars that scale slightly with value
+        let lineWidth: CGFloat = 3 + value * 2
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
     }
 }
 

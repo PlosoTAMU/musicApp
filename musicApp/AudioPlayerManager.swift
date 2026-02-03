@@ -39,25 +39,25 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var timeUpdateTimer: Timer?
     
-    // ✅ FFT-based visualization
-    @Published var bassLevel: Float = 0  // For thumbnail pulsing (smooth)
-    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 64)  // For bars (smooth)
+    // ✅ FFT-based visualization - PUNCHY like HTML sample
+    @Published var bassLevel: Float = 0  // For thumbnail pulsing
+    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 64)  // For bars
     
-    // FFT setup - use 512 for good frequency resolution
+    // FFT setup - use 256 for FASTEST response (~172 callbacks/sec)
     private var fftSetup: FFTSetup?
-    private let fftSize = 512
-    private let fftSizeHalf = 256
-    private let visualizationBufferSize: AVAudioFrameCount = 512
+    private let fftSize = 256
+    private let fftSizeHalf = 128
+    private let visualizationBufferSize: AVAudioFrameCount = 256
     private var visualizationTapInstalled = false
     
-    // Pre-allocated FFT buffers (all same size for safety)
-    private var fftInputBuffer = [Float](repeating: 0, count: 512)
-    private var fftReal = [Float](repeating: 0, count: 256)
-    private var fftImag = [Float](repeating: 0, count: 256)
-    private var fftMagnitudes = [Float](repeating: 0, count: 256)
+    // Pre-allocated FFT buffers
+    private var fftInputBuffer = [Float](repeating: 0, count: 256)
+    private var fftReal = [Float](repeating: 0, count: 128)
+    private var fftImag = [Float](repeating: 0, count: 128)
+    private var fftMagnitudes = [Float](repeating: 0, count: 128)
     private var fftLog2n: vDSP_Length = 0
     
-    // Smoothed values for SMOOTH animation
+    // Minimal smoothing for PUNCHY response
     private var smoothedBins = [Float](repeating: 0, count: 64)
     private var smoothedBass: Float = 0
     
@@ -972,8 +972,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // ==========================================
         // STEP 3: Extract frequency data for 64 bins
         // ==========================================
-        // At 44.1kHz with fftSize 512: each bin = 86 Hz
-        // Use bins 1-64 for frequencies 86Hz - 5.5kHz (good range for visualization)
+        // At 44.1kHz with fftSize 256: each bin = 172 Hz
+        // Use bins 1-64 for bass/mid frequencies
         
         var rawBins = [Float](repeating: 0, count: 64)
         var peakMag: Float = 0
@@ -987,21 +987,21 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 4: Adaptive normalization
+        // STEP 4: Adaptive normalization (FAST)
         // ==========================================
         if peakMag > maxMagnitude {
-            maxMagnitude = peakMag
+            maxMagnitude = peakMag  // Instant attack
         } else {
-            maxMagnitude = maxMagnitude * 0.995  // Faster decay for more dynamic response
+            maxMagnitude = maxMagnitude * 0.99  // Fast decay for dynamic range
         }
         maxMagnitude = max(maxMagnitude, 0.0001)
         
         // ==========================================
-        // STEP 5: Normalize and apply smooth animation
+        // STEP 5: PUNCHY - minimal smoothing like HTML sample
         // ==========================================
-        // Faster smoothing for responsive but smooth animation
-        let smoothUp: Float = 0.6    // Rise quickly (was 0.4)
-        let smoothDown: Float = 0.25  // Fall smoothly (was 0.15)
+        // HTML uses NO smoothing - we use very light smoothing to avoid jitter
+        let smoothUp: Float = 0.85    // Almost instant rise (was 0.6)
+        let smoothDown: Float = 0.5   // Fast fall (was 0.25)
         
         var newBins = [Float](repeating: 0, count: 64)
         
@@ -1009,10 +1009,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
             // Normalize to 0-1
             var normalized = min(1.0, rawBins[i] / maxMagnitude)
             
-            // Apply curve to make peaks more visible
-            normalized = pow(normalized, 0.8)
+            // Power curve for PUNCH - emphasize peaks
+            normalized = pow(normalized, 0.6)  // Lower = more sensitive (was 0.8)
             
-            // Smooth: fast attack, medium release
+            // Very light smoothing - almost raw values
             if normalized > smoothedBins[i] {
                 smoothedBins[i] = smoothedBins[i] + (normalized - smoothedBins[i]) * smoothUp
             } else {
@@ -1023,7 +1023,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 6: Calculate bass level (use PEAK of first 8 bins for punch)
+        // STEP 6: Bass level - PEAK for maximum punch
         // ==========================================
         var peakBass: Float = 0
         for i in 0..<8 {
@@ -1032,11 +1032,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
         }
         
-        // Smooth bass with faster attack for noticeable pulsing
+        // Almost no smoothing on bass - PUNCHY!
         if peakBass > smoothedBass {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.7  // Fast attack
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.9  // Near-instant attack
         } else {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.3  // Medium decay
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.5  // Fast decay
         }
         
         // ==========================================
