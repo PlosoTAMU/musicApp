@@ -1052,6 +1052,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // ==========================================
         let finalBins = newBins
         let finalBass = smoothedBass
+        
+        // DEBUG: Print to verify FFT is processing
+        if Int.random(in: 0..<60) == 0 {
+            print("🎵 FFT: bass=\(String(format: "%.2f", finalBass)), bin0=\(String(format: "%.2f", finalBins[0]))")
+        }
+        
         visualizationQueue.async(flags: .barrier) { [weak self] in
             self?._frequencyBins = finalBins
             self?._bassLevel = finalBass

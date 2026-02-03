@@ -885,7 +885,7 @@ struct DownloadBanner: View {
 
 // MARK: - Edge Visualizer (PUNCHY and responsive)
 struct EdgeVisualizerView: View {
-    let audioPlayer: AudioPlayerManager  // NOT @ObservedObject - no SwiftUI diffing!
+    @ObservedObject var audioPlayer: AudioPlayerManager  // Need this for isPlaying state
     
     // Geometry - 220px fixed thumbnail
     private let boxSize: CGFloat = 220
@@ -894,17 +894,20 @@ struct EdgeVisualizerView: View {
     private let barsPerSide = 16  // 64 total bars = exact match to bins
     
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
-            // Use timeline.date to force continuous redraws
-            let _ = timeline.date.timeIntervalSince1970
-            
+        // Only animate when playing - saves CPU when paused
+        TimelineView(audioPlayer.isPlaying ? .animation(minimumInterval: 1.0/60.0) : .explicit([])) { timeline in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 
-                // Get data atomically - thread-safe, no @Published overhead
-                let (bins, _) = audioPlayer.getVisualizationData()
+                // Get data atomically - thread-safe
+                let (bins, bass) = audioPlayer.getVisualizationData()
                 guard bins.count >= 64 else { return }
+                
+                // DEBUG: Print to verify data is being read
+                if Int.random(in: 0..<120) == 0 {
+                    print("🎨 Canvas: bass=\(String(format: "%.2f", bass)), bin0=\(String(format: "%.2f", bins[0]))")
+                }
                 
                 let halfBox = boxSize / 2
                 let straightEdge = boxSize - 2 * cornerRadius
