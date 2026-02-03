@@ -39,10 +39,17 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var timeUpdateTimer: Timer?
     
-    // ✅ Visualization data - NOT @Published to avoid SwiftUI overhead
-    // TimelineView polls these directly at 60fps
-    var bassLevel: Float = 0  // For thumbnail pulsing
-    var frequencyBins: [Float] = Array(repeating: 0, count: 64)  // For bars
+    // ✅ Visualization data - Thread-safe, NOT @Published to avoid SwiftUI overhead
+    private var _bassLevel: Float = 0
+    private var _frequencyBins: [Float] = Array(repeating: 0, count: 64)
+    private let visualizationQueue = DispatchQueue(label: "com.musicapp.visualization", qos: .userInteractive)
+    
+    // Thread-safe accessor for visualization data
+    func getVisualizationData() -> (bins: [Float], bass: Float) {
+        return visualizationQueue.sync {
+            return (_frequencyBins, _bassLevel)
+        }
+    }
     
     // FFT setup - use 1024 for better quality, fewer callbacks (~43/sec)
     private var fftSetup: FFTSetup?
@@ -1040,10 +1047,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 7: Direct update (no @Published, no main thread)
-        // TimelineView will poll these values at 60fps
+        // STEP 7: Thread-safe update (no @Published, no main thread)
+        // TimelineView will poll via getVisualizationData() at 60fps
         // ==========================================
-        frequencyBins = newBins
-        bassLevel = smoothedBass
+        visualizationQueue.async(flags: .barrier) { [weak self] in
+            self?._frequencyBins = newBins
+            self?._bassLevel = smoothedBass
+        }
     }
 }
