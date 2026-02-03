@@ -42,6 +42,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // ✅ ADD: Visualization data for external consumers
     @Published var visualizationData: [Float] = Array(repeating: 0, count: 200)
     @Published var bassLevel: Float = 0
+    @Published var pulse: CGFloat = 1.0  // ✅ NEW: Published pulse for thumbnail scaling
     
     // ✅ ADD: FFT setup for visualization
     private var fftSetup: FFTSetup?
@@ -53,6 +54,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // ✅ PERFORMANCE: Throttle visualization updates to reduce main thread load
     private var visualizationUpdateCounter = 0
     private let visualizationUpdateInterval = 2  // Only publish every 2nd buffer (~50-60fps depending on buffer size)
+    
+    // ✅ Pulse smoothing state (must persist across frames)
+    private var currentPulse: CGFloat = 1.0
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -976,17 +980,30 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let power: Float = 0.2
         let smoothingFactor: Float = 0.4
         let maxOut: Float = 25.0
-        let groupBMultiplier: Float = 0.6666666666666666  // 2/3
-        let bassThreshold: Float = 0.1
-        let bassDivisor: Float = 10200.0  // 40 * 255
         
-        // Calculate bass from frequency data (first 40 bins)
-        // frequencyData is normalized 0-1, scale to 0-255 range like HTML
+        // ✅ FIXED: Pulse constants matching HTML exactly
+        let bassThreshold: Float = 0.1
+        let bassMultiplier: Float = 0.6
+        let pulseSmooth: Float = 0.45
+        
+        // ✅ FIXED: Calculate bass from raw frequency magnitudes
+        // The frequencyData values are very small after FFT normalization
+        // We need to amplify them significantly to match HTML's 0-255 range
         var bass: Float = 0
         for i in 0..<min(40, frequencyData.count) {
-            bass += frequencyData[i] * 255.0
+            // Amplify the normalized FFT data to get meaningful bass values
+            bass += frequencyData[i] * 5000.0  // Amplify to get usable range
         }
-        bass /= bassDivisor
+        bass /= 40.0  // Average over 40 bins
+        bass = min(bass, 1.0)  // Clamp to 0-1 range
+        
+        // ✅ FIXED: Calculate pulse exactly like HTML
+        // HTML: const bassPulse = bass > BASS_THRESHOLD ? (bass - BASS_THRESHOLD) / INV_BASS_THRESHOLD : 0;
+        // HTML: targetPulse = 1 + bassPulse * BASS_MULTIPLIER;
+        // HTML: pulse += (targetPulse - pulse) * PULSE_SMOOTH;
+        let bassPulse: Float = bass > bassThreshold ? (bass - bassThreshold) / 0.9 : 0
+        let targetPulse: CGFloat = 1.0 + CGFloat(bassPulse) * CGFloat(bassMultiplier)
+        currentPulse += (targetPulse - currentPulse) * CGFloat(pulseSmooth)
         
         // Create new visualization data using time domain (waveform) data
         var newData = [Float](repeating: 0, count: segments)
@@ -1021,8 +1038,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         // Publish on main thread
         DispatchQueue.main.async { [weak self] in
-            self?.visualizationData = newData
-            self?.bassLevel = bass
+            guard let self = self else { return }
+            self.visualizationData = newData
+            self.bassLevel = bass
+            self.pulse = self.currentPulse  // ✅ Publish the smoothed pulse
         }
     }
 }

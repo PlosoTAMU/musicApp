@@ -373,7 +373,7 @@ struct NowPlayingView: View {
     @State private var localSeekPosition: Double = 0
     @State private var showPlaylistPicker = false
     @State private var backgroundImage: UIImage?
-    @State private var thumbnailPulse: CGFloat = 1.0  // ADD THIS
+    // ✅ REMOVED: thumbnailPulse state - now using audioPlayer.pulse directly
 
     
     private var sliderBinding: Binding<Double> {
@@ -496,12 +496,13 @@ struct NowPlayingView: View {
                     }
                     
                     // Visualizer overlay - lines extend outward
-                    EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailPulse: $thumbnailPulse)
+                    EdgeVisualizerView(audioPlayer: audioPlayer)
                         .frame(width: 390, height: 390)  // Larger to fit outward lines
                         .allowsHitTesting(false)
                 }
-                // ✅ Ensure bars are attached to thumbnail by scaling the entire stack
-                .scaleEffect(thumbnailPulse)
+                // ✅ FIXED: Use audioPlayer.pulse directly for scaling thumbnail + bars together
+                .scaleEffect(audioPlayer.pulse)
+                .animation(.linear(duration: 0.016), value: audioPlayer.pulse)  // 60fps animation
                 .frame(width: 390, height: 390)  // Fixed frame prevents layout shifts
                 .onTapGesture {
                     if audioPlayer.isPlaying {
@@ -887,32 +888,22 @@ struct DownloadBanner: View {
 // MARK: - Edge Visualizer (Uses real audio data from AudioPlayerManager)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
-    @Binding var thumbnailPulse: CGFloat
     
     // Pre-computed random groups (like HTML lineGroups)
     @State private var lineGroups: [Bool] = (0..<200).map { _ in Float.random(in: 0...1) > 0.7 }
     
-    // Pulse state for smooth animation
-    @State private var currentPulse: CGFloat = 1.0
-    
     // Match HTML constants exactly
     private let segments = 200
     private let groupBMultiplier: CGFloat = 0.6666666666666666 // 2/3
-    private let bassThreshold: CGFloat = 0.1
-    private let bassMultiplier: CGFloat = 0.6
-    private let pulseSmooth: CGFloat = 0.45
     
     var body: some View {
-        // ✅ Match HTML: 60fps for smooth pulse and bar motion
+        // ✅ 60fps for smooth bar motion matching HTML requestAnimationFrame
         TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
-
-                // ✅ Apply pulse scaling to the entire canvas (like HTML ctx.scale)
-                context.translateBy(x: centerX, y: centerY)
-                context.scaleBy(x: thumbnailPulse, y: thumbnailPulse)
-                context.translateBy(x: -centerX, y: -centerY)
+                
+                // ✅ REMOVED: Canvas scaling - parent ZStack handles pulse scaling now
                 
                 // Box matches thumbnail (290x290, 20 corner radius)
                 let boxSize: CGFloat = 290
@@ -1032,29 +1023,6 @@ struct EdgeVisualizerView: View {
                     )
                 }
             }
-            .onChange(of: timeline.date) { _ in
-                updatePulse()
-            }
-        }
-    }
-    
-    private func updatePulse() {
-        // Use real bass level from AudioPlayerManager
-        let bass = CGFloat(audioPlayer.bassLevel)
-        
-        if audioPlayer.isPlaying {
-            // Calculate pulse from bass (matching HTML exactly)
-            let bassPulse = bass > bassThreshold ?
-                (bass - bassThreshold) / 0.9 : 0
-            let targetPulse = 1.0 + bassPulse * bassMultiplier
-            currentPulse += (targetPulse - currentPulse) * pulseSmooth
-            
-            // Update thumbnail pulse binding
-            thumbnailPulse = currentPulse
-        } else {
-            // When paused: decay pulse smoothly
-            thumbnailPulse += (1.0 - thumbnailPulse) * 0.1
-            currentPulse += (1.0 - currentPulse) * 0.1
         }
     }
 }
