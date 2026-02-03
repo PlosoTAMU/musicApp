@@ -496,10 +496,10 @@ struct NowPlayingView: View {
                                     .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
                             }
                         }
-                        // Scale directly from bassLevel - punchy, no animation delay
-                        // bassLevel is squared so quiet = 0, loud = punchy
-                        // Max scale = 1.0 + 0.25 = 1.25 (thumbnail 290 * 1.25 = 362px)
-                        .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.25)
+                        // Scale directly from bassLevel - PUNCHY, no animation
+                        // bassLevel is peak value (0-1), use pow for extra punch
+                        // Max scale = 1.0 + 0.3 = 1.3 (thumbnail 290 * 1.3 = 377px)
+                        .scaleEffect(1.0 + pow(CGFloat(audioPlayer.bassLevel), 0.8) * 0.3)
                         
                         // Visualizer overlay - bars use same bassLevel
                         EdgeVisualizerView(audioPlayer: audioPlayer)
@@ -889,7 +889,7 @@ struct DownloadBanner: View {
 }
 
 
-// MARK: - FFT-Based Edge Visualizer (Matches HTML Reference)
+// MARK: - FFT-Based Edge Visualizer (PUNCHY)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     
@@ -897,7 +897,7 @@ struct EdgeVisualizerView: View {
     private let boxSize: CGFloat = 290
     private let radius: CGFloat = 20
     private let barCount = 64  // Match frequencyBins count
-    private let maxBarLength: CGFloat = 50  // Longer bars for more visual impact
+    private let maxBarLength: CGFloat = 60  // Even longer bars for more visual impact
     
     // Pre-computed bar positions (edge of thumbnail, pointing outward)
     private let barData: [(x: CGFloat, y: CGFloat, nx: CGFloat, ny: CGFloat, binIndex: Int)]
@@ -952,26 +952,29 @@ struct EdgeVisualizerView: View {
     }
     
     var body: some View {
-        // TimelineView forces redraws - use fastest possible
+        // TimelineView forces redraws at max frame rate
         TimelineView(.animation) { _ in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 let bins = audioPlayer.frequencyBins
                 
-                // Draw each bar - NO SMOOTHING for maximum punch
+                // Draw each bar - RAW values for PUNCHY response
                 for bar in barData {
                     let binValue = bar.binIndex < bins.count ? CGFloat(bins[bar.binIndex]) : 0
-                    let barLength = binValue * maxBarLength
                     
-                    // Skip very short bars for cleaner look
-                    guard barLength > 1 else { continue }
+                    // Apply pow curve for extra punch (emphasize peaks)
+                    let punchedValue = pow(binValue, 0.7)
+                    let barLength = punchedValue * maxBarLength
                     
-                    // Color: low freq = red/orange, high = yellow/green
-                    // Maps binValue 0-1 to hue 0-0.4 (red to green)
-                    let hue = Double(binValue) * 0.35
-                    let brightness = 0.7 + Double(binValue) * 0.3
-                    let color = Color(hue: hue, saturation: 1.0, brightness: brightness)
+                    // Skip tiny bars
+                    guard barLength > 2 else { continue }
+                    
+                    // Color: intensity-based (red at low, yellow/green at high)
+                    let hue = Double(punchedValue) * 0.4  // 0-0.4 = red to green
+                    let saturation = 0.9 + Double(punchedValue) * 0.1
+                    let brightness = 0.6 + Double(punchedValue) * 0.4
+                    let color = Color(hue: hue, saturation: saturation, brightness: brightness)
                     
                     let x = centerX + bar.x
                     let y = centerY + bar.y
@@ -980,8 +983,9 @@ struct EdgeVisualizerView: View {
                     path.move(to: CGPoint(x: x, y: y))
                     path.addLine(to: CGPoint(x: x + bar.nx * barLength, y: y + bar.ny * barLength))
                     
-                    // Thicker bars for more visibility
-                    context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    // Thicker bars, width varies slightly with intensity
+                    let lineWidth: CGFloat = 3 + punchedValue * 2
+                    context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 }
             }
             .drawingGroup()  // GPU accelerated

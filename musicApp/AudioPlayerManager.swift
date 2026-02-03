@@ -43,20 +43,22 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var bassLevel: Float = 0
     @Published var frequencyBins: [Float] = Array(repeating: 0, count: 64)  // Raw frequency values 0-1
     
-    // FFT setup - use 512 buffer for ~86 callbacks/sec (punchy!)
+    // FFT setup - use 256 for maximum responsiveness (~172 callbacks/sec at 44.1kHz)
     private var fftSetup: FFTSetup?
-    private let fftSize = 512  // Smaller = faster updates
-    private let visualizationBufferSize: AVAudioFrameCount = 512  // ~86 fps at 44.1kHz
+    private let fftSize = 256
+    private let fftSizeHalf = 128
+    private let visualizationBufferSize: AVAudioFrameCount = 256
     private var visualizationTapInstalled = false
     
-    // Pre-allocated FFT buffers
-    private var fftReal = [Float](repeating: 0, count: 256)
-    private var fftImag = [Float](repeating: 0, count: 256)
-    private var fftMagnitudes = [Float](repeating: 0, count: 256)
+    // Pre-allocated FFT buffers (all same size for safety)
+    private var fftInputBuffer = [Float](repeating: 0, count: 256)
+    private var fftReal = [Float](repeating: 0, count: 128)
+    private var fftImag = [Float](repeating: 0, count: 128)
+    private var fftMagnitudes = [Float](repeating: 0, count: 128)
     private var fftLog2n: vDSP_Length = 0
     
-    // Adaptive normalization for consistent 0-1 output
-    private var maxMagnitude: Float = 1.0
+    // Adaptive normalization - fast attack, slow decay for punchy response
+    private var maxMagnitude: Float = 0.01
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -921,107 +923,122 @@ class AudioPlayerManager: NSObject, ObservableObject {
         print("✅ [AudioPlayer] Visualization tap removed")
     }
 
-    /// FFT-based frequency analysis - matches HTML getByteFrequencyData behavior
+    /// FFT-based frequency analysis - PUNCHY and SAFE
     private func processFFTBuffer(_ buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData else { return }
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0 else { return }
+        
         let samples = channelData[0]
-        let frameCount = min(Int(buffer.frameLength), fftSize)
+        let samplesToProcess = min(frameLength, fftSize)
         
-        // Safety check
-        guard frameCount > 0 else { return }
-        
-        // Zero out buffers first
-        fftReal = [Float](repeating: 0, count: fftSize / 2)
-        fftImag = [Float](repeating: 0, count: fftSize / 2)
-        
-        // Copy samples to FFT input buffer (with windowing for cleaner FFT)
-        for i in 0..<frameCount {
-            // Hann window for smoother frequency response
-            let window = 0.5 * (1.0 - cos(2.0 * .pi * Float(i) / Float(frameCount - 1)))
-            fftReal[i] = samples[i] * window
-        }
-        
-        // Perform FFT
-        fftReal.withUnsafeMutableBufferPointer { realPtr in
-            fftImag.withUnsafeMutableBufferPointer { imagPtr in
-                var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
-                
-                // Use vDSP_ctoz properly with our windowed samples
-                let evenOddSamples = UnsafeMutablePointer<DSPComplex>.allocate(capacity: fftSize / 2)
-                defer { evenOddSamples.deallocate() }
-                
-                for i in 0..<min(frameCount / 2, fftSize / 2) {
-                    evenOddSamples[i].real = fftReal[2 * i]
-                    evenOddSamples[i].imag = fftReal[2 * i + 1]
-                }
-                
-                vDSP_ctoz(evenOddSamples, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
-                
-                if let setup = fftSetup {
-                    vDSP_fft_zrip(setup, &splitComplex, 1, fftLog2n, FFTDirection(kFFTDirection_Forward))
-                }
-                
-                // Get magnitudes (power spectrum)
-                vDSP_zvmags(&splitComplex, 1, &fftMagnitudes, 1, vDSP_Length(fftSize / 2))
+        // ==========================================
+        // STEP 1: Copy samples with Hann window (safer indexing)
+        // ==========================================
+        for i in 0..<fftSize {
+            if i < samplesToProcess {
+                let window = 0.5 * (1.0 - cos(2.0 * .pi * Float(i) / Float(samplesToProcess)))
+                fftInputBuffer[i] = samples[i] * window
+            } else {
+                fftInputBuffer[i] = 0  // Zero-pad if needed
             }
         }
         
         // ==========================================
-        // HTML-STYLE BASS EXTRACTION
+        // STEP 2: Perform FFT using vDSP
         // ==========================================
-        // At 44.1kHz with fftSize 512: each bin = 44100/512 = 86.1 Hz
-        // Bass range (0-350 Hz) = bins 0-4
-        // But we want 64 bars, so we map them with overlap
-        
-        var newBins = [Float](repeating: 0, count: 64)
-        let bassRange = min(8, fftMagnitudes.count)  // Safety: don't exceed array bounds
-        
-        // Find current max for adaptive normalization
-        var currentMax: Float = 0
-        for i in 0..<bassRange {
-            let mag = sqrt(fftMagnitudes[i])
-            if mag > currentMax { currentMax = mag }
+        fftInputBuffer.withUnsafeBufferPointer { inputPtr in
+            fftReal.withUnsafeMutableBufferPointer { realPtr in
+                fftImag.withUnsafeMutableBufferPointer { imagPtr in
+                    // Pack input into split complex format
+                    var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
+                    
+                    // Convert interleaved to split complex
+                    inputPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftSizeHalf) { complexPtr in
+                        vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftSizeHalf))
+                    }
+                    
+                    // FFT
+                    if let setup = fftSetup {
+                        vDSP_fft_zrip(setup, &splitComplex, 1, fftLog2n, FFTDirection(kFFTDirection_Forward))
+                    }
+                    
+                    // Magnitudes
+                    vDSP_zvmags(&splitComplex, 1, &fftMagnitudes, 1, vDSP_Length(fftSizeHalf))
+                }
+            }
         }
         
-        // Slowly adapt max (decay slowly, attack fast)
-        maxMagnitude = max(currentMax, maxMagnitude * 0.99)
-        if maxMagnitude < 0.001 { maxMagnitude = 0.001 }  // Avoid division by zero
+        // ==========================================
+        // STEP 3: Extract bass frequencies (PUNCHY)
+        // ==========================================
+        // At 44.1kHz with fftSize 256: each bin = 172 Hz
+        // Bin 0 = DC, Bin 1 = 172Hz, Bin 2 = 344Hz, etc.
+        // Use bins 1-10 for bass (172 Hz - 1720 Hz)
         
-        // Map 64 bars to bass frequency bins (like HTML does)
-        // Each bar maps to bass bins with interpolation
+        let bassStartBin = 1
+        let bassEndBin = min(12, fftSizeHalf - 1)  // Use 12 bins for variety
+        let numBassBins = bassEndBin - bassStartBin + 1
+        
+        // Get raw magnitudes from bass bins
+        var bassMags = [Float](repeating: 0, count: numBassBins)
+        var peakMag: Float = 0
+        
+        for i in 0..<numBassBins {
+            let binIdx = bassStartBin + i
+            let mag = sqrt(fftMagnitudes[binIdx])
+            bassMags[i] = mag
+            if mag > peakMag { peakMag = mag }
+        }
+        
+        // ==========================================
+        // STEP 4: Adaptive normalization (PUNCHY)
+        // ==========================================
+        // Fast attack (instant), slow decay - makes hits PUNCH
+        if peakMag > maxMagnitude {
+            maxMagnitude = peakMag  // Instant attack
+        } else {
+            maxMagnitude = maxMagnitude * 0.995  // Slow decay
+        }
+        maxMagnitude = max(maxMagnitude, 0.001)  // Floor
+        
+        // ==========================================
+        // STEP 5: Map to 64 bars with NO smoothing
+        // ==========================================
+        var newBins = [Float](repeating: 0, count: 64)
         var totalBass: Float = 0
         
         for i in 0..<64 {
-            // Map bar index to bass bin (like HTML: dataIndex = (i / lines) * bassEndIndex)
-            let t = Float(i) / 64.0
-            let binFloat = t * Float(bassRange - 1)
-            let binLow = Int(binFloat)
-            let binHigh = min(binLow + 1, bassRange - 1)
-            let frac = binFloat - Float(binLow)
+            // Map 64 bars across the bass bins with interpolation
+            let t = Float(i) / 63.0
+            let srcIdx = t * Float(numBassBins - 1)
+            let lo = Int(srcIdx)
+            let hi = min(lo + 1, numBassBins - 1)
+            let frac = srcIdx - Float(lo)
             
-            // Interpolate between bins - with safety checks
-            guard binLow < fftMagnitudes.count && binHigh < fftMagnitudes.count else { continue }
-            let magLow = sqrt(fftMagnitudes[binLow])
-            let magHigh = sqrt(fftMagnitudes[binHigh])
-            let magnitude = magLow * (1 - frac) + magHigh * frac
+            // Interpolate magnitude
+            let mag = bassMags[lo] * (1 - frac) + bassMags[hi] * frac
             
-            // Normalize to 0-1 using adaptive max (like HTML 0-255 range)
-            let normalized = min(1.0, magnitude / maxMagnitude)
+            // Normalize to 0-1
+            var normalized = mag / maxMagnitude
             
-            // Apply some curve for punchier response
-            newBins[i] = normalized * normalized  // Square for more dynamic range
+            // PUNCH: Apply power curve to emphasize peaks
+            normalized = pow(normalized, 0.7)  // < 1 = more sensitive to quiet, punchy peaks
+            normalized = min(1.0, normalized)
+            
+            newBins[i] = normalized
             totalBass += normalized
         }
         
-        // Overall bass level for thumbnail pulsing
-        let avgBass = totalBass / 64.0
+        // Overall bass for thumbnail (use peak, not average, for punch)
+        let peakBass = newBins.max() ?? 0
         
         // ==========================================
-        // PUBLISH TO MAIN THREAD - RAW VALUES, NO SMOOTHING
+        // STEP 6: Publish (NO SMOOTHING = PUNCHY)
         // ==========================================
         DispatchQueue.main.async { [weak self] in
             self?.frequencyBins = newBins
-            self?.bassLevel = avgBass * avgBass  // Squared for less "always big"
+            self?.bassLevel = peakBass  // Peak for maximum punch
         }
     }
 }
