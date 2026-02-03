@@ -42,21 +42,25 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // ✅ ADD: Visualization data for external consumers
     @Published var visualizationData: [Float] = Array(repeating: 0, count: 200)
     @Published var bassLevel: Float = 0
-    @Published var pulse: CGFloat = 1.0  // ✅ NEW: Published pulse for thumbnail scaling
+    @Published var pulse: CGFloat = 1.0  // Published pulse for thumbnail scaling
     
-    // ✅ ADD: FFT setup for visualization
+    // FFT setup for visualization
     private var fftSetup: FFTSetup?
     private let fftSize = 4096
     private var frequencyData = [Float](repeating: 0, count: 2048)
+    private var smoothedFrequencyData = [Float](repeating: 0, count: 2048)  // ✅ NEW: Smoothed like HTML's smoothingTimeConstant
     private var timeDomainData = [Float](repeating: 0, count: 4096)
     private var visualizationTapInstalled = false
     
-    // ✅ PERFORMANCE: Throttle visualization updates to reduce main thread load
+    // ✅ FIXED: No throttling - run at full 60fps like HTML requestAnimationFrame
     private var visualizationUpdateCounter = 0
-    private let visualizationUpdateInterval = 2  // Only publish every 2nd buffer (~50-60fps depending on buffer size)
+    private let visualizationUpdateInterval = 1  // Every buffer = 60fps
     
-    // ✅ Pulse smoothing state (must persist across frames)
+    // Pulse smoothing state (must persist across frames)
     private var currentPulse: CGFloat = 1.0
+    
+    // ✅ NEW: Smoothed bass for more stable pulse (like HTML's smoothingTimeConstant = 0.6)
+    private var smoothedBass: Float = 0
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -964,9 +968,20 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 var magnitudes = [Float](repeating: 0, count: fftSize / 2)
                 vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(fftSize / 2))
                 
-                // Normalize and store
+                // ✅ FIXED: Convert to 0-255 range like HTML's getByteFrequencyData
+                // Then apply smoothing like HTML's smoothingTimeConstant = 0.6
+                let smoothingTimeConstant: Float = 0.6
                 for i in 0..<min(magnitudes.count, frequencyData.count) {
-                    frequencyData[i] = sqrt(magnitudes[i]) / Float(fftSize)
+                    // Convert FFT magnitude to dB, then to 0-255 range like Web Audio API
+                    let magnitude = sqrt(magnitudes[i])
+                    let db = 20 * log10(max(magnitude, 1e-10))  // Convert to dB
+                    // Map dB range (-100 to 0) to byte range (0 to 255)
+                    let byteValue = max(0, min(255, (db + 100) * 2.55))
+                    
+                    // Apply smoothing like HTML's smoothingTimeConstant
+                    // newValue = smoothingTimeConstant * previousValue + (1 - smoothingTimeConstant) * currentValue
+                    smoothedFrequencyData[i] = smoothingTimeConstant * smoothedFrequencyData[i] + (1 - smoothingTimeConstant) * byteValue
+                    frequencyData[i] = smoothedFrequencyData[i]
                 }
             }
         }
@@ -981,23 +996,27 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let smoothingFactor: Float = 0.4
         let maxOut: Float = 25.0
         
-        // ✅ FIXED: Pulse constants matching HTML exactly
+        // Pulse constants matching HTML exactly
         let bassThreshold: Float = 0.1
         let bassMultiplier: Float = 0.6
         let pulseSmooth: Float = 0.45
+        let bassDivisor: Float = 10200.0  // HTML: BASS_DIV = 40 * 255
         
-        // ✅ FIXED: Calculate bass from raw frequency magnitudes
-        // The frequencyData values are very small after FFT normalization
-        // We need to amplify them significantly to match HTML's 0-255 range
+        // ✅ FIXED: Calculate bass EXACTLY like HTML
+        // HTML: for (let i = 0; i < 40; i++) { bass += freqData[i]; }
+        // HTML: bass /= BASS_DIV;  // BASS_DIV = 10200
+        // frequencyData is now in 0-255 range like HTML's getByteFrequencyData
         var bass: Float = 0
         for i in 0..<min(40, frequencyData.count) {
-            // Amplify the normalized FFT data to get meaningful bass values
-            bass += frequencyData[i] * 5000.0  // Amplify to get usable range
+            bass += frequencyData[i]  // Already in 0-255 range now
         }
-        bass /= 40.0  // Average over 40 bins
-        bass = min(bass, 1.0)  // Clamp to 0-1 range
+        bass /= bassDivisor  // Divide by 10200 like HTML
         
-        // ✅ FIXED: Calculate pulse exactly like HTML
+        // Apply smoothing to bass for more stable pulse (prevents jitter)
+        smoothedBass = smoothedBass * 0.7 + bass * 0.3
+        bass = smoothedBass
+        
+        // Calculate pulse exactly like HTML
         // HTML: const bassPulse = bass > BASS_THRESHOLD ? (bass - BASS_THRESHOLD) / INV_BASS_THRESHOLD : 0;
         // HTML: targetPulse = 1 + bassPulse * BASS_MULTIPLIER;
         // HTML: pulse += (targetPulse - pulse) * PULSE_SMOOTH;

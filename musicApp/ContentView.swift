@@ -892,41 +892,36 @@ struct EdgeVisualizerView: View {
     // Pre-computed random groups (like HTML lineGroups)
     @State private var lineGroups: [Bool] = (0..<200).map { _ in Float.random(in: 0...1) > 0.7 }
     
-    // Match HTML constants exactly
+    // ✅ All constants pre-computed (like HTML's hardcoded values)
     private let segments = 200
     private let groupBMultiplier: CGFloat = 0.6666666666666666 // 2/3
     
+    // Geometry constants (matching thumbnail 290x290, radius 20)
+    private let boxSize: CGFloat = 290
+    private let radius: CGFloat = 20
+    private let straightEdge: CGFloat = 250  // boxSize - 2 * radius
+    private let cornerArc: CGFloat = 31.41592653589793  // (π/2) * radius
+    private let totalPerimeter: CGFloat = 1125.6637061435917  // 4 * straightEdge + 4 * cornerArc
+    
+    // Edge boundaries (pre-computed like HTML)
+    private let edge1: CGFloat = 250  // straightEdge
+    private let edge2: CGFloat = 281.41592653589793  // straightEdge + cornerArc
+    private let edge3: CGFloat = 531.4159265358979  // 2 * straightEdge + cornerArc
+    private let edge4: CGFloat = 562.8318530717959  // 2 * straightEdge + 2 * cornerArc
+    private let edge5: CGFloat = 812.8318530717959  // 3 * straightEdge + 2 * cornerArc
+    private let edge6: CGFloat = 844.2477796076938  // 3 * straightEdge + 3 * cornerArc
+    private let edge7: CGFloat = 1094.2477796076938  // 4 * straightEdge + 3 * cornerArc
+    
     var body: some View {
-        // ✅ 60fps for smooth bar motion matching HTML requestAnimationFrame
+        // 60fps for smooth bar motion matching HTML requestAnimationFrame
         TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 
-                // ✅ REMOVED: Canvas scaling - parent ZStack handles pulse scaling now
-                
-                // Box matches thumbnail (290x290, 20 corner radius)
-                let boxSize: CGFloat = 290
-                let radius: CGFloat = 20
-                
+                // Base position (computed once per frame, not per segment)
                 let baseX = centerX - boxSize / 2
                 let baseY = centerY - boxSize / 2
-                
-                // Calculate perimeter (pre-computed for performance)
-                let straightEdge = boxSize - 2 * radius  // 250
-                let cornerArc = (.pi / 2) * radius       // ~31.4
-                let totalPerimeter = 4 * straightEdge + 4 * cornerArc  // ~1125.6
-                
-                // Edge boundaries
-                let edge1 = straightEdge
-                let edge2 = straightEdge + cornerArc
-                let edge3 = 2 * straightEdge + cornerArc
-                let edge4 = 2 * straightEdge + 2 * cornerArc
-                let edge5 = 3 * straightEdge + 2 * cornerArc
-                let edge6 = 3 * straightEdge + 3 * cornerArc
-                let edge7 = 4 * straightEdge + 3 * cornerArc
-                
-                // Pre-computed positions
                 let padPlusRadius = baseX + radius
                 let padPlusSize = baseX + boxSize
                 let padPlusSizeMinusRadius = baseX + boxSize - radius
@@ -954,7 +949,6 @@ struct EdgeVisualizerView: View {
                     var y: CGFloat = 0
                     var nx: CGFloat = 0
                     var ny: CGFloat = 0
-                    var isCorner = false
                     
                     // Top edge
                     if distance < edge1 {
@@ -965,7 +959,7 @@ struct EdgeVisualizerView: View {
                     }
                     // Top-right corner - skip
                     else if distance < edge2 {
-                        isCorner = true
+                        continue
                     }
                     // Right edge
                     else if distance < edge3 {
@@ -976,7 +970,7 @@ struct EdgeVisualizerView: View {
                     }
                     // Bottom-right corner - skip
                     else if distance < edge4 {
-                        isCorner = true
+                        continue
                     }
                     // Bottom edge
                     else if distance < edge5 {
@@ -987,7 +981,7 @@ struct EdgeVisualizerView: View {
                     }
                     // Bottom-left corner - skip
                     else if distance < edge6 {
-                        isCorner = true
+                        continue
                     }
                     // Left edge
                     else if distance < edge7 {
@@ -998,16 +992,13 @@ struct EdgeVisualizerView: View {
                     }
                     // Top-left corner - skip
                     else {
-                        isCorner = true
+                        continue
                     }
                     
-                    if isCorner { continue }
-                    
                     // Rainbow gradient (matching HTML: hue offset by 180)
-                    let t = CGFloat(i) / CGFloat(segments)
-                    let hue = (t * 360 + 180).truncatingRemainder(dividingBy: 360) / 360.0
-                    let maxOut: CGFloat = 25.0
-                    let opacity = 0.6 + (amplitude / maxOut) * 0.4
+                    // Optimized like HTML: i * 1.8 instead of i / segments * 360
+                    let hue = (CGFloat(i) * 1.8 + 180).truncatingRemainder(dividingBy: 360) / 360.0
+                    let opacity = 0.6 + (amplitude * 0.016)  // amplitude / 25 * 0.4 = amplitude * 0.016
                     
                     let color = Color(hue: hue, saturation: 1.0, brightness: 0.6).opacity(opacity)
                     
