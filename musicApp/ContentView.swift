@@ -469,7 +469,7 @@ struct NowPlayingView: View {
                 Spacer()
                 
                 ZStack {
-                    // Main thumbnail
+                    // Main thumbnail - PULSES with bass
                     Group {
                         if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                             Image(uiImage: thumbnailImage)
@@ -494,15 +494,16 @@ struct NowPlayingView: View {
                                 .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
                         }
                     }
+                    .scaleEffect(audioPlayer.pulse)  // Only thumbnail pulses
+                    .animation(.easeOut(duration: 0.08), value: audioPlayer.pulse)  // Snappy animation
                     
-                    // Visualizer overlay - lines extend outward
+                    // Visualizer overlay - bars react to bass but don't scale
                     EdgeVisualizerView(audioPlayer: audioPlayer)
+                        .frame(width: 390, height: 390)  // Larger to fit outward lines
                         .frame(width: 390, height: 390)  // Larger to fit outward lines
                         .allowsHitTesting(false)
                 }
-                // ✅ FIXED: Use audioPlayer.pulse directly for scaling thumbnail + bars together
-                .scaleEffect(audioPlayer.pulse)
-                .animation(.linear(duration: 0.016), value: audioPlayer.pulse)  // 60fps animation
+                // Thumbnail pulses, bars stay fixed size
                 .frame(width: 390, height: 390)  // Fixed frame prevents layout shifts
                 .onTapGesture {
                     if audioPlayer.isPlaying {
@@ -895,7 +896,7 @@ struct EdgeVisualizerView: View {
     private let boxSize: CGFloat = 290
     private let radius: CGFloat = 20
     private let barCount = 80  // Fewer bars = faster rendering
-    private let maxBarLength: CGFloat = 30
+    private let maxBarLength: CGFloat = 35  // Max bar length (290 + 35*2 = 360px < 375px screen)
     
     // Pre-computed bar positions and directions (static - never changes)
     private let barData: [(x: CGFloat, y: CGFloat, nx: CGFloat, ny: CGFloat, hue: CGFloat)]
