@@ -885,136 +885,132 @@ struct DownloadBanner: View {
 }
 
 
-// MARK: - Edge Visualizer (Uses real audio data from AudioPlayerManager)
+// MARK: - Bass-Only Edge Visualizer (Ultra-Performant)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     
-    // Pre-computed random groups (like HTML lineGroups)
-    @State private var lineGroups: [Bool] = (0..<200).map { _ in Float.random(in: 0...1) > 0.7 }
-    
-    // ✅ All constants pre-computed (like HTML's hardcoded values)
-    private let segments = 200
-    private let groupBMultiplier: CGFloat = 0.6666666666666666 // 2/3
-    
-    // Geometry constants (matching thumbnail 290x290, radius 20)
+    // ==========================================
+    // PRE-COMPUTED GEOMETRY (computed once, not per frame)
+    // ==========================================
     private let boxSize: CGFloat = 290
     private let radius: CGFloat = 20
-    private let straightEdge: CGFloat = 250  // boxSize - 2 * radius
-    private let cornerArc: CGFloat = 31.41592653589793  // (π/2) * radius
-    private let totalPerimeter: CGFloat = 1125.6637061435917  // 4 * straightEdge + 4 * cornerArc
+    private let barCount = 80  // Fewer bars = faster rendering
+    private let maxBarLength: CGFloat = 30
     
-    // Edge boundaries (pre-computed like HTML)
-    private let edge1: CGFloat = 250  // straightEdge
-    private let edge2: CGFloat = 281.41592653589793  // straightEdge + cornerArc
-    private let edge3: CGFloat = 531.4159265358979  // 2 * straightEdge + cornerArc
-    private let edge4: CGFloat = 562.8318530717959  // 2 * straightEdge + 2 * cornerArc
-    private let edge5: CGFloat = 812.8318530717959  // 3 * straightEdge + 2 * cornerArc
-    private let edge6: CGFloat = 844.2477796076938  // 3 * straightEdge + 3 * cornerArc
-    private let edge7: CGFloat = 1094.2477796076938  // 4 * straightEdge + 3 * cornerArc
+    // Pre-computed bar positions and directions (static - never changes)
+    private let barData: [(x: CGFloat, y: CGFloat, nx: CGFloat, ny: CGFloat, hue: CGFloat)]
+    
+    init(audioPlayer: AudioPlayerManager) {
+        self.audioPlayer = audioPlayer
+        
+        // Pre-compute all bar positions at init time (ZERO per-frame computation)
+        var bars: [(x: CGFloat, y: CGFloat, nx: CGFloat, ny: CGFloat, hue: CGFloat)] = []
+        
+        let straightEdge: CGFloat = 250  // boxSize - 2 * radius
+        let cornerArc: CGFloat = .pi / 2 * 20  // ~31.4
+        let totalPerimeter = 4 * straightEdge + 4 * cornerArc
+        
+        let edge1 = straightEdge
+        let edge2 = straightEdge + cornerArc
+        let edge3 = 2 * straightEdge + cornerArc
+        let edge4 = 2 * straightEdge + 2 * cornerArc
+        let edge5 = 3 * straightEdge + 2 * cornerArc
+        let edge6 = 3 * straightEdge + 3 * cornerArc
+        let edge7 = 4 * straightEdge + 3 * cornerArc
+        
+        // Center offset (will be applied at draw time relative to canvas center)
+        let halfBox = boxSize / 2
+        
+        for i in 0..<barCount {
+            let t = CGFloat(i) / CGFloat(barCount)
+            let distance = t * totalPerimeter
+            
+            var x: CGFloat = 0
+            var y: CGFloat = 0
+            var nx: CGFloat = 0
+            var ny: CGFloat = 0
+            var skip = false
+            
+            // Top edge
+            if distance < edge1 {
+                x = -halfBox + radius + distance
+                y = -halfBox
+                nx = 0; ny = -1
+            }
+            // Top-right corner - skip
+            else if distance < edge2 { skip = true }
+            // Right edge
+            else if distance < edge3 {
+                x = halfBox
+                y = -halfBox + radius + (distance - edge2)
+                nx = 1; ny = 0
+            }
+            // Bottom-right corner - skip
+            else if distance < edge4 { skip = true }
+            // Bottom edge
+            else if distance < edge5 {
+                x = halfBox - radius - (distance - edge4)
+                y = halfBox
+                nx = 0; ny = 1
+            }
+            // Bottom-left corner - skip
+            else if distance < edge6 { skip = true }
+            // Left edge
+            else if distance < edge7 {
+                x = -halfBox
+                y = halfBox - radius - (distance - edge6)
+                nx = -1; ny = 0
+            }
+            // Top-left corner - skip
+            else { skip = true }
+            
+            if !skip {
+                // Rainbow hue
+                let hue = (t * 360 + 180).truncatingRemainder(dividingBy: 360) / 360.0
+                bars.append((x: x, y: y, nx: nx, ny: ny, hue: hue))
+            }
+        }
+        
+        self.barData = bars
+    }
     
     var body: some View {
-        // 60fps for smooth bar motion matching HTML requestAnimationFrame
-        TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
+        // 60fps update matching display refresh
+        TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 
-                // Base position (computed once per frame, not per segment)
-                let baseX = centerX - boxSize / 2
-                let baseY = centerY - boxSize / 2
-                let padPlusRadius = baseX + radius
-                let padPlusSize = baseX + boxSize
-                let padPlusSizeMinusRadius = baseX + boxSize - radius
+                // Get bass level (0 to 1)
+                let bass = CGFloat(audioPlayer.bassLevel)
                 
-                // Get real audio data from AudioPlayerManager
-                let vizData = audioPlayer.visualizationData
+                // All bars scale with bass (simple, fast, responsive)
+                let barLength = bass * maxBarLength
                 
-                // Draw lines extending outward
-                for i in 0..<segments {
-                    guard i < vizData.count else { continue }
+                // Skip drawing if bass is too low
+                guard barLength > 1 else { return }
+                
+                let opacity = 0.5 + bass * 0.5
+                
+                // Draw all pre-computed bars
+                for bar in barData {
+                    let x = centerX + bar.x
+                    let y = centerY + bar.y
                     
-                    // Get amplitude from real audio data
-                    var amplitude = CGFloat(vizData[i])
+                    let color = Color(hue: bar.hue, saturation: 1.0, brightness: 0.7).opacity(opacity)
                     
-                    // Apply group B multiplier (2/3 amplitude) like HTML
-                    if i < lineGroups.count && lineGroups[i] {
-                        amplitude *= groupBMultiplier
-                    }
-                    
-                    // Skip very small amplitudes
-                    if amplitude < 2 { continue }
-                    
-                    let distance = (CGFloat(i) / CGFloat(segments)) * totalPerimeter
-                    var x: CGFloat = 0
-                    var y: CGFloat = 0
-                    var nx: CGFloat = 0
-                    var ny: CGFloat = 0
-                    
-                    // Top edge
-                    if distance < edge1 {
-                        x = padPlusRadius + distance
-                        y = baseY
-                        nx = 0
-                        ny = -1
-                    }
-                    // Top-right corner - skip
-                    else if distance < edge2 {
-                        continue
-                    }
-                    // Right edge
-                    else if distance < edge3 {
-                        x = padPlusSize
-                        y = baseY + radius + (distance - edge2)
-                        nx = 1
-                        ny = 0
-                    }
-                    // Bottom-right corner - skip
-                    else if distance < edge4 {
-                        continue
-                    }
-                    // Bottom edge
-                    else if distance < edge5 {
-                        x = padPlusSizeMinusRadius - (distance - edge4)
-                        y = baseY + boxSize
-                        nx = 0
-                        ny = 1
-                    }
-                    // Bottom-left corner - skip
-                    else if distance < edge6 {
-                        continue
-                    }
-                    // Left edge
-                    else if distance < edge7 {
-                        x = baseX
-                        y = baseY + boxSize - radius - (distance - edge6)
-                        nx = -1
-                        ny = 0
-                    }
-                    // Top-left corner - skip
-                    else {
-                        continue
-                    }
-                    
-                    // Rainbow gradient (matching HTML: hue offset by 180)
-                    // Optimized like HTML: i * 1.8 instead of i / segments * 360
-                    let hue = (CGFloat(i) * 1.8 + 180).truncatingRemainder(dividingBy: 360) / 360.0
-                    let opacity = 0.6 + (amplitude * 0.016)  // amplitude / 25 * 0.4 = amplitude * 0.016
-                    
-                    let color = Color(hue: hue, saturation: 1.0, brightness: 0.6).opacity(opacity)
-                    
-                    // Draw line from edge outward
                     var path = Path()
                     path.move(to: CGPoint(x: x, y: y))
-                    path.addLine(to: CGPoint(x: x + nx * amplitude, y: y + ny * amplitude))
+                    path.addLine(to: CGPoint(x: x + bar.nx * barLength, y: y + bar.ny * barLength))
                     
                     context.stroke(
                         path,
                         with: .color(color),
-                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
                     )
                 }
             }
-            .drawingGroup()
+            .drawingGroup()  // GPU-accelerated rendering
         }
     }
 }

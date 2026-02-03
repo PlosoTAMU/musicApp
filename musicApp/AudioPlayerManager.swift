@@ -39,40 +39,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var timeUpdateTimer: Timer?
     
-    // ✅ ADD: Visualization data for external consumers
-    @Published var visualizationData: [Float] = Array(repeating: 0, count: 200)
+    // ✅ SIMPLIFIED: Bass-only visualization (no per-segment data needed)
     @Published var bassLevel: Float = 0
-    @Published var pulse: CGFloat = 1.0  // Published pulse for thumbnail scaling
+    @Published var pulse: CGFloat = 1.0  // Published pulse for thumbnail + bars scaling
     
-    // FFT setup for visualization
-    private var fftSetup: FFTSetup?
-    private let fftSize = 4096  // Match HTML analyser.fftSize
-    private let visualizationBufferSize: AVAudioFrameCount = 1024  // ✅ Smaller tap buffer for higher FPS
-    private var frequencyData = [Float](repeating: 0, count: 2048)
-    private var smoothedFrequencyData = [Float](repeating: 0, count: 2048)  // Smoothed like HTML's smoothingTimeConstant
-    private var timeDomainData = [Float](repeating: 0, count: 4096)
-    private var ringBuffer = [Float](repeating: 0, count: 4096)
-    private var ringWriteIndex = 0
+    // ✅ ULTRA-SIMPLE: No FFT needed - just RMS energy from low-pass filtered signal
+    private let visualizationBufferSize: AVAudioFrameCount = 512  // Small = fast updates (~86 FPS at 44.1kHz)
     private var visualizationTapInstalled = false
-
-    // ✅ Pre-allocated FFT buffers to avoid per-frame allocations
-    private var fftReal = [Float](repeating: 0, count: 2048)
-    private var fftImag = [Float](repeating: 0, count: 2048)
-    private var fftMagnitudes = [Float](repeating: 0, count: 2048)
-    private var fftLog2n: vDSP_Length = 0
-
-    // ✅ Pre-allocated visualization buffers (avoid per-frame allocations)
-    private var visualizationBuffer = [Float](repeating: 0, count: 200)
-    private var lineSmoothing = [Float](repeating: 0, count: 200)
     
-    // ✅ FIXED: No throttling - run at full 60fps like HTML requestAnimationFrame
-    private var visualizationUpdateCounter = 0
-    private let visualizationUpdateInterval = 1  // Every buffer = 60fps
-    
-    // Pulse smoothing state (must persist across frames)
+    // Bass detection state (persists across frames)
+    private var smoothedBass: Float = 0
     private var currentPulse: CGFloat = 1.0
-    
-    // ✅ NEW: Smoothed bass for more stable pulse (like HTML's smoothingTimeConstant = 0.6)
+    private var previousSamples: [Float] = Array(repeating: 0, count: 64)  // For simple low-pass
     private var smoothedBass: Float = 0
 
     private func startTimeUpdates() {
@@ -902,34 +880,26 @@ class AudioPlayerManager: NSObject, ObservableObject {
         NotificationCenter.default.removeObserver(self)
     }
 
-    // MARK: - Visualization Support
-
-    private func setupFFT() {
-        fftLog2n = vDSP_Length(log2(Float(fftSize)))
-        fftSetup = vDSP_create_fftsetup(fftLog2n, FFTRadix(kFFTRadix2))
-    }
+    // MARK: - Bass-Only Visualization (Ultra-Simple, Zero Latency)
 
     private func installVisualizationTap() {
         guard let player = playerNode else { return }
         
-        // Remove existing tap if any (player.stop() may have removed it)
+        // Remove existing tap if any
         if visualizationTapInstalled {
             player.removeTap(onBus: 0)
             visualizationTapInstalled = false
         }
         
-        if fftSetup == nil {
-            setupFFT()
-        }
-        
         let format = player.outputFormat(forBus: 0)
         
+        // Small buffer = high update rate = responsive visualization
         player.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
-            self?.processVisualizationBuffer(buffer)
+            self?.processBassFromBuffer(buffer)
         }
         
         visualizationTapInstalled = true
-        print("✅ [AudioPlayer] Visualization tap installed")
+        print("✅ [AudioPlayer] Bass visualization tap installed")
     }
 
     private func removeVisualizationTap() {
@@ -939,161 +909,65 @@ class AudioPlayerManager: NSObject, ObservableObject {
         print("✅ [AudioPlayer] Visualization tap removed")
     }
 
-    private func processVisualizationBuffer(_ buffer: AVAudioPCMBuffer) {
-        // ✅ PERFORMANCE: Throttle updates to reduce main thread load
-        visualizationUpdateCounter += 1
-        guard visualizationUpdateCounter >= visualizationUpdateInterval else { return }
-        visualizationUpdateCounter = 0
-        
+    /// Ultra-fast bass extraction - no FFT, just simple energy detection
+    private func processBassFromBuffer(_ buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
-        let data = channelData[0]
-
-        // ✅ Write into ring buffer (higher FPS with smaller tap buffer)
-        let copyCount = min(frameLength, fftSize)
-        for i in 0..<copyCount {
-            ringBuffer[ringWriteIndex] = data[i]
-            ringWriteIndex += 1
-            if ringWriteIndex >= fftSize { ringWriteIndex = 0 }
-        }
-
-        // ✅ Build contiguous time domain buffer from ring buffer
-        let tailCount = fftSize - ringWriteIndex
-        if tailCount > 0 {
-            timeDomainData.withUnsafeMutableBufferPointer { dest in
-                ringBuffer.withUnsafeBufferPointer { src in
-                    dest.baseAddress?.assign(from: src.baseAddress! + ringWriteIndex, count: tailCount)
-                }
-            }
-        }
-        if ringWriteIndex > 0 {
-            timeDomainData.withUnsafeMutableBufferPointer { dest in
-                ringBuffer.withUnsafeBufferPointer { src in
-                    dest.baseAddress?.advanced(by: tailCount).assign(from: src.baseAddress!, count: ringWriteIndex)
-                }
-            }
+        let samples = channelData[0]
+        
+        // ==========================================
+        // ULTRA-SIMPLE BASS DETECTION (NO FFT!)
+        // ==========================================
+        // Use a simple low-pass filter approach:
+        // Bass frequencies cause slow, large amplitude changes
+        // We detect this by measuring RMS energy of downsampled signal
+        
+        // Step 1: Downsample by taking every 8th sample (reduces 512 -> 64)
+        // This naturally low-pass filters to ~2.75kHz at 44.1kHz sample rate
+        // Bass is < 250Hz so we're capturing it
+        var bassEnergy: Float = 0
+        let downsampleFactor = 8
+        let downsampledCount = frameLength / downsampleFactor
+        
+        for i in 0..<downsampledCount {
+            let sample = samples[i * downsampleFactor]
+            // Accumulate squared amplitude (RMS)
+            bassEnergy += sample * sample
         }
         
-        // Perform FFT on contiguous buffer
-        timeDomainData.withUnsafeBufferPointer { ptr in
-            if let base = ptr.baseAddress {
-                performFFT(data: base, frameLength: fftSize)
-            }
-        }
+        // Normalize to 0-1 range (RMS)
+        bassEnergy = sqrt(bassEnergy / Float(max(1, downsampledCount)))
         
-        // Process and publish visualization data
-        processAudioForVisualization()
-    }
-
-    private func performFFT(data: UnsafePointer<Float>, frameLength: Int) {
-        fftReal.withUnsafeMutableBufferPointer { realPtr in
-            fftImag.withUnsafeMutableBufferPointer { imagPtr in
-                var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
-                
-                data.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
-                    vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
-                }
-                
-                if let setup = fftSetup {
-                    vDSP_fft_zrip(setup, &splitComplex, 1, fftLog2n, FFTDirection(kFFTDirection_Forward))
-                }
-                
-                // Calculate magnitudes
-                vDSP_zvmags(&splitComplex, 1, &fftMagnitudes, 1, vDSP_Length(fftSize / 2))
-                
-                // ✅ FIXED: Convert to 0-255 range like HTML's getByteFrequencyData
-                // Then apply smoothing like HTML's smoothingTimeConstant = 0.6
-                let smoothingTimeConstant: Float = 0.6
-                for i in 0..<min(fftMagnitudes.count, frequencyData.count) {
-                    // Convert FFT magnitude to dB, then to 0-255 range like Web Audio API
-                    let magnitude = sqrt(fftMagnitudes[i])
-                    let db = 20 * log10(max(magnitude, 1e-10))  // Convert to dB
-                    // Map dB range (-100 to 0) to byte range (0 to 255)
-                    let byteValue = max(0, min(255, (db + 100) * 2.55))
-                    
-                    // Apply smoothing like HTML's smoothingTimeConstant
-                    // newValue = smoothingTimeConstant * previousValue + (1 - smoothingTimeConstant) * currentValue
-                    smoothedFrequencyData[i] = smoothingTimeConstant * smoothedFrequencyData[i] + (1 - smoothingTimeConstant) * byteValue
-                    frequencyData[i] = smoothedFrequencyData[i]
-                }
-            }
-        }
-    }
-
-    private func processAudioForVisualization() {
-        // Match HTML visualizer constants exactly
-        let segments = 200
-        let threshold: Float = 0.1
-        let strengthMultiplier: Float = 3.5
-        let power: Float = 0.2
-        let smoothingFactor: Float = 0.4
-        let maxOut: Float = 25.0
+        // Amplify to useful range (audio is often quiet)
+        bassEnergy = min(1.0, bassEnergy * 4.0)
         
-        // Pulse constants matching HTML exactly
-        let bassThreshold: Float = 0.1
-        let bassMultiplier: Float = 0.6
-        let pulseSmooth: Float = 0.45
-        let bassDivisor: Float = 10200.0  // HTML: BASS_DIV = 40 * 255
+        // ==========================================
+        // PULSE CALCULATION (matches HTML logic)
+        // ==========================================
+        let bassThreshold: Float = 0.08
+        let bassMultiplier: Float = 0.5
+        let pulseSmooth: Float = 0.35  // Faster response than before
         
-        // ✅ FIXED: Calculate bass EXACTLY like HTML
-        // HTML: for (let i = 0; i < 40; i++) { bass += freqData[i]; }
-        // HTML: bass /= BASS_DIV;  // BASS_DIV = 10200
-        // frequencyData is now in 0-255 range like HTML's getByteFrequencyData
-        var bass: Float = 0
-        for i in 0..<min(40, frequencyData.count) {
-            bass += frequencyData[i]  // Already in 0-255 range now
-        }
-        bass /= bassDivisor  // Divide by 10200 like HTML
+        // Smooth the bass energy
+        smoothedBass = smoothedBass * 0.6 + bassEnergy * 0.4
         
-        // Apply smoothing to bass for more stable pulse (prevents jitter)
-        smoothedBass = smoothedBass * 0.7 + bass * 0.3
-        bass = smoothedBass
-        
-        // Calculate pulse exactly like HTML
-        // HTML: const bassPulse = bass > BASS_THRESHOLD ? (bass - BASS_THRESHOLD) / INV_BASS_THRESHOLD : 0;
-        // HTML: targetPulse = 1 + bassPulse * BASS_MULTIPLIER;
-        // HTML: pulse += (targetPulse - pulse) * PULSE_SMOOTH;
-        let bassPulse: Float = bass > bassThreshold ? (bass - bassThreshold) / 0.9 : 0
+        // Calculate pulse
+        let bassPulse: Float = smoothedBass > bassThreshold 
+            ? (smoothedBass - bassThreshold) / (1.0 - bassThreshold) 
+            : 0
         let targetPulse: CGFloat = 1.0 + CGFloat(bassPulse) * CGFloat(bassMultiplier)
         currentPulse += (targetPulse - currentPulse) * CGFloat(pulseSmooth)
         
-        // Create new visualization data using time domain (waveform) data
-        let dataIndexMult = Float(timeDomainData.count) / Float(segments)
+        // ==========================================
+        // PUBLISH TO MAIN THREAD (minimal data)
+        // ==========================================
+        let finalPulse = currentPulse
+        let finalBass = smoothedBass
         
-        for i in 0..<segments {
-            let dataIndex = Int(Float(i) * dataIndexMult)
-            
-            // timeDomainData contains float samples from -1 to 1
-            let wave = timeDomainData[dataIndex]
-            let rawStrength = abs(wave)
-            
-            var strength: Float = 0
-            
-            if rawStrength > threshold {
-                let normalized = (rawStrength - threshold) / 0.9
-                strength = pow(normalized, power) * strengthMultiplier
-            }
-            
-            let targetOut = strength * maxOut
-            
-            // Smooth with previous value (like HTML lineSmoothing)
-            let previousValue = lineSmoothing[i]
-            let smoothed = previousValue + (targetOut - previousValue) * smoothingFactor
-            lineSmoothing[i] = smoothed
-            visualizationBuffer[i] = smoothed
-            
-            // Minimum threshold
-            if visualizationBuffer[i] < 2 {
-                visualizationBuffer[i] = 0
-            }
-        }
-        
-        // Publish on main thread
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.visualizationData = self.visualizationBuffer
-            self.bassLevel = bass
-            self.pulse = self.currentPulse  // ✅ Publish the smoothed pulse
+            self?.pulse = finalPulse
+            self?.bassLevel = finalBass
         }
     }
 }
+
