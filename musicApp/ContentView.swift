@@ -470,40 +470,38 @@ struct NowPlayingView: View {
                 
                 // Single container - no extra TimelineView needed
                 ZStack {
-                    // Main thumbnail
+                    // Main thumbnail - 220px static (bars handle the pulse effect)
                     Group {
                         if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                             Image(uiImage: thumbnailImage)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
-                                .frame(width: 250, height: 250)
-                                .clipShape(RoundedRectangle(cornerRadius: 18))
-                                .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
+                                .frame(width: 220, height: 220)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                                .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                         } else {
-                            RoundedRectangle(cornerRadius: 18)
+                            RoundedRectangle(cornerRadius: 16)
                                 .fill(LinearGradient(
                                     colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ))
-                                .frame(width: 250, height: 250)
+                                .frame(width: 220, height: 220)
                                 .overlay(
                                     Image(systemName: "music.note")
-                                        .font(.system(size: 70))
+                                        .font(.system(size: 60))
                                         .foregroundColor(.white.opacity(0.5))
                                 )
-                                .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
+                                .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                         }
                     }
-                    // Thumbnail pulses with bass - PUNCHIER
-                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.25)
                     
-                    // Visualizer overlay
-                    EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailScale: 1.0 + CGFloat(audioPlayer.bassLevel) * 0.25)
-                        .frame(width: 360, height: 360)
+                    // Visualizer overlay - OPTIMIZED (no @ObservedObject)
+                    EdgeVisualizerView(audioPlayer: audioPlayer)
+                        .frame(width: 320, height: 320)
                         .allowsHitTesting(false)
                 }
-                .frame(width: 360, height: 360)
+                .frame(width: 320, height: 320)
                 .onTapGesture {
                     if audioPlayer.isPlaying {
                         audioPlayer.pause()
@@ -887,66 +885,59 @@ struct DownloadBanner: View {
 
 // MARK: - Edge Visualizer (PUNCHY and responsive)
 struct EdgeVisualizerView: View {
-    @ObservedObject var audioPlayer: AudioPlayerManager
-    let thumbnailScale: CGFloat
+    let audioPlayer: AudioPlayerManager  // NOT @ObservedObject - no SwiftUI diffing!
     
-    // Geometry - 250px base thumbnail
-    private let baseBoxSize: CGFloat = 250
-    private let cornerRadius: CGFloat = 18
-    private let maxBarLength: CGFloat = 55  // Longer bars for more punch
-    private let barsPerSide = 20  // 80 total bars
+    // Geometry - 220px fixed thumbnail
+    private let boxSize: CGFloat = 220
+    private let cornerRadius: CGFloat = 16
+    private let maxBarLength: CGFloat = 50
+    private let barsPerSide = 16  // 64 total bars = exact match to bins
     
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 
-                let boxSize = baseBoxSize * thumbnailScale
+                // Get data atomically - thread-safe, no @Published overhead
+                let (bins, _) = audioPlayer.getVisualizationData()
+                guard bins.count >= 64 else { return }
+                
                 let halfBox = boxSize / 2
-                let scaledCorner = cornerRadius * thumbnailScale
-                let straightEdge = boxSize - 2 * scaledCorner
+                let straightEdge = boxSize - 2 * cornerRadius
                 let spacing = straightEdge / CGFloat(barsPerSide)
                 
-                let bins = audioPlayer.frequencyBins
-                guard !bins.isEmpty else { return }
-                
-                let totalBars = barsPerSide * 4
                 var barIndex = 0
                 
-                // TOP
+                // TOP (bins 0-15)
                 for i in 0..<barsPerSide {
-                    let x = centerX - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
+                    let x = centerX - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
                     let y = centerY - halfBox
-                    let binIdx = (barIndex * bins.count) / totalBars
-                    drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: CGFloat(bins[binIdx]))
+                    drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex])
                     barIndex += 1
                 }
                 
-                // RIGHT
+                // RIGHT (bins 16-31)
                 for i in 0..<barsPerSide {
                     let x = centerX + halfBox
-                    let y = centerY - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
-                    let binIdx = (barIndex * bins.count) / totalBars
-                    drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: CGFloat(bins[binIdx]))
+                    let y = centerY - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
+                    drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex])
                     barIndex += 1
                 }
                 
-                // BOTTOM
+                // BOTTOM (bins 32-47)
                 for i in 0..<barsPerSide {
-                    let x = centerX + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
+                    let x = centerX + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
                     let y = centerY + halfBox
-                    let binIdx = (barIndex * bins.count) / totalBars
-                    drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: CGFloat(bins[binIdx]))
+                    drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex])
                     barIndex += 1
                 }
                 
-                // LEFT
+                // LEFT (bins 48-63)
                 for i in 0..<barsPerSide {
                     let x = centerX - halfBox
-                    let y = centerY + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
-                    let binIdx = (barIndex * bins.count) / totalBars
-                    drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: CGFloat(bins[binIdx]))
+                    let y = centerY + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
+                    drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex])
                     barIndex += 1
                 }
             }
@@ -955,20 +946,19 @@ struct EdgeVisualizerView: View {
     }
     
     @inline(__always)
-    private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: CGFloat) {
-        // More aggressive scaling for punchier bars
-        let punchedValue = pow(value, 0.5)  // Square root = more sensitive to changes
-        let barLength = punchedValue * maxBarLength
+    private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float) {
+        let barLength = CGFloat(value) * maxBarLength
         guard barLength > 1 else { return }
         
-        let hue = Double(punchedValue) * 0.35
+        // Hue based on intensity (red=high, green/cyan=low)
+        let hue = Double(value) * 0.35
         let color = Color(hue: hue, saturation: 1.0, brightness: 0.95)
         
         var path = Path()
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3, lineCap: .round))
     }
 }
 

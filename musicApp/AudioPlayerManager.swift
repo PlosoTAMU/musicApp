@@ -39,34 +39,31 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var timeUpdateTimer: Timer?
     
-    // ✅ FFT-based visualization - OPTIMIZED for performance
-    @Published var bassLevel: Float = 0  // For thumbnail pulsing
-    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 64)  // For bars
+    // ✅ Visualization data - NOT @Published to avoid SwiftUI overhead
+    // TimelineView polls these directly at 60fps
+    var bassLevel: Float = 0  // For thumbnail pulsing
+    var frequencyBins: [Float] = Array(repeating: 0, count: 64)  // For bars
     
-    // FFT setup - use 512 for good balance of speed and quality (~86 callbacks/sec)
+    // FFT setup - use 1024 for better quality, fewer callbacks (~43/sec)
     private var fftSetup: FFTSetup?
-    private let fftSize = 512
-    private let fftSizeHalf = 256
-    private let visualizationBufferSize: AVAudioFrameCount = 512
+    private let fftSize = 1024
+    private let fftSizeHalf = 512
+    private let visualizationBufferSize: AVAudioFrameCount = 1024
     private var visualizationTapInstalled = false
     
     // Pre-allocated FFT buffers
-    private var fftInputBuffer = [Float](repeating: 0, count: 512)
-    private var fftReal = [Float](repeating: 0, count: 256)
-    private var fftImag = [Float](repeating: 0, count: 256)
-    private var fftMagnitudes = [Float](repeating: 0, count: 256)
+    private var fftInputBuffer = [Float](repeating: 0, count: 1024)
+    private var fftReal = [Float](repeating: 0, count: 512)
+    private var fftImag = [Float](repeating: 0, count: 512)
+    private var fftMagnitudes = [Float](repeating: 0, count: 512)
     private var fftLog2n: vDSP_Length = 0
     
-    // Smoothing for responsive but smooth animation
+    // Smoothed values
     private var smoothedBins = [Float](repeating: 0, count: 64)
     private var smoothedBass: Float = 0
     
     // Adaptive normalization
     private var maxMagnitude: Float = 0.01
-    
-    // Throttle UI updates to 60fps max
-    private var lastUIUpdate: CFAbsoluteTime = 0
-    private let uiUpdateInterval: CFAbsoluteTime = 1.0 / 60.0
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -1035,26 +1032,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
         }
         
-        // Almost instant bass response
+        // Smooth bass
         if peakBass > smoothedBass {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.95  // Near-instant
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.9
         } else {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.5   // Fast decay
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.5
         }
         
         // ==========================================
-        // STEP 7: Throttled UI update (max 60fps)
+        // STEP 7: Direct update (no @Published, no main thread)
+        // TimelineView will poll these values at 60fps
         // ==========================================
-        let now = CFAbsoluteTimeGetCurrent()
-        guard now - lastUIUpdate >= uiUpdateInterval else { return }
-        lastUIUpdate = now
-        
-        let finalBins = newBins
-        let finalBass = smoothedBass
-        
-        DispatchQueue.main.async { [weak self] in
-            self?.frequencyBins = finalBins
-            self?.bassLevel = finalBass
-        }
+        frequencyBins = newBins
+        bassLevel = smoothedBass
     }
 }
