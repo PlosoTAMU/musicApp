@@ -39,25 +39,21 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var timeUpdateTimer: Timer?
     
-    // ✅ FFT-based bass visualization (like HTML example)
-    @Published var bassLevel: Float = 0  // Overall bass energy
-    @Published var bassSpectrum: [Float] = Array(repeating: 0, count: 80)  // Per-bar bass levels
+    // ✅ FFT-based visualization (like the HTML reference)
+    @Published var bassLevel: Float = 0
+    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 64)  // Bass frequency bins for bars
     
-    // FFT setup for bass frequency analysis
+    // FFT setup
     private var fftSetup: FFTSetup?
-    private let fftSize = 2048  // Smaller FFT = faster, adequate for bass
-    private let visualizationBufferSize: AVAudioFrameCount = 512
+    private let fftSize = 2048  // Match HTML analyser.fftSize
+    private let visualizationBufferSize: AVAudioFrameCount = 2048
     private var visualizationTapInstalled = false
     
-    // Pre-allocated FFT buffers (avoid per-frame allocations)
+    // Pre-allocated FFT buffers
     private var fftReal = [Float](repeating: 0, count: 1024)
     private var fftImag = [Float](repeating: 0, count: 1024)
     private var fftMagnitudes = [Float](repeating: 0, count: 1024)
-    private var timeDomainBuffer = [Float](repeating: 0, count: 2048)
-    private var bufferWriteIndex = 0
-    
-    // Bass detection state
-    private var smoothedBassLevel: Float = 0
+    private var fftLog2n: vDSP_Length = 0
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -884,22 +880,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
     deinit {
         stopTimeUpdates()
         NotificationCenter.default.removeObserver(self)
-        if let setup = fftSetup {
-            vDSP_destroy_fftsetup(setup)
-        }
     }
 
-    // MARK: - FFT-Based Bass Visualization (Like HTML Example)
+    // MARK: - FFT-Based Visualization (Matches HTML Reference)
 
     private func setupFFT() {
-        let log2n = vDSP_Length(log2(Float(fftSize)))
-        fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
+        fftLog2n = vDSP_Length(log2(Float(fftSize)))
+        fftSetup = vDSP_create_fftsetup(fftLog2n, FFTRadix(kFFTRadix2))
     }
 
     private func installVisualizationTap() {
         guard let player = playerNode else { return }
         
-        // Remove existing tap if any
         if visualizationTapInstalled {
             player.removeTap(onBus: 0)
             visualizationTapInstalled = false
@@ -911,13 +903,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         let format = player.outputFormat(forBus: 0)
         
-        // Small buffer = high update rate
         player.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
-            self?.processBassSpectrum(buffer)
+            self?.processFFTBuffer(buffer)
         }
         
         visualizationTapInstalled = true
-        print("✅ [AudioPlayer] Bass spectrum visualization tap installed")
+        print("✅ [AudioPlayer] FFT visualization tap installed")
     }
 
     private func removeVisualizationTap() {
@@ -927,88 +918,63 @@ class AudioPlayerManager: NSObject, ObservableObject {
         print("✅ [AudioPlayer] Visualization tap removed")
     }
 
-    /// FFT-based bass spectrum analysis (like HTML example)
-    private func processBassSpectrum(_ buffer: AVAudioPCMBuffer) {
+    /// FFT-based frequency analysis - matches HTML getByteFrequencyData behavior
+    private func processFFTBuffer(_ buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData else { return }
-        let frameLength = Int(buffer.frameLength)
         let samples = channelData[0]
         
-        // ==========================================
-        // ACCUMULATE SAMPLES INTO FFT BUFFER
-        // ==========================================
-        for i in 0..<frameLength {
-            timeDomainBuffer[bufferWriteIndex] = samples[i]
-            bufferWriteIndex += 1
-            if bufferWriteIndex >= fftSize {
-                bufferWriteIndex = 0
-            }
-        }
-        
-        // ==========================================
-        // PERFORM FFT (44.1kHz / 2048 = ~21.5 Hz per bin)
-        // ==========================================
+        // Perform FFT
         fftReal.withUnsafeMutableBufferPointer { realPtr in
             fftImag.withUnsafeMutableBufferPointer { imagPtr in
                 var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
                 
-                // Copy samples in correct order from ring buffer
-                timeDomainBuffer.withUnsafeBufferPointer { src in
-                    src.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
-                        vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
-                    }
+                samples.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
+                    vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
                 }
                 
-                // Forward FFT
                 if let setup = fftSetup {
-                    let log2n = vDSP_Length(log2(Float(fftSize)))
-                    vDSP_fft_zrip(setup, &splitComplex, 1, log2n, FFTDirection(kFFTDirection_Forward))
+                    vDSP_fft_zrip(setup, &splitComplex, 1, fftLog2n, FFTDirection(kFFTDirection_Forward))
                 }
                 
-                // Calculate magnitudes
+                // Get magnitudes
                 vDSP_zvmags(&splitComplex, 1, &fftMagnitudes, 1, vDSP_Length(fftSize / 2))
             }
         }
         
         // ==========================================
-        // EXTRACT BASS SPECTRUM (20-250 Hz like HTML)
+        // EXTRACT BASS FREQUENCY BINS (like HTML reference)
         // ==========================================
-        // Sample rate = 44100 Hz, FFT size = 2048
-        // Frequency resolution = 44100 / 2048 = 21.5 Hz per bin
-        // Bass range: 20-250 Hz → bins 1-12 (bin 0 is DC, skip it)
-        let sampleRate: Float = 44100.0
-        let frequencyResolution = sampleRate / Float(fftSize)
-        let bassStartBin = max(1, Int(20.0 / frequencyResolution))  // ~1
-        let bassEndBin = Int(250.0 / frequencyResolution)  // ~12
-        let bassBindCount = bassEndBin - bassStartBin
+        // HTML: bassEndIndex = Math.floor(250 / (sampleRate / fftSize))
+        // At 44.1kHz with fftSize 2048: bassEndIndex ≈ 11
+        // We'll use bins 0-63 for bass range (0-1378 Hz at 44.1kHz)
+        // Each bar maps to a frequency bin - NO SMOOTHING for punchy response
         
-        // Map bass bins to our 80 bars
-        var newSpectrum = [Float](repeating: 0, count: 80)
-        var totalBassEnergy: Float = 0
+        var newBins = [Float](repeating: 0, count: 64)
+        var totalBass: Float = 0
         
-        for i in 0..<80 {
-            // Map each bar to a bass frequency bin
-            let binIndex = bassStartBin + Int(Float(i) / 80.0 * Float(bassBindCount))
-            let magnitude = sqrt(fftMagnitudes[binIndex]) / Float(fftSize) * 1000.0  // Normalize and amplify
-            let normalized = min(1.0, magnitude)
-            newSpectrum[i] = normalized
-            totalBassEnergy += normalized
+        for i in 0..<64 {
+            // Convert magnitude to 0-1 range (like HTML dataArray[i] / 255)
+            let magnitude = sqrt(fftMagnitudes[i])
+            let db = 20 * log10(max(magnitude, 1e-10))
+            // Map dB (-80 to 0) to 0-1 range
+            let normalized = max(0, min(1, (db + 80) / 80))
+            newBins[i] = normalized
+            
+            // Accumulate for overall bass level (first 16 bins = sub-bass)
+            if i < 16 {
+                totalBass += normalized
+            }
         }
         
-        // Overall bass level = average of all bass bins
-        let avgBass = totalBassEnergy / 80.0
-        
-        // Minimal smoothing for punchy response
-        smoothedBassLevel = smoothedBassLevel * 0.2 + avgBass * 0.8
+        // Overall bass level (0-1)
+        let avgBass = totalBass / 16.0
         
         // ==========================================
-        // PUBLISH TO MAIN THREAD
+        // PUBLISH TO MAIN THREAD - NO SMOOTHING
         // ==========================================
-        let finalSpectrum = newSpectrum
-        let finalBass = smoothedBassLevel
-        
         DispatchQueue.main.async { [weak self] in
-            self?.bassSpectrum = finalSpectrum
-            self?.bassLevel = finalBass
+            self?.frequencyBins = newBins
+            self?.bassLevel = avgBass
         }
     }
 }

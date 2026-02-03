@@ -496,8 +496,9 @@ struct NowPlayingView: View {
                                     .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
                             }
                         }
-                        // Scale directly from bassLevel - same source as bars, no animation delay
-                        .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.15)
+                        // Scale directly from bassLevel - punchy, no animation delay
+                        // Max scale = 1.0 + 0.2 = 1.2 (thumbnail 290 * 1.2 = 348px, fits screen)
+                        .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.2)
                         
                         // Visualizer overlay - bars use same bassLevel
                         EdgeVisualizerView(audioPlayer: audioPlayer)
@@ -887,30 +888,28 @@ struct DownloadBanner: View {
 }
 
 
-// MARK: - Bass-Only Edge Visualizer (Ultra-Performant)
+// MARK: - FFT-Based Edge Visualizer (Matches HTML Reference)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     
-    // ==========================================
-    // PRE-COMPUTED GEOMETRY (computed once, not per frame)
-    // ==========================================
+    // Geometry
     private let boxSize: CGFloat = 290
     private let radius: CGFloat = 20
-    private let barCount = 80  // Fewer bars = faster rendering
-    private let maxBarLength: CGFloat = 35  // Max bar length (290 + 35*2 = 360px < 375px screen)
+    private let barCount = 64  // Match frequencyBins count
+    private let maxBarLength: CGFloat = 40
     
-    // Pre-computed bar positions and directions (static - never changes)
-    private let barData: [(x: CGFloat, y: CGFloat, nx: CGFloat, ny: CGFloat, hue: CGFloat)]
+    // Pre-computed bar positions (edge of thumbnail, pointing outward)
+    private let barData: [(x: CGFloat, y: CGFloat, nx: CGFloat, ny: CGFloat, binIndex: Int)]
     
     init(audioPlayer: AudioPlayerManager) {
         self.audioPlayer = audioPlayer
         
-        // Pre-compute all bar positions at init time (ZERO per-frame computation)
-        var bars: [(x: CGFloat, y: CGFloat, nx: CGFloat, ny: CGFloat, hue: CGFloat)] = []
+        var bars: [(x: CGFloat, y: CGFloat, nx: CGFloat, ny: CGFloat, binIndex: Int)] = []
         
         let straightEdge: CGFloat = 250  // boxSize - 2 * radius
-        let cornerArc: CGFloat = .pi / 2 * 20  // ~31.4
+        let cornerArc: CGFloat = .pi / 2 * 20
         let totalPerimeter = 4 * straightEdge + 4 * cornerArc
+        let halfBox = boxSize / 2
         
         let edge1 = straightEdge
         let edge2 = straightEdge + cornerArc
@@ -920,56 +919,28 @@ struct EdgeVisualizerView: View {
         let edge6 = 3 * straightEdge + 3 * cornerArc
         let edge7 = 4 * straightEdge + 3 * cornerArc
         
-        // Center offset (will be applied at draw time relative to canvas center)
-        let halfBox = boxSize / 2
-        
         for i in 0..<barCount {
             let t = CGFloat(i) / CGFloat(barCount)
             let distance = t * totalPerimeter
             
-            var x: CGFloat = 0
-            var y: CGFloat = 0
-            var nx: CGFloat = 0
-            var ny: CGFloat = 0
+            var x: CGFloat = 0, y: CGFloat = 0, nx: CGFloat = 0, ny: CGFloat = 0
             var skip = false
             
-            // Top edge
             if distance < edge1 {
-                x = -halfBox + radius + distance
-                y = -halfBox
-                nx = 0; ny = -1
-            }
-            // Top-right corner - skip
-            else if distance < edge2 { skip = true }
-            // Right edge
+                x = -halfBox + radius + distance; y = -halfBox; nx = 0; ny = -1
+            } else if distance < edge2 { skip = true }
             else if distance < edge3 {
-                x = halfBox
-                y = -halfBox + radius + (distance - edge2)
-                nx = 1; ny = 0
-            }
-            // Bottom-right corner - skip
-            else if distance < edge4 { skip = true }
-            // Bottom edge
+                x = halfBox; y = -halfBox + radius + (distance - edge2); nx = 1; ny = 0
+            } else if distance < edge4 { skip = true }
             else if distance < edge5 {
-                x = halfBox - radius - (distance - edge4)
-                y = halfBox
-                nx = 0; ny = 1
-            }
-            // Bottom-left corner - skip
-            else if distance < edge6 { skip = true }
-            // Left edge
+                x = halfBox - radius - (distance - edge4); y = halfBox; nx = 0; ny = 1
+            } else if distance < edge6 { skip = true }
             else if distance < edge7 {
-                x = -halfBox
-                y = halfBox - radius - (distance - edge6)
-                nx = -1; ny = 0
-            }
-            // Top-left corner - skip
-            else { skip = true }
+                x = -halfBox; y = halfBox - radius - (distance - edge6); nx = -1; ny = 0
+            } else { skip = true }
             
             if !skip {
-                // Rainbow hue
-                let hue = (t * 360 + 180).truncatingRemainder(dividingBy: 360) / 360.0
-                bars.append((x: x, y: y, nx: nx, ny: ny, hue: hue))
+                bars.append((x: x, y: y, nx: nx, ny: ny, binIndex: i))
             }
         }
         
@@ -977,44 +948,35 @@ struct EdgeVisualizerView: View {
     }
     
     var body: some View {
-        // 60fps update
+        // TimelineView forces Canvas redraw at 60fps
         TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
+                let bins = audioPlayer.frequencyBins
                 
-                // Get bass spectrum (80 independent frequency bars)
-                let spectrum = audioPlayer.bassSpectrum
-                guard spectrum.count == barData.count else { return }
-                
-                // Draw each bar with its own frequency-specific height
-                for (index, bar) in barData.enumerated() {
-                    let x = centerX + bar.x
-                    let y = centerY + bar.y
+                // Draw each bar with its own frequency bin value - NO SMOOTHING
+                for bar in barData {
+                    let binValue = bar.binIndex < bins.count ? CGFloat(bins[bar.binIndex]) : 0
+                    let barLength = binValue * maxBarLength
                     
-                    // Each bar gets its own bass frequency magnitude
-                    let magnitude = CGFloat(spectrum[index])
-                    let barLength = magnitude * maxBarLength
-                    
-                    // Skip if too small
                     guard barLength > 0.5 else { continue }
                     
-                    // Color and opacity based on magnitude
-                    let opacity = 0.4 + magnitude * 0.6
-                    let color = Color(hue: bar.hue, saturation: 1.0, brightness: 0.7).opacity(opacity)
+                    // Color based on intensity (like HTML: hue from value)
+                    let hue = binValue  // 0-1 maps to red-violet
+                    let color = Color(hue: hue, saturation: 1.0, brightness: 1.0).opacity(0.8 + binValue * 0.2)
+                    
+                    let x = centerX + bar.x
+                    let y = centerY + bar.y
                     
                     var path = Path()
                     path.move(to: CGPoint(x: x, y: y))
                     path.addLine(to: CGPoint(x: x + bar.nx * barLength, y: y + bar.ny * barLength))
                     
-                    context.stroke(
-                        path,
-                        with: .color(color),
-                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
-                    )
+                    context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
                 }
             }
-            .drawingGroup()  // GPU-accelerated
+            .drawingGroup()
         }
     }
 }
