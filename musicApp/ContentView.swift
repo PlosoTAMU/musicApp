@@ -894,8 +894,8 @@ struct EdgeVisualizerView: View {
     private let barsPerSide = 16  // 64 total bars = exact match to bins
     
     var body: some View {
-        // Only animate when playing - saves CPU when paused
-        TimelineView(audioPlayer.isPlaying ? .animation(minimumInterval: 1.0/60.0) : .explicit([])) { timeline in
+        // Always animate - TimelineView handles the updates
+        TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
