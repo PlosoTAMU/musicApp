@@ -39,23 +39,25 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var timeUpdateTimer: Timer?
     
-    // ✅ SIMPLIFIED: Bass-only visualization (no per-segment data needed)
-    @Published var bassLevel: Float = 0
-    @Published var pulse: CGFloat = 1.0  // Published pulse for thumbnail + bars scaling
+    // ✅ FFT-based bass visualization (like HTML example)
+    @Published var bassLevel: Float = 0  // Overall bass energy
+    @Published var bassSpectrum: [Float] = Array(repeating: 0, count: 80)  // Per-bar bass levels
     
-    // ✅ ULTRA-SIMPLE: No FFT needed - just RMS energy from low-pass filtered signal
-    private let visualizationBufferSize: AVAudioFrameCount = 512  // Small = fast updates (~86 FPS at 44.1kHz)
+    // FFT setup for bass frequency analysis
+    private var fftSetup: FFTSetup?
+    private let fftSize = 2048  // Smaller FFT = faster, adequate for bass
+    private let visualizationBufferSize: AVAudioFrameCount = 512
     private var visualizationTapInstalled = false
     
-    // Bass detection state (persists across frames)
-    private var smoothedBass: Float = 0
-    private var currentPulse: CGFloat = 1.0
+    // Pre-allocated FFT buffers (avoid per-frame allocations)
+    private var fftReal = [Float](repeating: 0, count: 1024)
+    private var fftImag = [Float](repeating: 0, count: 1024)
+    private var fftMagnitudes = [Float](repeating: 0, count: 1024)
+    private var timeDomainBuffer = [Float](repeating: 0, count: 2048)
+    private var bufferWriteIndex = 0
     
-    // ✅ CRITICAL: Low-pass filter state for isolating bass
-    private var lpfState: Float = 0  // Single-pole IIR filter state
-    private var bassHistory: [Float] = Array(repeating: 0, count: 30)  // ~0.5 sec history for normalization
-    private var bassHistoryIndex = 0
-    private var maxRecentBass: Float = 0.001  // Adaptive maximum (avoid divide by zero)
+    // Bass detection state
+    private var smoothedBassLevel: Float = 0
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -882,9 +884,17 @@ class AudioPlayerManager: NSObject, ObservableObject {
     deinit {
         stopTimeUpdates()
         NotificationCenter.default.removeObserver(self)
+        if let setup = fftSetup {
+            vDSP_destroy_fftsetup(setup)
+        }
     }
 
-    // MARK: - Bass-Only Visualization (Ultra-Simple, Zero Latency)
+    // MARK: - FFT-Based Bass Visualization (Like HTML Example)
+
+    private func setupFFT() {
+        let log2n = vDSP_Length(log2(Float(fftSize)))
+        fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
+    }
 
     private func installVisualizationTap() {
         guard let player = playerNode else { return }
@@ -895,15 +905,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
             visualizationTapInstalled = false
         }
         
+        if fftSetup == nil {
+            setupFFT()
+        }
+        
         let format = player.outputFormat(forBus: 0)
         
-        // Small buffer = high update rate = responsive visualization
+        // Small buffer = high update rate
         player.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
-            self?.processBassFromBuffer(buffer)
+            self?.processBassSpectrum(buffer)
         }
         
         visualizationTapInstalled = true
-        print("✅ [AudioPlayer] Bass visualization tap installed")
+        print("✅ [AudioPlayer] Bass spectrum visualization tap installed")
     }
 
     private func removeVisualizationTap() {
@@ -913,87 +927,87 @@ class AudioPlayerManager: NSObject, ObservableObject {
         print("✅ [AudioPlayer] Visualization tap removed")
     }
 
-    /// Ultra-fast bass extraction - no FFT, just simple energy detection
-    private func processBassFromBuffer(_ buffer: AVAudioPCMBuffer) {
+    /// FFT-based bass spectrum analysis (like HTML example)
+    private func processBassSpectrum(_ buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
         let samples = channelData[0]
         
         // ==========================================
-        // REAL LOW-PASS FILTER FOR BASS ISOLATION
+        // ACCUMULATE SAMPLES INTO FFT BUFFER
         // ==========================================
-        // Single-pole IIR low-pass filter: y[n] = α * x[n] + (1-α) * y[n-1]
-        // Cutoff ~100Hz at 44.1kHz: α ≈ 2π * fc / fs ≈ 0.014
-        // We'll use α = 0.02 for ~140Hz cutoff (captures kick drums)
-        let lpfAlpha: Float = 0.02
-        
-        var bassEnergy: Float = 0
         for i in 0..<frameLength {
-            // Apply low-pass filter to isolate bass frequencies
-            lpfState = lpfAlpha * samples[i] + (1.0 - lpfAlpha) * lpfState
-            // Accumulate energy of FILTERED signal (bass only!)
-            bassEnergy += lpfState * lpfState
+            timeDomainBuffer[bufferWriteIndex] = samples[i]
+            bufferWriteIndex += 1
+            if bufferWriteIndex >= fftSize {
+                bufferWriteIndex = 0
+            }
         }
         
-        // RMS of bass-filtered signal
-        bassEnergy = sqrt(bassEnergy / Float(max(1, frameLength)))
-        
         // ==========================================
-        // ADAPTIVE NORMALIZATION
+        // PERFORM FFT (44.1kHz / 2048 = ~21.5 Hz per bin)
         // ==========================================
-        // Track recent bass levels to normalize relative to song dynamics
-        // This prevents always-maxed-out visualization
-        bassHistory[bassHistoryIndex] = bassEnergy
-        bassHistoryIndex = (bassHistoryIndex + 1) % bassHistory.count
-        
-        // Find max in recent history (with decay)
-        var recentMax: Float = 0.001
-        for val in bassHistory {
-            if val > recentMax { recentMax = val }
+        fftReal.withUnsafeMutableBufferPointer { realPtr in
+            fftImag.withUnsafeMutableBufferPointer { imagPtr in
+                var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
+                
+                // Copy samples in correct order from ring buffer
+                timeDomainBuffer.withUnsafeBufferPointer { src in
+                    src.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
+                        vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
+                    }
+                }
+                
+                // Forward FFT
+                if let setup = fftSetup {
+                    let log2n = vDSP_Length(log2(Float(fftSize)))
+                    vDSP_fft_zrip(setup, &splitComplex, 1, log2n, FFTDirection(kFFTDirection_Forward))
+                }
+                
+                // Calculate magnitudes
+                vDSP_zvmags(&splitComplex, 1, &fftMagnitudes, 1, vDSP_Length(fftSize / 2))
+            }
         }
-        // Slowly adapt the max (fast rise, slow fall)
-        if recentMax > maxRecentBass {
-            maxRecentBass = recentMax
-        } else {
-            maxRecentBass = maxRecentBass * 0.995 + recentMax * 0.005
-        }
-        
-        // Normalize bass energy relative to recent maximum
-        let normalizedBass = min(1.0, bassEnergy / maxRecentBass)
         
         // ==========================================
-        // PULSE CALCULATION - PUNCHY & SCREEN-SAFE
+        // EXTRACT BASS SPECTRUM (20-250 Hz like HTML)
         // ==========================================
-        // Max pulse = 1.2 (thumbnail 290px * 1.2 = 348px, fits in 375px screen)
-        let bassThreshold: Float = 0.08  // Very sensitive
-        let bassMultiplier: Float = 0.2  // Max pulse = 1.0 + 0.2 = 1.2
+        // Sample rate = 44100 Hz, FFT size = 2048
+        // Frequency resolution = 44100 / 2048 = 21.5 Hz per bin
+        // Bass range: 20-250 Hz → bins 1-12 (bin 0 is DC, skip it)
+        let sampleRate: Float = 44100.0
+        let frequencyResolution = sampleRate / Float(fftSize)
+        let bassStartBin = max(1, Int(20.0 / frequencyResolution))  // ~1
+        let bassEndBin = Int(250.0 / frequencyResolution)  // ~12
+        let bassBindCount = bassEndBin - bassStartBin
         
-        // Almost no smoothing = instant response to bass hits
-        smoothedBass = smoothedBass * 0.15 + normalizedBass * 0.85
+        // Map bass bins to our 80 bars
+        var newSpectrum = [Float](repeating: 0, count: 80)
+        var totalBassEnergy: Float = 0
         
-        // Calculate pulse - snaps to 1.0 when below threshold
-        let bassPulse: Float = smoothedBass > bassThreshold 
-            ? (smoothedBass - bassThreshold) / (1.0 - bassThreshold) 
-            : 0
-        let targetPulse: CGFloat = 1.0 + CGFloat(bassPulse) * CGFloat(bassMultiplier)
-        
-        // VERY FAST attack (0.7), VERY FAST decay (0.5) for punchy feel
-        let smoothFactor: CGFloat = targetPulse > currentPulse ? 0.7 : 0.5
-        currentPulse += (targetPulse - currentPulse) * smoothFactor
-        
-        // Ensure pulse returns to exactly 1.0 when bass is low
-        if currentPulse < 1.01 {
-            currentPulse = 1.0
+        for i in 0..<80 {
+            // Map each bar to a bass frequency bin
+            let binIndex = bassStartBin + Int(Float(i) / 80.0 * Float(bassBindCount))
+            let magnitude = sqrt(fftMagnitudes[binIndex]) / Float(fftSize) * 1000.0  // Normalize and amplify
+            let normalized = min(1.0, magnitude)
+            newSpectrum[i] = normalized
+            totalBassEnergy += normalized
         }
+        
+        // Overall bass level = average of all bass bins
+        let avgBass = totalBassEnergy / 80.0
+        
+        // Minimal smoothing for punchy response
+        smoothedBassLevel = smoothedBassLevel * 0.2 + avgBass * 0.8
         
         // ==========================================
         // PUBLISH TO MAIN THREAD
         // ==========================================
-        let finalPulse = currentPulse
-        let finalBass = smoothedBass
+        let finalSpectrum = newSpectrum
+        let finalBass = smoothedBassLevel
         
         DispatchQueue.main.async { [weak self] in
-            self?.pulse = finalPulse
+            self?.bassSpectrum = finalSpectrum
             self?.bassLevel = finalBass
         }
     }

@@ -977,28 +977,30 @@ struct EdgeVisualizerView: View {
     }
     
     var body: some View {
-        // 60fps update matching display refresh
+        // 60fps update
         TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 
-                // Get bass level (0 to 1)
-                let bass = CGFloat(audioPlayer.bassLevel)
+                // Get bass spectrum (80 independent frequency bars)
+                let spectrum = audioPlayer.bassSpectrum
+                guard spectrum.count == barData.count else { return }
                 
-                // All bars scale with bass (simple, fast, responsive)
-                let barLength = bass * maxBarLength
-                
-                // Skip drawing if bass is too low
-                guard barLength > 1 else { return }
-                
-                let opacity = 0.5 + bass * 0.5
-                
-                // Draw all pre-computed bars
-                for bar in barData {
+                // Draw each bar with its own frequency-specific height
+                for (index, bar) in barData.enumerated() {
                     let x = centerX + bar.x
                     let y = centerY + bar.y
                     
+                    // Each bar gets its own bass frequency magnitude
+                    let magnitude = CGFloat(spectrum[index])
+                    let barLength = magnitude * maxBarLength
+                    
+                    // Skip if too small
+                    guard barLength > 0.5 else { continue }
+                    
+                    // Color and opacity based on magnitude
+                    let opacity = 0.4 + magnitude * 0.6
                     let color = Color(hue: bar.hue, saturation: 1.0, brightness: 0.7).opacity(opacity)
                     
                     var path = Path()
@@ -1008,11 +1010,11 @@ struct EdgeVisualizerView: View {
                     context.stroke(
                         path,
                         with: .color(color),
-                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                     )
                 }
             }
-            .drawingGroup()  // GPU-accelerated rendering
+            .drawingGroup()  // GPU-accelerated
         }
     }
 }
