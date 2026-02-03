@@ -992,23 +992,27 @@ class AudioPlayerManager: NSObject, ObservableObject {
         if peakMag > maxMagnitude {
             maxMagnitude = peakMag
         } else {
-            maxMagnitude = maxMagnitude * 0.998  // Slow decay
+            maxMagnitude = maxMagnitude * 0.995  // Faster decay for more dynamic response
         }
-        maxMagnitude = max(maxMagnitude, 0.001)
+        maxMagnitude = max(maxMagnitude, 0.0001)
         
         // ==========================================
-        // STEP 5: Normalize and SMOOTH
+        // STEP 5: Normalize and apply smooth animation
         // ==========================================
-        // Smoothing factors: higher = smoother but slower response
-        let smoothUp: Float = 0.4    // Rise quickly
-        let smoothDown: Float = 0.15  // Fall smoothly
+        // Faster smoothing for responsive but smooth animation
+        let smoothUp: Float = 0.6    // Rise quickly (was 0.4)
+        let smoothDown: Float = 0.25  // Fall smoothly (was 0.15)
         
         var newBins = [Float](repeating: 0, count: 64)
         
         for i in 0..<64 {
-            let normalized = min(1.0, rawBins[i] / maxMagnitude)
+            // Normalize to 0-1
+            var normalized = min(1.0, rawBins[i] / maxMagnitude)
             
-            // Smooth: fast attack, slow release for natural look
+            // Apply curve to make peaks more visible
+            normalized = pow(normalized, 0.8)
+            
+            // Smooth: fast attack, medium release
             if normalized > smoothedBins[i] {
                 smoothedBins[i] = smoothedBins[i] + (normalized - smoothedBins[i]) * smoothUp
             } else {
@@ -1019,19 +1023,20 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 6: Calculate bass level (bins 0-7 = 86-688 Hz)
+        // STEP 6: Calculate bass level (use PEAK of first 8 bins for punch)
         // ==========================================
-        var bassSum: Float = 0
+        var peakBass: Float = 0
         for i in 0..<8 {
-            bassSum += newBins[i]
+            if newBins[i] > peakBass {
+                peakBass = newBins[i]
+            }
         }
-        let rawBass = bassSum / 8.0
         
-        // Smooth bass separately for thumbnail pulsing
-        if rawBass > smoothedBass {
-            smoothedBass = smoothedBass + (rawBass - smoothedBass) * 0.5  // Fast attack
+        // Smooth bass with faster attack for noticeable pulsing
+        if peakBass > smoothedBass {
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.7  // Fast attack
         } else {
-            smoothedBass = smoothedBass + (rawBass - smoothedBass) * 0.2  // Smooth decay
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.3  // Medium decay
         }
         
         // ==========================================

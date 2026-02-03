@@ -496,18 +496,16 @@ struct NowPlayingView: View {
                                     .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
                             }
                         }
+                        // Thumbnail pulses with bass - direct, no SwiftUI animation (smoother)
+                        .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.25)
                         
-                        // Visualizer overlay - INSIDE the scaling group so bars stay locked to thumbnail
-                        EdgeVisualizerView(audioPlayer: audioPlayer)
-                            .frame(width: 290, height: 290)
+                        // Visualizer overlay - larger frame to contain outward-pointing bars
+                        EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailScale: 1.0 + CGFloat(audioPlayer.bassLevel) * 0.25)
+                            .frame(width: 400, height: 400)
                             .allowsHitTesting(false)
                     }
-                    // Scale the ENTIRE group (thumbnail + bars) together
-                    // Smooth animation for bass pulsing
-                    .animation(.easeOut(duration: 0.08), value: audioPlayer.bassLevel)
-                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.15)
                 }
-                .frame(width: 390, height: 390)  // Fixed frame prevents layout shifts
+                .frame(width: 400, height: 400)  // Large enough for bars
                 .onTapGesture {
                     if audioPlayer.isPlaying {
                         audioPlayer.pause()
@@ -889,94 +887,91 @@ struct DownloadBanner: View {
 }
 
 
-// MARK: - Edge Visualizer (SMOOTH, locked to thumbnail)
+// MARK: - Edge Visualizer (bars locked to thumbnail, pointing outward)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
+    let thumbnailScale: CGFloat  // Pass in current scale so bars stay locked
     
-    // Geometry - bars are ATTACHED to thumbnail edge (290x290)
-    private let boxSize: CGFloat = 290
+    // Geometry
+    private let baseBoxSize: CGFloat = 290  // Thumbnail size before scaling
     private let cornerRadius: CGFloat = 20
-    private let maxBarLength: CGFloat = 45
-    
-    // MORE bars: 100 total (25 per side) for denser look
-    private let barsPerSide = 25
+    private let maxBarLength: CGFloat = 50
+    private let barsPerSide = 25  // 100 total bars
     
     var body: some View {
-        // Use GeometryReader for proper sizing
-        GeometryReader { geo in
-            let centerX = geo.size.width / 2
-            let centerY = geo.size.height / 2
-            let halfBox = boxSize / 2
-            let straightEdge = boxSize - 2 * cornerRadius  // 250
-            let spacing = straightEdge / CGFloat(barsPerSide)
-            let bins = audioPlayer.frequencyBins
-            let totalBars = barsPerSide * 4  // 100 bars
-            
-            // Use Canvas for smooth 60fps rendering
-            TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
-                Canvas { context, size in
-                    var barIndex = 0
-                    
-                    // TOP edge (pointing up)
-                    for i in 0..<barsPerSide {
-                        let x = centerX - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
-                        let y = centerY - halfBox
-                        let binIdx = (barIndex * bins.count) / totalBars
-                        let value = binIdx < bins.count ? CGFloat(bins[binIdx]) : 0
-                        drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: value)
-                        barIndex += 1
-                    }
-                    
-                    // RIGHT edge (pointing right)
-                    for i in 0..<barsPerSide {
-                        let x = centerX + halfBox
-                        let y = centerY - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
-                        let binIdx = (barIndex * bins.count) / totalBars
-                        let value = binIdx < bins.count ? CGFloat(bins[binIdx]) : 0
-                        drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: value)
-                        barIndex += 1
-                    }
-                    
-                    // BOTTOM edge (pointing down)
-                    for i in 0..<barsPerSide {
-                        let x = centerX + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
-                        let y = centerY + halfBox
-                        let binIdx = (barIndex * bins.count) / totalBars
-                        let value = binIdx < bins.count ? CGFloat(bins[binIdx]) : 0
-                        drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: value)
-                        barIndex += 1
-                    }
-                    
-                    // LEFT edge (pointing left)
-                    for i in 0..<barsPerSide {
-                        let x = centerX - halfBox
-                        let y = centerY + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
-                        let binIdx = (barIndex * bins.count) / totalBars
-                        let value = binIdx < bins.count ? CGFloat(bins[binIdx]) : 0
-                        drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: value)
-                        barIndex += 1
-                    }
+        TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
+            Canvas { context, size in
+                let centerX = size.width / 2
+                let centerY = size.height / 2
+                
+                // Scale the box size to match thumbnail
+                let boxSize = baseBoxSize * thumbnailScale
+                let halfBox = boxSize / 2
+                let scaledCorner = cornerRadius * thumbnailScale
+                let straightEdge = boxSize - 2 * scaledCorner
+                let spacing = straightEdge / CGFloat(barsPerSide)
+                
+                let bins = audioPlayer.frequencyBins
+                let totalBars = barsPerSide * 4
+                var barIndex = 0
+                
+                // TOP edge (pointing up, -Y)
+                for i in 0..<barsPerSide {
+                    let x = centerX - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
+                    let y = centerY - halfBox
+                    let binIdx = min((barIndex * bins.count) / totalBars, bins.count - 1)
+                    let value = bins.isEmpty ? 0 : CGFloat(bins[binIdx])
+                    drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: value)
+                    barIndex += 1
                 }
-                .drawingGroup()  // GPU accelerated for smooth rendering
+                
+                // RIGHT edge (pointing right, +X)
+                for i in 0..<barsPerSide {
+                    let x = centerX + halfBox
+                    let y = centerY - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
+                    let binIdx = min((barIndex * bins.count) / totalBars, bins.count - 1)
+                    let value = bins.isEmpty ? 0 : CGFloat(bins[binIdx])
+                    drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: value)
+                    barIndex += 1
+                }
+                
+                // BOTTOM edge (pointing down, +Y)
+                for i in 0..<barsPerSide {
+                    let x = centerX + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
+                    let y = centerY + halfBox
+                    let binIdx = min((barIndex * bins.count) / totalBars, bins.count - 1)
+                    let value = bins.isEmpty ? 0 : CGFloat(bins[binIdx])
+                    drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: value)
+                    barIndex += 1
+                }
+                
+                // LEFT edge (pointing left, -X)
+                for i in 0..<barsPerSide {
+                    let x = centerX - halfBox
+                    let y = centerY + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
+                    let binIdx = min((barIndex * bins.count) / totalBars, bins.count - 1)
+                    let value = bins.isEmpty ? 0 : CGFloat(bins[binIdx])
+                    drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: value)
+                    barIndex += 1
+                }
             }
+            .drawingGroup()
         }
     }
     
-    // Draw a single bar with smooth color gradient
     private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: CGFloat) {
         let barLength = value * maxBarLength
         guard barLength > 1 else { return }
         
-        // Color: frequency-based gradient (red -> orange -> yellow -> green)
-        let hue = Double(value) * 0.35  // 0 = red, 0.35 = yellow-green
-        let color = Color(hue: hue, saturation: 1.0, brightness: 0.9)
+        // Color gradient based on intensity
+        let hue = Double(value) * 0.35
+        let color = Color(hue: hue, saturation: 1.0, brightness: 0.95)
         
         var path = Path()
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        // Fixed width, thin bars for clean look
-        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
     }
 }
 
