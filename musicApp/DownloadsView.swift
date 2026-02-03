@@ -100,26 +100,14 @@ struct DownloadRow: View {
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
-                // Thumbnail
+                // ✅ PERFORMANCE: Async thumbnail loading with caching
                 ZStack {
-                    if let thumbPath = download.resolvedThumbnailPath,
-                       let image = UIImage(contentsOfFile: thumbPath) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .grayscale(download.pendingDeletion ? 1.0 : 0.0)
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 48, height: 48)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            )
-                    }
+                    AsyncThumbnailView(
+                        thumbnailPath: download.resolvedThumbnailPath,
+                        size: 48,
+                        cornerRadius: 8,
+                        grayscale: download.pendingDeletion
+                    )
                     
                     if isCurrentlyPlaying && audioPlayer.isPlaying {
                         RoundedRectangle(cornerRadius: 8)

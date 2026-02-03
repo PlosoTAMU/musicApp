@@ -185,29 +185,21 @@ struct QueueTrackRow: View {
     let isPrevious: Bool
     @ObservedObject var audioPlayer: AudioPlayerManager
     
+    // ✅ PERFORMANCE: Cache the download lookup
+    private var download: Download? {
+        downloadManager.getDownload(byID: track.id)
+    }
+    
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                if let download = downloadManager.getDownload(byID: track.id),
-                   let thumbPath = download.resolvedThumbnailPath,
-                   let image = UIImage(contentsOfFile: thumbPath) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 48, height: 48)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .opacity(isPrevious ? 0.6 : 1.0)
-                } else {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.gray.opacity(0.3))
-                        .frame(width: 48, height: 48)
-                        .overlay(
-                            Image(systemName: "music.note")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        )
-                        .opacity(isPrevious ? 0.6 : 1.0)
-                }
+                // ✅ PERFORMANCE: Async thumbnail loading
+                AsyncThumbnailView(
+                    thumbnailPath: download?.resolvedThumbnailPath,
+                    size: 48,
+                    cornerRadius: 8
+                )
+                .opacity(isPrevious ? 0.6 : 1.0)
                 
                 if isPlaying && audioPlayer.isPlaying {
                     RoundedRectangle(cornerRadius: 8)

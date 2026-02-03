@@ -905,7 +905,8 @@ struct EdgeVisualizerView: View {
     private let pulseSmooth: CGFloat = 0.45
     
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
+        // ✅ PERFORMANCE: Reduce to 30fps instead of 60fps
+        TimelineView(.animation(minimumInterval: 1.0/30.0)) { timeline in
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2

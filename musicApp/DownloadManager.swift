@@ -2,10 +2,26 @@ import Foundation
 import SwiftUI
 
 class DownloadManager: ObservableObject {
-    @Published var downloads: [Download] = []
+    @Published var downloads: [Download] = [] {
+        didSet {
+            // ✅ PERFORMANCE: Cache sorted downloads instead of re-sorting on every access
+            _sortedDownloadsCache = nil
+        }
+    }
     @Published var activeDownloads: [ActiveDownload] = []
     private var deletionTimers: [UUID: Timer] = [:]
     private let timerLock = NSLock()
+    
+    // ✅ PERFORMANCE: Cached sorted downloads
+    private var _sortedDownloadsCache: [Download]?
+    var sortedDownloads: [Download] {
+        if let cached = _sortedDownloadsCache {
+            return cached
+        }
+        let sorted = downloads.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        _sortedDownloadsCache = sorted
+        return sorted
+    }
     
     private let downloadsFileURL: URL
     private let musicDirectory: URL
@@ -30,10 +46,6 @@ class DownloadManager: ObservableObject {
         loadDownloads()
         // FIXED: Validate and fix thumbnails on boot
         validateAndFixThumbnails()
-    }
-    
-    var sortedDownloads: [Download] {
-        downloads.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     
     func getMusicDirectory() -> URL {

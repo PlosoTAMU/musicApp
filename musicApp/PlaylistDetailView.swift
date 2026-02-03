@@ -16,24 +16,12 @@ struct SelectSongsSheet: View {
                         playlistManager.addToPlaylist(playlistID, downloadID: download.id)
                     } label: {
                         HStack(spacing: 12) {
-                            ZStack {
-                                if let thumbPath = download.resolvedThumbnailPath,
-                                   let image = UIImage(contentsOfFile: thumbPath) {
-                                    Image(uiImage: image)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                        .frame(width: 48, height: 48)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                                } else {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.gray.opacity(0.3))
-                                        .frame(width: 48, height: 48)
-                                        .overlay(
-                                            Image(systemName: "music.note")
-                                                .foregroundColor(.gray)
-                                        )
-                                }
-                            }
+                            // ✅ PERFORMANCE: Async thumbnail loading
+                            AsyncThumbnailView(
+                                thumbnailPath: download.resolvedThumbnailPath,
+                                size: 48,
+                                cornerRadius: 8
+                            )
                             
                             Text(download.name)
                                 .font(.body)
@@ -231,24 +219,12 @@ struct PlaylistSongRow: View {
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
-                ZStack {
-                    if let thumbPath = download.thumbnailPath,
-                       let image = UIImage(contentsOfFile: thumbPath) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 48, height: 48)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .foregroundColor(.gray)
-                            )
-                    }
-                }
+                // ✅ PERFORMANCE: Async thumbnail loading
+                AsyncThumbnailView(
+                    thumbnailPath: download.resolvedThumbnailPath,
+                    size: 48,
+                    cornerRadius: 8
+                )
                 
                 Text(download.name)
                     .font(.body)

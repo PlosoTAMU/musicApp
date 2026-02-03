@@ -49,6 +49,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var frequencyData = [Float](repeating: 0, count: 2048)
     private var timeDomainData = [Float](repeating: 0, count: 4096)
     private var visualizationTapInstalled = false
+    
+    // ✅ PERFORMANCE: Throttle visualization updates to reduce main thread load
+    private var visualizationUpdateCounter = 0
+    private let visualizationUpdateInterval = 3  // Only publish every 3rd buffer (~30fps instead of 100+fps)
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -906,6 +910,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func processVisualizationBuffer(_ buffer: AVAudioPCMBuffer) {
+        // ✅ PERFORMANCE: Throttle updates to reduce main thread load
+        visualizationUpdateCounter += 1
+        guard visualizationUpdateCounter >= visualizationUpdateInterval else { return }
+        visualizationUpdateCounter = 0
+        
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
         let data = channelData[0]
