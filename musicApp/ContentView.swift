@@ -373,7 +373,7 @@ struct NowPlayingView: View {
     @State private var localSeekPosition: Double = 0
     @State private var showPlaylistPicker = false
     @State private var backgroundImage: UIImage?
-    @State private var thumbnailPulse: CGFloat = 1.0  // ✅ ADD THIS
+    @State private var thumbnailPulse: CGFloat = 1.0  // ADD THIS
 
     
     private var sliderBinding: Binding<Double> {
@@ -468,9 +468,8 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // ✅ FIXED: Thumbnail with pulsing effect and visualizer overlay
                 ZStack {
-                    // Main thumbnail - NOW PULSES
+                    // Main thumbnail - PULSES with bass
                     Group {
                         if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                             Image(uiImage: thumbnailImage)
@@ -478,7 +477,7 @@ struct NowPlayingView: View {
                                 .aspectRatio(contentMode: .fill)
                                 .frame(width: 290, height: 290)
                                 .clipShape(RoundedRectangle(cornerRadius: 20))
-                                .shadow(color: .black.opacity(1), radius: 40, y: 12)
+                                .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
                         } else {
                             RoundedRectangle(cornerRadius: 20)
                                 .fill(LinearGradient(
@@ -492,18 +491,17 @@ struct NowPlayingView: View {
                                         .font(.system(size: 80))
                                         .foregroundColor(.white.opacity(0.5))
                                 )
-                                .shadow(color: .black.opacity(1), radius: 40, y: 12)
+                                .shadow(color: .black.opacity(0.8), radius: 30, y: 10)
                         }
                     }
-                    .scaleEffect(thumbnailPulse) // ✅ Thumbnail pulses!
+                    .scaleEffect(thumbnailPulse)  // Thumbnail pulses!
                     
-                    // ✅ Visualizer overlay - lines extend OUTWARD from edges
-                    if audioPlayer.isPlaying {
-                        EdgeVisualizerView(audioPlayer: audioPlayer, pulse: $thumbnailPulse)
-                            .frame(width: 350, height: 350) // Larger to accommodate outward lines
-                            .allowsHitTesting(false)
-                    }
+                    // Visualizer overlay - ALWAYS visible, lines extend outward
+                    EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailPulse: $thumbnailPulse)
+                        .frame(width: 390, height: 390)  // Larger to fit outward lines
+                        .allowsHitTesting(false)
                 }
+                .frame(width: 390, height: 390)  // Fixed frame prevents layout shifts
                 .onTapGesture {
                     if audioPlayer.isPlaying {
                         audioPlayer.pause()
@@ -885,12 +883,14 @@ struct DownloadBanner: View {
 }
 
 
-// MARK: - Edge Visualizer (Lines extend outward from thumbnail edges)
+// MARK: - Edge Visualizer (Matches HTML exactly)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
-    @Binding var pulse: CGFloat
+    @Binding var thumbnailPulse: CGFloat
     
+    // Visualization state
     @State private var lineAmplitudes: [CGFloat] = Array(repeating: 0, count: 200)
+    @State private var currentPulse: CGFloat = 1.0
     @State private var lineGroups: [Bool] = (0..<200).map { _ in Float.random(in: 0...1) > 0.7 }
     
     // Match HTML constants exactly
@@ -899,7 +899,7 @@ struct EdgeVisualizerView: View {
     private let threshold: CGFloat = 0.1
     private let strengthMultiplier: CGFloat = 3.5
     private let power: CGFloat = 0.2
-    private let maxOut: CGFloat = 50  // ✅ INCREASED from 25 for longer lines
+    private let maxOut: CGFloat = 50  // Longer lines
     private let bassThreshold: CGFloat = 0.1
     private let bassMultiplier: CGFloat = 0.6
     private let pulseSmooth: CGFloat = 0.45
@@ -910,34 +910,36 @@ struct EdgeVisualizerView: View {
                 let centerX = size.width / 2
                 let centerY = size.height / 2
                 
-                // Box matches thumbnail size (290x290 with 20 corner radius)
+                // Box matches thumbnail (290x290, 20 corner radius)
+                // But we need to account for lines extending outward
                 let boxSize: CGFloat = 290
                 let radius: CGFloat = 20
                 
                 let baseX = centerX - boxSize / 2
                 let baseY = centerY - boxSize / 2
                 
-                // Calculate perimeter segments
+                // Calculate perimeter
                 let straightEdge = boxSize - 2 * radius
                 let cornerArc = (.pi / 2) * radius
                 let totalPerimeter = 4 * straightEdge + 4 * cornerArc
                 
-                // Draw lines extending outward from edges
+                // Draw lines extending outward
                 for i in 0..<segments {
                     var amplitude = lineAmplitudes[i]
                     
                     // Apply group B multiplier (2/3 amplitude) like HTML
-                    if lineGroups[i] {
+                    if i < lineGroups.count && lineGroups[i] {
                         amplitude *= 0.6666666666666666
                     }
                     
+                    // Skip very small amplitudes
                     if amplitude < 2 { continue }
                     
                     let distance = (CGFloat(i) / CGFloat(segments)) * totalPerimeter
                     var x: CGFloat = 0
                     var y: CGFloat = 0
-                    var nx: CGFloat = 0  // Normal X (direction line extends)
-                    var ny: CGFloat = 0  // Normal Y
+                    var nx: CGFloat = 0
+                    var ny: CGFloat = 0
                     var isCorner = false
                     
                     // Top edge
@@ -945,7 +947,7 @@ struct EdgeVisualizerView: View {
                         x = baseX + radius + distance
                         y = baseY
                         nx = 0
-                        ny = -1  // Lines extend upward
+                        ny = -1
                     }
                     // Top-right corner
                     else if distance < straightEdge + cornerArc {
@@ -955,7 +957,7 @@ struct EdgeVisualizerView: View {
                     else if distance < 2 * straightEdge + cornerArc {
                         x = baseX + boxSize
                         y = baseY + radius + (distance - straightEdge - cornerArc)
-                        nx = 1  // Lines extend rightward
+                        nx = 1
                         ny = 0
                     }
                     // Bottom-right corner
@@ -967,7 +969,7 @@ struct EdgeVisualizerView: View {
                         x = baseX + boxSize - radius - (distance - 2 * straightEdge - 2 * cornerArc)
                         y = baseY + boxSize
                         nx = 0
-                        ny = 1  // Lines extend downward
+                        ny = 1
                     }
                     // Bottom-left corner
                     else if distance < 3 * straightEdge + 3 * cornerArc {
@@ -977,7 +979,7 @@ struct EdgeVisualizerView: View {
                     else if distance < 4 * straightEdge + 3 * cornerArc {
                         x = baseX
                         y = baseY + boxSize - radius - (distance - 3 * straightEdge - 3 * cornerArc)
-                        nx = -1  // Lines extend leftward
+                        nx = -1
                         ny = 0
                     }
                     // Top-left corner
@@ -987,7 +989,7 @@ struct EdgeVisualizerView: View {
                     
                     if isCorner { continue }
                     
-                    // Rainbow gradient (matching HTML exactly)
+                    // Rainbow gradient (matching HTML: hue offset by 180)
                     let t = CGFloat(i) / CGFloat(segments)
                     let hue = (t * 360 + 180).truncatingRemainder(dividingBy: 360) / 360.0
                     let opacity = 0.6 + (amplitude / maxOut) * 0.4
@@ -1010,67 +1012,68 @@ struct EdgeVisualizerView: View {
                 updateVisualization()
             }
         }
-        .onAppear {
-            // Randomize line groups on appear
-            lineGroups = (0..<segments).map { _ in Float.random(in: 0...1) > 0.7 }
-        }
     }
     
     private func updateVisualization() {
-        // Generate fake audio data based on playback state
-        // In a real implementation, this would come from audio analysis
-        guard audioPlayer.isPlaying else {
-            // Decay all amplitudes when paused
-            for i in 0..<segments {
-                lineAmplitudes[i] *= 0.9
-            }
-            withAnimation(.easeOut(duration: 0.1)) {
-                pulse = 1.0
-            }
-            return
-        }
-        
-        // Simulate audio data with time-based variation
         let time = Date().timeIntervalSince1970
         
-        // Calculate simulated bass (low frequency energy)
-        let bassSim = (sin(time * 8) * 0.5 + 0.5) * (sin(time * 3.7) * 0.3 + 0.7)
-        let bass = Float(bassSim * 0.3)
-        
-        // Update pulse based on bass
-        let bassPulse = bass > Float(bassThreshold) ? CGFloat((bass - Float(bassThreshold)) / 0.9) : 0
-        let targetPulse = 1.0 + bassPulse * bassMultiplier
-        
-        withAnimation(.easeOut(duration: 0.05)) {
-            pulse = pulse + (targetPulse - pulse) * pulseSmooth
-        }
-        
-        // Update line amplitudes
-        for i in 0..<segments {
-            // Simulate waveform data with multiple frequencies
-            let phase1 = time * 12 + Double(i) * 0.15
-            let phase2 = time * 7.3 + Double(i) * 0.23
-            let phase3 = time * 4.1 + Double(i) * 0.31
+        if audioPlayer.isPlaying {
+            // Simulate bass from multiple sine waves (like real audio)
+            let bassWave1 = sin(time * 8.0) * 0.5 + 0.5
+            let bassWave2 = sin(time * 3.7) * 0.3 + 0.7
+            let bassWave3 = sin(time * 12.1) * 0.2 + 0.8
+            let bass = Float(bassWave1 * bassWave2 * bassWave3 * 0.25)
             
-            let wave = sin(phase1) * 0.4 + sin(phase2) * 0.35 + sin(phase3) * 0.25
-            let rawStrength = abs(Float(wave))
+            // Calculate pulse from bass (matching HTML exactly)
+            let bassPulse = bass > Float(bassThreshold) ?
+                CGFloat((bass - Float(bassThreshold)) / 0.9) : 0
+            let targetPulse = 1.0 + bassPulse * bassMultiplier
+            currentPulse += (targetPulse - currentPulse) * pulseSmooth
             
-            var strength: CGFloat = 0
+            // Update thumbnail pulse binding
+            thumbnailPulse = currentPulse
             
-            if rawStrength > Float(threshold) {
-                let normalized = CGFloat((rawStrength - Float(threshold)) / 0.9)
-                strength = pow(normalized, power) * strengthMultiplier
+            // Update line amplitudes with varied frequencies per segment
+            for i in 0..<segments {
+                let phase1 = time * 10.0 + Double(i) * 0.12
+                let phase2 = time * 6.3 + Double(i) * 0.19
+                let phase3 = time * 3.7 + Double(i) * 0.27
+                
+                // Combine multiple frequencies for organic look
+                let wave = sin(phase1) * 0.35 + sin(phase2) * 0.4 + sin(phase3) * 0.25
+                let rawStrength = abs(Float(wave))
+                
+                var strength: CGFloat = 0
+                
+                if rawStrength > Float(threshold) {
+                    let normalized = CGFloat((rawStrength - Float(threshold)) / 0.9)
+                    strength = pow(normalized, power) * strengthMultiplier
+                }
+                
+                // Smooth transition (matching HTML smoothingFactor)
+                let targetOut = strength * maxOut
+                lineAmplitudes[i] += (targetOut - lineAmplitudes[i]) * smoothingFactor
+                
+                // Minimum threshold
+                if lineAmplitudes[i] < 2 {
+                    lineAmplitudes[i] = 0
+                }
             }
+        } else {
+            // When paused: decay all values smoothly
+            thumbnailPulse += (1.0 - thumbnailPulse) * 0.1
+            currentPulse += (1.0 - currentPulse) * 0.1
             
-            let targetOut = strength * maxOut
-            lineAmplitudes[i] += (targetOut - lineAmplitudes[i]) * smoothingFactor
-            
-            if lineAmplitudes[i] < 2 {
-                lineAmplitudes[i] = 0
+            for i in 0..<segments {
+                lineAmplitudes[i] *= 0.92  // Smooth decay
+                if lineAmplitudes[i] < 1 {
+                    lineAmplitudes[i] = 0
+                }
             }
         }
     }
 }
+
 
 
 // MARK: - AppDelegate for orientation lock
