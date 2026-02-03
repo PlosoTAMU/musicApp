@@ -927,6 +927,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let samples = channelData[0]
         let frameCount = min(Int(buffer.frameLength), fftSize)
         
+        // Safety check
+        guard frameCount > 0 else { return }
+        
+        // Zero out buffers first
+        fftReal = [Float](repeating: 0, count: fftSize / 2)
+        fftImag = [Float](repeating: 0, count: fftSize / 2)
+        
         // Copy samples to FFT input buffer (with windowing for cleaner FFT)
         for i in 0..<frameCount {
             // Hann window for smoother frequency response
@@ -939,9 +946,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
             fftImag.withUnsafeMutableBufferPointer { imagPtr in
                 var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
                 
-                samples.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
-                    vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
+                // Use vDSP_ctoz properly with our windowed samples
+                let evenOddSamples = UnsafeMutablePointer<DSPComplex>.allocate(capacity: fftSize / 2)
+                defer { evenOddSamples.deallocate() }
+                
+                for i in 0..<min(frameCount / 2, fftSize / 2) {
+                    evenOddSamples[i].real = fftReal[2 * i]
+                    evenOddSamples[i].imag = fftReal[2 * i + 1]
                 }
+                
+                vDSP_ctoz(evenOddSamples, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
                 
                 if let setup = fftSetup {
                     vDSP_fft_zrip(setup, &splitComplex, 1, fftLog2n, FFTDirection(kFFTDirection_Forward))
@@ -960,7 +974,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // But we want 64 bars, so we map them with overlap
         
         var newBins = [Float](repeating: 0, count: 64)
-        let bassRange = 8  // Use first 8 bins (0-688 Hz) for bass punch
+        let bassRange = min(8, fftMagnitudes.count)  // Safety: don't exceed array bounds
         
         // Find current max for adaptive normalization
         var currentMax: Float = 0
@@ -985,7 +999,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
             let binHigh = min(binLow + 1, bassRange - 1)
             let frac = binFloat - Float(binLow)
             
-            // Interpolate between bins
+            // Interpolate between bins - with safety checks
+            guard binLow < fftMagnitudes.count && binHigh < fftMagnitudes.count else { continue }
             let magLow = sqrt(fftMagnitudes[binLow])
             let magHigh = sqrt(fftMagnitudes[binHigh])
             let magnitude = magLow * (1 - frac) + magHigh * frac
