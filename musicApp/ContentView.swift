@@ -894,7 +894,10 @@ struct EdgeVisualizerView: View {
     private let barsPerSide = 16  // 64 total bars = exact match to bins
     
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0/60.0)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0/60.0)) { timeline in
+            // Use timeline.date to force continuous redraws
+            let _ = timeline.date.timeIntervalSince1970
+            
             Canvas { context, size in
                 let centerX = size.width / 2
                 let centerY = size.height / 2
