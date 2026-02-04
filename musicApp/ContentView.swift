@@ -911,7 +911,7 @@ struct EdgeVisualizerView: View {
             
             // TOP (bins 0-24)
             for i in 0..<barsPerSide {
-                let x = centerX - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
+                let x = centerX - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
                 let y = centerY - halfBox
                 drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex])
                 barIndex += 1
@@ -920,14 +920,14 @@ struct EdgeVisualizerView: View {
             // RIGHT (bins 25-49)
             for i in 0..<barsPerSide {
                 let x = centerX + halfBox
-                let y = centerY - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
+                let y = centerY - halfBox + cornerRadius + spacing * (CGFloat(i) + 0.5)
                 drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex])
                 barIndex += 1
             }
             
             // BOTTOM (bins 50-74)
             for i in 0..<barsPerSide {
-                let x = centerX + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
+                let x = centerX + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
                 let y = centerY + halfBox
                 drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex])
                 barIndex += 1
@@ -936,7 +936,7 @@ struct EdgeVisualizerView: View {
             // LEFT (bins 75-99)
             for i in 0..<barsPerSide {
                 let x = centerX - halfBox
-                let y = centerY + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
+                let y = centerY + halfBox - cornerRadius - spacing * (CGFloat(i) + 0.5)
                 drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex])
                 barIndex += 1
             }
