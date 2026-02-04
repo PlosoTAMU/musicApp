@@ -495,7 +495,7 @@ struct NowPlayingView: View {
                                 .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                         }
                     }
-                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.15)
+                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.25)  // More aggressive pulse
                     
                     // Visualizer overlay
                     EdgeVisualizerView(audioPlayer: audioPlayer)
@@ -891,7 +891,7 @@ struct EdgeVisualizerView: View {
     // Geometry - matches thumbnail with pulse
     private let baseBoxSize: CGFloat = 220
     private let cornerRadius: CGFloat = 16
-    private let maxBarLength: CGFloat = 50
+    private let maxBarLength: CGFloat = 60  // Longer for more punch
     private let barsPerSide = 25  // 100 total bars = matches FFT bins
     
     var body: some View {
@@ -903,8 +903,8 @@ struct EdgeVisualizerView: View {
             let bass = audioPlayer.bassLevel
             guard bins.count >= 100 else { return }
             
-            // Scale box with bass (matches thumbnail pulse of 0.15)
-            let pulseScale = 1.0 + CGFloat(bass) * 0.15
+            // Scale box with bass (matches thumbnail pulse of 0.25)
+            let pulseScale = 1.0 + CGFloat(bass) * 0.25
             let boxSize = baseBoxSize * pulseScale
             let halfBox = boxSize / 2
             let scaledCorner = cornerRadius * pulseScale

@@ -981,41 +981,51 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 3: Extract BASS frequencies only (like HTML reference)
+        // STEP 3: Extract MOST IMPACTFUL frequencies (kick/snare/bass)
         // At 44.1kHz with fftSize 1024: each bin = ~43Hz
-        // Bass range 20-250Hz = bins 1-6 approx
-        // We'll use bins 1-16 for more range (~43-700Hz)
+        // Kick drum: 60-100Hz (bins 2-3)
+        // Bass fundamentals: 80-250Hz (bins 2-6)
+        // Snare: 200-500Hz (bins 5-12)
+        // Focus on 60-500Hz for maximum punchiness
         // ==========================================
         
-        let bassEndBin = 16  // ~700Hz - covers bass and low-mids
+        let kickStartBin = 2     // ~86Hz - kick drum fundamental
+        let bassEndBin = 12      // ~516Hz - includes kick, bass, snare
+        let binRange = bassEndBin - kickStartBin  // 10 bins
+        
         var rawBins = [Float](repeating: 0, count: 100)
         var peakMag: Float = 0
         
-        // Map 100 output bins to bass range (like HTML does with bassEndIndex)
+        // Map 100 output bins to PUNCHY frequency range (60-500Hz)
         for i in 0..<100 {
-            // Map each output bin to bass frequency range
-            let dataIndex = 1 + (i * bassEndBin) / 100  // Spread bass across all bars
+            let dataIndex = kickStartBin + (i * binRange) / 100
             guard dataIndex < fftSizeHalf else { break }
-            let mag = sqrt(fftMagnitudes[dataIndex])
+            
+            // BOOST low frequencies (kick/bass) for more punch
+            var mag = sqrt(fftMagnitudes[dataIndex])
+            if dataIndex < 6 {  // Boost kick/bass (60-250Hz)
+                mag *= 1.5  // 50% boost for low end
+            }
+            
             rawBins[i] = mag
             if mag > peakMag { peakMag = mag }
         }
         
         // ==========================================
-        // STEP 4: Adaptive normalization - FAST decay
+        // STEP 4: AGGRESSIVE normalization - instant attack, fast decay
         // ==========================================
         if peakMag > maxMagnitude {
-            maxMagnitude = peakMag  // Instant attack
+            maxMagnitude = peakMag * 1.2  // Instant attack with boost
         } else {
-            maxMagnitude = maxMagnitude * 0.95  // Even faster decay = more dynamic
+            maxMagnitude = maxMagnitude * 0.90  // Very fast decay = punchy
         }
         maxMagnitude = max(maxMagnitude, 0.0001)
         
         // ==========================================
-        // STEP 5: SUPER PUNCHY - minimal smoothing
+        // STEP 5: MAXIMUM PUNCHINESS - almost NO smoothing
         // ==========================================
-        let smoothUp: Float = 0.9     // Very fast rise
-        let smoothDown: Float = 0.7   // Fast fall
+        let smoothUp: Float = 0.95    // Near-instant rise
+        let smoothDown: Float = 0.85   // Fast fall for snappy decay
         
         var orderedBins = [Float](repeating: 0, count: 100)
         
@@ -1023,10 +1033,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
             // Normalize to 0-1
             var normalized = min(1.0, rawBins[i] / maxMagnitude)
             
-            // Power curve - sqrt makes quieter parts more visible, peaks punch harder
-            normalized = pow(normalized, 0.5)
+            // Power curve - aggressive for maximum punch
+            normalized = pow(normalized, 0.4)  // Even more sensitive to changes
             
-            // Almost no smoothing - super responsive
+            // Minimal smoothing - maximum responsiveness
             if normalized > smoothedBins[i] {
                 smoothedBins[i] = smoothedBins[i] + (normalized - smoothedBins[i]) * smoothUp
             } else {
@@ -1043,20 +1053,20 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 6: Bass level - PEAK, super punchy with faster attack
+        // STEP 6: Bass level - MAXIMUM PUNCH for thumbnail
         // ==========================================
         var peakBass: Float = 0
-        for i in 0..<12 {
+        for i in 0..<15 {  // Use more bins for better peak detection
             if orderedBins[i] > peakBass {
                 peakBass = orderedBins[i]
             }
         }
         
-        // Smooth bass - VERY responsive for thumbnail pulse
+        // MAXIMUM responsiveness for thumbnail pulse - almost no smoothing
         if peakBass > smoothedBass {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.95  // Near-instant attack
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.98  // Instant attack
         } else {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.8   // Fast decay
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.90  // Very fast decay
         }
         
         // ==========================================
