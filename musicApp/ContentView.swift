@@ -892,7 +892,7 @@ struct EdgeVisualizerView: View {
     private let baseBoxSize: CGFloat = 220
     private let cornerRadius: CGFloat = 16
     private let maxBarLength: CGFloat = 50
-    private let barsPerSide = 16  // 64 total bars = matches FFT bins
+    private let barsPerSide = 25  // 100 total bars = matches FFT bins
     
     var body: some View {
         Canvas { context, size in
@@ -901,7 +901,7 @@ struct EdgeVisualizerView: View {
             
             let bins = audioPlayer.frequencyBins
             let bass = audioPlayer.bassLevel
-            guard bins.count >= 64 else { return }
+            guard bins.count >= 100 else { return }
             
             // Scale box with bass (matches thumbnail pulse of 0.15)
             let pulseScale = 1.0 + CGFloat(bass) * 0.15
@@ -913,7 +913,7 @@ struct EdgeVisualizerView: View {
             
             var barIndex = 0
             
-            // TOP (bins 0-15)
+            // TOP (bins 0-24)
             for i in 0..<barsPerSide {
                 let x = centerX - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
                 let y = centerY - halfBox
@@ -921,7 +921,7 @@ struct EdgeVisualizerView: View {
                 barIndex += 1
             }
             
-            // RIGHT (bins 16-31)
+            // RIGHT (bins 25-49)
             for i in 0..<barsPerSide {
                 let x = centerX + halfBox
                 let y = centerY - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
@@ -929,7 +929,7 @@ struct EdgeVisualizerView: View {
                 barIndex += 1
             }
             
-            // BOTTOM (bins 32-47)
+            // BOTTOM (bins 50-74)
             for i in 0..<barsPerSide {
                 let x = centerX + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
                 let y = centerY + halfBox
@@ -937,7 +937,7 @@ struct EdgeVisualizerView: View {
                 barIndex += 1
             }
             
-            // LEFT (bins 48-63)
+            // LEFT (bins 75-99)
             for i in 0..<barsPerSide {
                 let x = centerX - halfBox
                 let y = centerY + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
@@ -961,7 +961,7 @@ struct EdgeVisualizerView: View {
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
     }
 }
 

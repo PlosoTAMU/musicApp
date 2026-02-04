@@ -41,7 +41,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     // ✅ Visualization data - @Published with throttling to limit SwiftUI updates
     @Published var bassLevel: Float = 0
-    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 64)
+    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 100)
+    
+    // Shuffled indices for randomized bar order (so frequencies are spread out)
+    private lazy var shuffledIndices: [Int] = {
+        var indices = Array(0..<100)
+        indices.shuffle()
+        return indices
+    }()
     
     // Throttle visualization updates to ~30fps instead of ~86fps
     private var lastVisualizationUpdate: CFAbsoluteTime = 0
@@ -62,7 +69,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var fftLog2n: vDSP_Length = 0
     
     // Smoothed values
-    private var smoothedBins = [Float](repeating: 0, count: 64)
+    private var smoothedBins = [Float](repeating: 0, count: 100)
     private var smoothedBass: Float = 0
     
     // Adaptive normalization
@@ -981,13 +988,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // ==========================================
         
         let bassEndBin = 16  // ~700Hz - covers bass and low-mids
-        var rawBins = [Float](repeating: 0, count: 64)
+        var rawBins = [Float](repeating: 0, count: 100)
         var peakMag: Float = 0
         
-        // Map 64 output bins to bass range (like HTML does with bassEndIndex)
-        for i in 0..<64 {
+        // Map 100 output bins to bass range (like HTML does with bassEndIndex)
+        for i in 0..<100 {
             // Map each output bin to bass frequency range
-            let dataIndex = 1 + (i * bassEndBin) / 64  // Spread bass across all bars
+            let dataIndex = 1 + (i * bassEndBin) / 100  // Spread bass across all bars
             guard dataIndex < fftSizeHalf else { break }
             let mag = sqrt(fftMagnitudes[dataIndex])
             rawBins[i] = mag
@@ -1010,9 +1017,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let smoothUp: Float = 0.9     // Very fast rise
         let smoothDown: Float = 0.7   // Fast fall
         
-        var newBins = [Float](repeating: 0, count: 64)
+        var orderedBins = [Float](repeating: 0, count: 100)
         
-        for i in 0..<64 {
+        for i in 0..<100 {
             // Normalize to 0-1
             var normalized = min(1.0, rawBins[i] / maxMagnitude)
             
@@ -1026,24 +1033,30 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 smoothedBins[i] = smoothedBins[i] + (normalized - smoothedBins[i]) * smoothDown
             }
             
-            newBins[i] = smoothedBins[i]
+            orderedBins[i] = smoothedBins[i]
+        }
+        
+        // Shuffle bins to randomize visual order
+        var newBins = [Float](repeating: 0, count: 100)
+        for i in 0..<100 {
+            newBins[shuffledIndices[i]] = orderedBins[i]
         }
         
         // ==========================================
-        // STEP 6: Bass level - PEAK, super punchy
+        // STEP 6: Bass level - PEAK, super punchy with faster attack
         // ==========================================
         var peakBass: Float = 0
-        for i in 0..<8 {
-            if newBins[i] > peakBass {
-                peakBass = newBins[i]
+        for i in 0..<12 {
+            if orderedBins[i] > peakBass {
+                peakBass = orderedBins[i]
             }
         }
         
-        // Smooth bass
+        // Smooth bass - VERY responsive for thumbnail pulse
         if peakBass > smoothedBass {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.9
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.95  // Near-instant attack
         } else {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.5
+            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.8   // Fast decay
         }
         
         // ==========================================
