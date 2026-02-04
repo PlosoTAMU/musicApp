@@ -495,8 +495,7 @@ struct NowPlayingView: View {
                                 .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                         }
                     }
-                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.15)  // Beat-synced pulse
-                    .animation(.easeOut(duration: 0.08), value: audioPlayer.bassLevel)
+                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.20)  // Punchier pulse
                     
                     // Visualizer overlay
                     EdgeVisualizerView(audioPlayer: audioPlayer)
@@ -906,8 +905,8 @@ struct EdgeVisualizerView: View {
             guard bins.count >= 100 else { return }
             
             // Scale box to match thumbnail pulse
-            // Bass level is now 0.05-0.9 range, map to subtle pulse
-            let pulseScale = 1.0 + CGFloat(bass) * 0.15
+            // Bass level is now 0.05-0.9 range, map to punchier pulse
+            let pulseScale = 1.0 + CGFloat(bass) * 0.20
             let boxSize = baseBoxSize * pulseScale
             let halfBox = boxSize / 2
             let scaledCorner = cornerRadius * pulseScale

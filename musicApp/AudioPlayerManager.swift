@@ -96,7 +96,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // Beat state
     private var beatIntensity: Float = 0      // Current beat strength (0-1)
     private var lastBeatTime: CFAbsoluteTime = 0
-    private var beatDecayRate: Float = 0.92   // How fast beat pulse decays
+    private var beatDecayRate: Float = 0.88   // How fast beat pulse decays (punchier = faster decay)
     
     // Adaptive thresholds (auto-adjust to song dynamics)
     private var adaptiveThreshold: Float = 0.5
@@ -1164,21 +1164,21 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // 3. OR sub-bass has a sudden spike (kick drum)
         // ==========================================
         
-        let energyThreshold = avgEnergyLocal + varianceEnergy * 1.2
-        let fluxThreshold = avgFlux * 1.8
-        let subBassThreshold = avgSubBass * 1.5
+        let energyThreshold = avgEnergyLocal + varianceEnergy * 1.0  // More sensitive
+        let fluxThreshold = avgFlux * 1.5  // More sensitive
+        let subBassThreshold = avgSubBass * 1.3  // More sensitive
         
         let now = CFAbsoluteTimeGetCurrent()
-        let minBeatInterval: CFAbsoluteTime = 0.1  // Max 10 beats per second (600 BPM limit)
+        let minBeatInterval: CFAbsoluteTime = 0.08  // Allow faster beats (750 BPM max)
         
         var beatDetected = false
         var beatStrength: Float = 0
         
         if now - lastBeatTime >= minBeatInterval {
-            // Check for beat conditions
-            let energyBeat = totalEnergy > energyThreshold && totalEnergy > avgEnergyLocal * 1.3
-            let fluxBeat = spectralFlux > fluxThreshold && spectralFlux > avgFlux * 1.5
-            let kickBeat = subBassEnergy > subBassThreshold && subBassEnergy > avgSubBass * 1.4
+            // Check for beat conditions (more aggressive)
+            let energyBeat = totalEnergy > energyThreshold && totalEnergy > avgEnergyLocal * 1.2
+            let fluxBeat = spectralFlux > fluxThreshold && spectralFlux > avgFlux * 1.3
+            let kickBeat = subBassEnergy > subBassThreshold && subBassEnergy > avgSubBass * 1.2
             
             if energyBeat || fluxBeat || kickBeat {
                 beatDetected = true
@@ -1195,7 +1195,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     strength = max(strength, (subBassEnergy - subBassThreshold) / (avgSubBass + 0.001))
                 }
                 
-                beatStrength = min(1.0, strength * 0.5)  // Normalize to 0-1
+                beatStrength = min(1.0, strength * 0.7)  // More pronounced beat strength
                 lastBeatTime = now
             }
         }
@@ -1203,14 +1203,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // ==========================================
         // STEP 8: Update beat intensity with proper envelope
         // Attack: instant on beat
-        // Decay: smooth falloff
+        // Decay: fast falloff for punchier feel
         // ==========================================
         
         if beatDetected {
             // Instant attack - jump to beat strength
-            beatIntensity = max(beatIntensity, 0.5 + beatStrength * 0.5)
+            beatIntensity = max(beatIntensity, 0.6 + beatStrength * 0.4)  // Stronger punch
         } else {
-            // Smooth decay
+            // Fast decay for punchy feel
             beatIntensity *= beatDecayRate
         }
         beatIntensity = min(1.0, max(0, beatIntensity))
@@ -1280,13 +1280,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
             // Modulate by beat intensity - bars pulse with the beat
             // Stronger effect on bass frequencies (lower indices)
             let beatModulation = beatIntensity * (1.0 - Float(i) / 150.0)  // Decreases toward high freqs
-            value = value * (0.7 + beatModulation * 0.6)  // 70-130% based on beat
+            value = value * (0.6 + beatModulation * 0.8)  // 60-140% based on beat (more punch!)
             
             value = min(1.0, value)
             
-            // Smooth with different attack/decay for natural feel
-            let smoothUp: Float = 0.6    // Fast attack
-            let smoothDown: Float = 0.15  // Slower decay for smoother visuals
+            // Smooth with different attack/decay for PUNCHY feel
+            let smoothUp: Float = 0.85    // Very fast attack (was 0.6)
+            let smoothDown: Float = 0.25  // Faster decay for snappier feel (was 0.15)
             
             if value > smoothedBins[i] {
                 smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothUp
@@ -1315,17 +1315,17 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         // Weighted combination of sub-bass, bass, and beat intensity
         let combinedBass = (subBassEnergy + bassEnergy * 0.5) / normalizer
-        let normalizedBass = pow(min(1.0, combinedBass), 0.7)
+        let normalizedBass = pow(min(1.0, combinedBass), 0.6)  // More sensitive power curve
         
         // Mix frequency content with beat detection for the pulse
-        // 60% beat intensity, 40% frequency content
-        let targetBass = beatIntensity * 0.6 + normalizedBass * 0.4
+        // 70% beat intensity, 30% frequency content - favor beat detection for punch
+        let targetBass = beatIntensity * 0.7 + normalizedBass * 0.3
         
-        // Smooth the bass level
+        // Smooth the bass level with PUNCHY envelope
         if targetBass > smoothedBass {
-            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.7  // Fast attack
+            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.85  // Very fast attack
         } else {
-            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.15  // Slow decay
+            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.25  // Faster decay
         }
         
         // Clamp to reasonable range for visual pulse
