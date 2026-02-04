@@ -1294,10 +1294,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothDown
             }
             
-            // Apply minimum threshold - never fully silent, never maxed out
-            let minVal: Float = 0.08
-            let maxVal: Float = 0.92
+            // Apply minimum threshold and amplify for more dramatic lines
+            // Scale from 0-1 to 0.15-1.1 for stronger pulse
+            let minVal: Float = 0.15
+            let maxVal: Float = 1.1
             smoothedBins[i] = minVal + smoothedBins[i] * (maxVal - minVal)
+            smoothedBins[i] = min(maxVal, max(minVal, smoothedBins[i]))
             
             orderedBins[i] = smoothedBins[i]
         }
@@ -1328,8 +1330,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
             smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.15  // Slow decay
         }
         
-        // Clamp to reasonable range for visual pulse
-        smoothedBass = min(0.9, max(0.05, smoothedBass))
+        // Amplify for more dramatic pulse (scale from 0.05-0.9 to 0.1-1.3)
+        smoothedBass = 0.1 + smoothedBass * 1.33
+        smoothedBass = min(1.3, max(0.1, smoothedBass))
         
         // ==========================================
         // STEP 12: Throttled update to SwiftUI
