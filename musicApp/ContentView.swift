@@ -495,8 +495,8 @@ struct NowPlayingView: View {
                                 .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                         }
                     }
-                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.25)  // Dramatic beat-synced pulse
-                    .animation(.spring(response: 0.15, dampingFraction: 0.6), value: audioPlayer.bassLevel)
+                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.35)  // Amplified beat pulse
+                    .animation(.easeOut(duration: 0.08), value: audioPlayer.bassLevel)
                     
                     // Visualizer overlay
                     EdgeVisualizerView(audioPlayer: audioPlayer)
@@ -892,8 +892,8 @@ struct EdgeVisualizerView: View {
     // Geometry - matches thumbnail with subtle pulse
     private let baseBoxSize: CGFloat = 220
     private let cornerRadius: CGFloat = 16
-    private let maxBarLength: CGFloat = 60
-    private let minBarLength: CGFloat = 4   // Minimum visible bar length
+    private let maxBarLength: CGFloat = 80   // Increased from 60
+    private let minBarLength: CGFloat = 8    // Increased from 4 to reduce flicker
     private let barsPerSide = 25  // 100 total bars = matches FFT bins
     
     var body: some View {
@@ -905,9 +905,8 @@ struct EdgeVisualizerView: View {
             let bass = audioPlayer.bassLevel
             guard bins.count >= 100 else { return }
             
-            // Scale box to match thumbnail pulse
-            // Bass level is now 0.1-1.3 range, map to dramatic pulse
-            let pulseScale = 1.0 + CGFloat(bass) * 0.25
+            // Scale box to match thumbnail pulse - amplified
+            let pulseScale = 1.0 + CGFloat(bass) * 0.35
             let boxSize = baseBoxSize * pulseScale
             let halfBox = boxSize / 2
             let scaledCorner = cornerRadius * pulseScale
@@ -953,23 +952,21 @@ struct EdgeVisualizerView: View {
     
     @inline(__always)
     private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float, index: Int) {
-        // Values are already in 0.15-1.1 range from AudioPlayerManager
-        // Amplify further for dramatic line pulsing
-        let normalizedValue = CGFloat(value) * 1.15  // Extra 15% boost
+        // Amplify the value for harder pulsing
+        let amplifiedValue = min(1.0, CGFloat(value) * 1.4)
         
-        // Calculate bar length with strong dynamic range
-        let barLength = minBarLength + normalizedValue * (maxBarLength - minBarLength)
+        // Calculate bar length with guaranteed minimum visibility
+        let barLength = minBarLength + amplifiedValue * (maxBarLength - minBarLength)
         
         // Rainbow hue based on position around the square
-        // Creates smooth color gradient around the perimeter
         let hue = Double(index) / 100.0
         
-        // Opacity varies with intensity for depth effect
-        let opacity = 0.5 + Double(value) * 0.5
+        // Higher base opacity to reduce flickering
+        let opacity = 0.7 + Double(amplifiedValue) * 0.3
         
-        // Saturation and brightness pulse slightly with value
-        let saturation = 0.85 + Double(value) * 0.15
-        let brightness = 0.7 + Double(value) * 0.3
+        // Saturation and brightness pulse with value
+        let saturation = 0.9 + Double(amplifiedValue) * 0.1
+        let brightness = 0.75 + Double(amplifiedValue) * 0.25
         
         let color = Color(hue: hue, saturation: saturation, brightness: brightness, opacity: opacity)
         
@@ -977,8 +974,8 @@ struct EdgeVisualizerView: View {
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        // Line width also pulses slightly with intensity
-        let lineWidth = 2.0 + CGFloat(value) * 1.5
+        // Thicker lines that pulse more
+        let lineWidth = 2.5 + amplifiedValue * 2.0
         
         context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
     }
