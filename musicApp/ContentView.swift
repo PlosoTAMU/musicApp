@@ -495,7 +495,8 @@ struct NowPlayingView: View {
                                 .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                         }
                     }
-                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.12)  // Subtle pulse
+                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.15)  // Beat-synced pulse
+                    .animation(.easeOut(duration: 0.08), value: audioPlayer.bassLevel)
                     
                     // Visualizer overlay
                     EdgeVisualizerView(audioPlayer: audioPlayer)
@@ -884,7 +885,7 @@ struct DownloadBanner: View {
 }
 
 
-// MARK: - Edge Visualizer (PUNCHY and responsive)
+// MARK: - Edge Visualizer (Beat-synced with dynamic range)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     
@@ -892,6 +893,7 @@ struct EdgeVisualizerView: View {
     private let baseBoxSize: CGFloat = 220
     private let cornerRadius: CGFloat = 16
     private let maxBarLength: CGFloat = 60
+    private let minBarLength: CGFloat = 4   // Minimum visible bar length
     private let barsPerSide = 25  // 100 total bars = matches FFT bins
     
     var body: some View {
@@ -903,8 +905,9 @@ struct EdgeVisualizerView: View {
             let bass = audioPlayer.bassLevel
             guard bins.count >= 100 else { return }
             
-            // Scale box to match thumbnail pulse (0.12)
-            let pulseScale = 1.0 + CGFloat(bass) * 0.12
+            // Scale box to match thumbnail pulse
+            // Bass level is now 0.05-0.9 range, map to subtle pulse
+            let pulseScale = 1.0 + CGFloat(bass) * 0.15
             let boxSize = baseBoxSize * pulseScale
             let halfBox = boxSize / 2
             let scaledCorner = cornerRadius * pulseScale
@@ -917,7 +920,7 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
                 let y = centerY - halfBox
-                drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex])
+                drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex], index: barIndex)
                 barIndex += 1
             }
             
@@ -925,7 +928,7 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX + halfBox
                 let y = centerY - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
-                drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex])
+                drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex], index: barIndex)
                 barIndex += 1
             }
             
@@ -933,7 +936,7 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
                 let y = centerY + halfBox
-                drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex])
+                drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex], index: barIndex)
                 barIndex += 1
             }
             
@@ -941,7 +944,7 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX - halfBox
                 let y = centerY + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
-                drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex])
+                drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex], index: barIndex)
                 barIndex += 1
             }
         }
@@ -949,22 +952,36 @@ struct EdgeVisualizerView: View {
     }
     
     @inline(__always)
-    private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float) {
-        // Threshold - only show bars when there's actual energy (above 15% of max)
-        guard value > 0.15 else { return }
+    private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float, index: Int) {
+        // Values are already in 0.08-0.92 range from AudioPlayerManager
+        // Map to bar length ensuring we never hit absolute min or max
+        let normalizedValue = CGFloat(value)
         
-        let barLength = CGFloat(value) * maxBarLength
-        guard barLength > 3 else { return }
+        // Calculate bar length with guaranteed minimum visibility
+        // and maximum that leaves headroom
+        let barLength = minBarLength + normalizedValue * (maxBarLength - minBarLength - 4)
         
-        // Hue based on intensity - matches HTML (0-360 mapped to 0-0.35 for red-yellow-green)
-        let hue = Double(value) * 0.35
-        let color = Color(hue: hue, saturation: 1.0, brightness: 0.95)
+        // Rainbow hue based on position around the square
+        // Creates smooth color gradient around the perimeter
+        let hue = Double(index) / 100.0
+        
+        // Opacity varies with intensity for depth effect
+        let opacity = 0.5 + Double(value) * 0.5
+        
+        // Saturation and brightness pulse slightly with value
+        let saturation = 0.85 + Double(value) * 0.15
+        let brightness = 0.7 + Double(value) * 0.3
+        
+        let color = Color(hue: hue, saturation: saturation, brightness: brightness, opacity: opacity)
         
         var path = Path()
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+        // Line width also pulses slightly with intensity
+        let lineWidth = 2.0 + CGFloat(value) * 1.5
+        
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
     }
 }
 

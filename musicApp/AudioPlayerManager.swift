@@ -50,30 +50,63 @@ class AudioPlayerManager: NSObject, ObservableObject {
         return indices
     }()
     
-    // Throttle visualization updates to ~30fps instead of ~86fps
+    // Throttle visualization updates to ~60fps for smoother animation
     private var lastVisualizationUpdate: CFAbsoluteTime = 0
-    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 30.0  // 30fps
+    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 60.0  // 60fps
     
-    // FFT setup - use 1024 for better quality, fewer callbacks (~43/sec)
+    // FFT setup - use 2048 for better frequency resolution (especially for beat detection)
     private var fftSetup: FFTSetup?
-    private let fftSize = 1024
-    private let fftSizeHalf = 512
-    private let visualizationBufferSize: AVAudioFrameCount = 1024
+    private let fftSize = 2048
+    private let fftSizeHalf = 1024
+    private let visualizationBufferSize: AVAudioFrameCount = 2048
     private var visualizationTapInstalled = false
     
     // Pre-allocated FFT buffers
-    private var fftInputBuffer = [Float](repeating: 0, count: 1024)
-    private var fftReal = [Float](repeating: 0, count: 512)
-    private var fftImag = [Float](repeating: 0, count: 512)
-    private var fftMagnitudes = [Float](repeating: 0, count: 512)
+    private var fftInputBuffer = [Float](repeating: 0, count: 2048)
+    private var fftReal = [Float](repeating: 0, count: 1024)
+    private var fftImag = [Float](repeating: 0, count: 1024)
+    private var fftMagnitudes = [Float](repeating: 0, count: 1024)
     private var fftLog2n: vDSP_Length = 0
     
-    // Smoothed values
+    // Smoothed values for display
     private var smoothedBins = [Float](repeating: 0, count: 100)
     private var smoothedBass: Float = 0
     
-    // Adaptive normalization
-    private var maxMagnitude: Float = 0.01
+    // ==========================================
+    // ADVANCED BEAT DETECTION SYSTEM
+    // ==========================================
+    
+    // Previous frame's magnitudes for spectral flux calculation
+    private var previousMagnitudes = [Float](repeating: 0, count: 1024)
+    
+    // Energy history for beat detection (circular buffer)
+    private var energyHistory = [Float](repeating: 0, count: 43)  // ~1 second at 43 callbacks/sec
+    private var energyHistoryIndex = 0
+    
+    // Spectral flux history for onset detection
+    private var fluxHistory = [Float](repeating: 0, count: 43)
+    private var fluxHistoryIndex = 0
+    
+    // Sub-band energy tracking (for different frequency ranges)
+    private var subBassHistory = [Float](repeating: 0, count: 20)   // 20-60Hz (kick drum)
+    private var bassHistory = [Float](repeating: 0, count: 20)       // 60-250Hz (bass)
+    private var lowMidHistory = [Float](repeating: 0, count: 20)     // 250-500Hz (low mids)
+    private var subBassHistoryIndex = 0
+    
+    // Beat state
+    private var beatIntensity: Float = 0      // Current beat strength (0-1)
+    private var lastBeatTime: CFAbsoluteTime = 0
+    private var beatDecayRate: Float = 0.92   // How fast beat pulse decays
+    
+    // Adaptive thresholds (auto-adjust to song dynamics)
+    private var adaptiveThreshold: Float = 0.5
+    private var peakEnergy: Float = 0.01
+    private var avgEnergy: Float = 0.01
+    
+    // Running statistics for normalization
+    private var runningMax: Float = 0.001
+    private var runningAvg: Float = 0.001
+    private var sampleCount: Int = 0
 
     private func startTimeUpdates() {
         stopTimeUpdates()
@@ -902,7 +935,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         NotificationCenter.default.removeObserver(self)
     }
 
-    // MARK: - FFT-Based Visualization (Matches HTML Reference)
+    // MARK: - FFT-Based Visualization with Beat Detection
 
     private func setupFFT() {
         fftLog2n = vDSP_Length(log2(Float(fftSize)))
@@ -921,6 +954,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
             setupFFT()
         }
         
+        // Reset beat detection state for new track
+        resetBeatDetectionState()
+        
         let format = player.outputFormat(forBus: 0)
         
         player.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
@@ -928,7 +964,29 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         visualizationTapInstalled = true
-        print("✅ [AudioPlayer] FFT visualization tap installed")
+        print("✅ [AudioPlayer] Advanced beat-detection visualizer installed")
+    }
+    
+    private func resetBeatDetectionState() {
+        previousMagnitudes = [Float](repeating: 0, count: fftSizeHalf)
+        energyHistory = [Float](repeating: 0, count: 43)
+        fluxHistory = [Float](repeating: 0, count: 43)
+        subBassHistory = [Float](repeating: 0, count: 20)
+        bassHistory = [Float](repeating: 0, count: 20)
+        lowMidHistory = [Float](repeating: 0, count: 20)
+        energyHistoryIndex = 0
+        fluxHistoryIndex = 0
+        subBassHistoryIndex = 0
+        beatIntensity = 0
+        lastBeatTime = 0
+        adaptiveThreshold = 0.5
+        peakEnergy = 0.01
+        avgEnergy = 0.01
+        runningMax = 0.001
+        runningAvg = 0.001
+        sampleCount = 0
+        smoothedBins = [Float](repeating: 0, count: 100)
+        smoothedBass = 0
     }
 
     private func removeVisualizationTap() {
@@ -938,7 +996,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         print("✅ [AudioPlayer] Visualization tap removed")
     }
 
-    /// FFT-based frequency analysis - SMOOTH animation
+    /// Advanced FFT-based frequency analysis with beat detection
     private func processFFTBuffer(_ buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
@@ -948,7 +1006,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let samplesToProcess = min(frameLength, fftSize)
         
         // ==========================================
-        // STEP 1: Copy samples with Hann window
+        // STEP 1: Apply Hann window for clean FFT
         // ==========================================
         for i in 0..<fftSize {
             if i < samplesToProcess {
@@ -980,105 +1038,308 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
         }
         
+        // Convert to magnitude (sqrt of power)
+        for i in 0..<fftSizeHalf {
+            fftMagnitudes[i] = sqrt(fftMagnitudes[i])
+        }
+        
         // ==========================================
-        // STEP 3: Extract MOST IMPACTFUL frequencies (kick/snare/bass)
-        // At 44.1kHz with fftSize 1024: each bin = ~43Hz
-        // Kick drum: 60-100Hz (bins 2-3)
-        // Bass fundamentals: 80-250Hz (bins 2-6)
-        // Snare: 200-500Hz (bins 5-12)
-        // Focus on 60-500Hz for maximum punchiness
+        // STEP 3: Calculate spectral flux (onset detection)
+        // Spectral flux measures how much the spectrum changed
+        // Large positive changes indicate beats/transients
         // ==========================================
-        
-        let kickStartBin = 2     // ~86Hz - kick drum fundamental
-        let bassEndBin = 12      // ~516Hz - includes kick, bass, snare
-        let binRange = bassEndBin - kickStartBin  // 10 bins
-        
-        var rawBins = [Float](repeating: 0, count: 100)
-        var peakMag: Float = 0
-        
-        // Map 100 output bins to PUNCHY frequency range (60-500Hz)
-        for i in 0..<100 {
-            let dataIndex = kickStartBin + (i * binRange) / 100
-            guard dataIndex < fftSizeHalf else { break }
-            
-            // BOOST low frequencies (kick/bass) for more punch
-            var mag = sqrt(fftMagnitudes[dataIndex])
-            if dataIndex < 6 {  // Boost kick/bass (60-250Hz)
-                mag *= 1.5  // 50% boost for low end
+        var spectralFlux: Float = 0
+        for i in 0..<fftSizeHalf {
+            let diff = fftMagnitudes[i] - previousMagnitudes[i]
+            if diff > 0 {  // Only count increases (onsets, not decays)
+                spectralFlux += diff * diff
             }
+            previousMagnitudes[i] = fftMagnitudes[i]
+        }
+        spectralFlux = sqrt(spectralFlux)
+        
+        // ==========================================
+        // STEP 4: Sub-band energy analysis
+        // At 44.1kHz with fftSize 2048: each bin = ~21.5Hz
+        // Sub-bass (kick): 20-60Hz = bins 1-3
+        // Bass: 60-250Hz = bins 3-12
+        // Low-mid: 250-500Hz = bins 12-23
+        // Mid: 500-2000Hz = bins 23-93
+        // High: 2000-8000Hz = bins 93-372
+        // ==========================================
+        
+        var subBassEnergy: Float = 0
+        var bassEnergy: Float = 0
+        var lowMidEnergy: Float = 0
+        var midEnergy: Float = 0
+        var highEnergy: Float = 0
+        
+        // Sub-bass (kick drum) - very narrow, focused on punch
+        for i in 1..<4 {
+            subBassEnergy += fftMagnitudes[i] * fftMagnitudes[i]
+        }
+        subBassEnergy = sqrt(subBassEnergy / 3.0)
+        
+        // Bass
+        for i in 3..<12 {
+            bassEnergy += fftMagnitudes[i] * fftMagnitudes[i]
+        }
+        bassEnergy = sqrt(bassEnergy / 9.0)
+        
+        // Low-mid (snare body, toms)
+        for i in 12..<23 {
+            lowMidEnergy += fftMagnitudes[i] * fftMagnitudes[i]
+        }
+        lowMidEnergy = sqrt(lowMidEnergy / 11.0)
+        
+        // Mid
+        for i in 23..<93 {
+            midEnergy += fftMagnitudes[i] * fftMagnitudes[i]
+        }
+        midEnergy = sqrt(midEnergy / 70.0)
+        
+        // High (hi-hats, cymbals)
+        for i in 93..<min(372, fftSizeHalf) {
+            highEnergy += fftMagnitudes[i] * fftMagnitudes[i]
+        }
+        highEnergy = sqrt(highEnergy / Float(min(279, fftSizeHalf - 93)))
+        
+        // Total energy
+        let totalEnergy = subBassEnergy + bassEnergy + lowMidEnergy + midEnergy * 0.5 + highEnergy * 0.3
+        
+        // ==========================================
+        // STEP 5: Update history buffers
+        // ==========================================
+        energyHistory[energyHistoryIndex] = totalEnergy
+        energyHistoryIndex = (energyHistoryIndex + 1) % energyHistory.count
+        
+        fluxHistory[fluxHistoryIndex] = spectralFlux
+        fluxHistoryIndex = (fluxHistoryIndex + 1) % fluxHistory.count
+        
+        subBassHistory[subBassHistoryIndex] = subBassEnergy
+        bassHistory[subBassHistoryIndex] = bassEnergy
+        lowMidHistory[subBassHistoryIndex] = lowMidEnergy
+        subBassHistoryIndex = (subBassHistoryIndex + 1) % subBassHistory.count
+        
+        // ==========================================
+        // STEP 6: Calculate adaptive thresholds
+        // ==========================================
+        
+        // Average and variance of recent energy
+        var avgEnergyLocal: Float = 0
+        var varianceEnergy: Float = 0
+        for e in energyHistory {
+            avgEnergyLocal += e
+        }
+        avgEnergyLocal /= Float(energyHistory.count)
+        
+        for e in energyHistory {
+            let diff = e - avgEnergyLocal
+            varianceEnergy += diff * diff
+        }
+        varianceEnergy = sqrt(varianceEnergy / Float(energyHistory.count))
+        
+        // Average of recent flux
+        var avgFlux: Float = 0
+        for f in fluxHistory {
+            avgFlux += f
+        }
+        avgFlux /= Float(fluxHistory.count)
+        
+        // Sub-band averages for relative comparison
+        var avgSubBass: Float = 0
+        var avgBass: Float = 0
+        for i in 0..<subBassHistory.count {
+            avgSubBass += subBassHistory[i]
+            avgBass += bassHistory[i]
+        }
+        avgSubBass /= Float(subBassHistory.count)
+        avgBass /= Float(subBassHistory.count)
+        
+        // ==========================================
+        // STEP 7: BEAT DETECTION
+        // A beat is detected when:
+        // 1. Current energy exceeds adaptive threshold
+        // 2. OR spectral flux exceeds threshold (transient)
+        // 3. OR sub-bass has a sudden spike (kick drum)
+        // ==========================================
+        
+        let energyThreshold = avgEnergyLocal + varianceEnergy * 1.2
+        let fluxThreshold = avgFlux * 1.8
+        let subBassThreshold = avgSubBass * 1.5
+        
+        let now = CFAbsoluteTimeGetCurrent()
+        let minBeatInterval: CFAbsoluteTime = 0.1  // Max 10 beats per second (600 BPM limit)
+        
+        var beatDetected = false
+        var beatStrength: Float = 0
+        
+        if now - lastBeatTime >= minBeatInterval {
+            // Check for beat conditions
+            let energyBeat = totalEnergy > energyThreshold && totalEnergy > avgEnergyLocal * 1.3
+            let fluxBeat = spectralFlux > fluxThreshold && spectralFlux > avgFlux * 1.5
+            let kickBeat = subBassEnergy > subBassThreshold && subBassEnergy > avgSubBass * 1.4
+            
+            if energyBeat || fluxBeat || kickBeat {
+                beatDetected = true
+                
+                // Calculate beat strength based on how much it exceeds thresholds
+                var strength: Float = 0
+                if energyBeat {
+                    strength = max(strength, (totalEnergy - energyThreshold) / (avgEnergyLocal + 0.001))
+                }
+                if fluxBeat {
+                    strength = max(strength, (spectralFlux - fluxThreshold) / (avgFlux + 0.001))
+                }
+                if kickBeat {
+                    strength = max(strength, (subBassEnergy - subBassThreshold) / (avgSubBass + 0.001))
+                }
+                
+                beatStrength = min(1.0, strength * 0.5)  // Normalize to 0-1
+                lastBeatTime = now
+            }
+        }
+        
+        // ==========================================
+        // STEP 8: Update beat intensity with proper envelope
+        // Attack: instant on beat
+        // Decay: smooth falloff
+        // ==========================================
+        
+        if beatDetected {
+            // Instant attack - jump to beat strength
+            beatIntensity = max(beatIntensity, 0.5 + beatStrength * 0.5)
+        } else {
+            // Smooth decay
+            beatIntensity *= beatDecayRate
+        }
+        beatIntensity = min(1.0, max(0, beatIntensity))
+        
+        // ==========================================
+        // STEP 9: Map frequency bins for visualization
+        // Use logarithmic mapping for more musical distribution
+        // ==========================================
+        
+        // Update running statistics
+        sampleCount += 1
+        if totalEnergy > runningMax {
+            runningMax = totalEnergy
+        } else {
+            runningMax = runningMax * 0.9995 + totalEnergy * 0.0005  // Very slow decay
+        }
+        runningAvg = runningAvg * 0.99 + totalEnergy * 0.01
+        
+        let normalizer = max(runningMax, runningAvg * 2, 0.001)
+        
+        // Create frequency bins with logarithmic mapping
+        var rawBins = [Float](repeating: 0, count: 100)
+        
+        // Map 100 bins across useful frequency range (20Hz - 8000Hz)
+        // Using logarithmic scale so bass/mid gets more bins
+        let minFreq: Float = 20.0
+        let maxFreq: Float = 8000.0
+        let logMin = log10(minFreq)
+        let logMax = log10(maxFreq)
+        let sampleRate: Float = 44100.0
+        let binWidth = sampleRate / Float(fftSize)
+        
+        for i in 0..<100 {
+            // Logarithmic frequency mapping
+            let t = Float(i) / 99.0
+            let freq = pow(10, logMin + t * (logMax - logMin))
+            let fftBin = Int(freq / binWidth)
+            
+            guard fftBin < fftSizeHalf else { continue }
+            
+            // Average a few bins around the target for smoother result
+            var mag: Float = 0
+            var count: Float = 0
+            let spread = max(1, fftBin / 10)  // More averaging for higher bins
+            for j in max(0, fftBin - spread)...min(fftSizeHalf - 1, fftBin + spread) {
+                mag += fftMagnitudes[j]
+                count += 1
+            }
+            mag /= count
             
             rawBins[i] = mag
-            if mag > peakMag { peakMag = mag }
         }
         
         // ==========================================
-        // STEP 4: AGGRESSIVE normalization - instant attack, fast decay
+        // STEP 10: Normalize and apply beat modulation
         // ==========================================
-        if peakMag > maxMagnitude {
-            maxMagnitude = peakMag * 1.2  // Instant attack with boost
-        } else {
-            maxMagnitude = maxMagnitude * 0.90  // Very fast decay = punchy
-        }
-        maxMagnitude = max(maxMagnitude, 0.0001)
-        
-        // ==========================================
-        // STEP 5: MAXIMUM PUNCHINESS - almost NO smoothing
-        // ==========================================
-        let smoothUp: Float = 0.95    // Near-instant rise
-        let smoothDown: Float = 0.85   // Fast fall for snappy decay
         
         var orderedBins = [Float](repeating: 0, count: 100)
         
         for i in 0..<100 {
-            // Normalize to 0-1
-            var normalized = min(1.0, rawBins[i] / maxMagnitude)
+            // Normalize
+            var value = rawBins[i] / normalizer
             
-            // Power curve - aggressive for maximum punch
-            normalized = pow(normalized, 0.4)  // Even more sensitive to changes
+            // Apply power curve for better visual dynamics
+            value = pow(value, 0.6)
             
-            // Minimal smoothing - maximum responsiveness
-            if normalized > smoothedBins[i] {
-                smoothedBins[i] = smoothedBins[i] + (normalized - smoothedBins[i]) * smoothUp
+            // Modulate by beat intensity - bars pulse with the beat
+            // Stronger effect on bass frequencies (lower indices)
+            let beatModulation = beatIntensity * (1.0 - Float(i) / 150.0)  // Decreases toward high freqs
+            value = value * (0.7 + beatModulation * 0.6)  // 70-130% based on beat
+            
+            value = min(1.0, value)
+            
+            // Smooth with different attack/decay for natural feel
+            let smoothUp: Float = 0.6    // Fast attack
+            let smoothDown: Float = 0.15  // Slower decay for smoother visuals
+            
+            if value > smoothedBins[i] {
+                smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothUp
             } else {
-                smoothedBins[i] = smoothedBins[i] + (normalized - smoothedBins[i]) * smoothDown
+                smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothDown
             }
+            
+            // Apply minimum threshold - never fully silent, never maxed out
+            let minVal: Float = 0.08
+            let maxVal: Float = 0.92
+            smoothedBins[i] = minVal + smoothedBins[i] * (maxVal - minVal)
             
             orderedBins[i] = smoothedBins[i]
         }
         
-        // Shuffle bins to randomize visual order
+        // Shuffle for visual distribution
         var newBins = [Float](repeating: 0, count: 100)
         for i in 0..<100 {
             newBins[shuffledIndices[i]] = orderedBins[i]
         }
         
         // ==========================================
-        // STEP 6: Bass level - MAXIMUM PUNCH for thumbnail
+        // STEP 11: Bass level for thumbnail pulse
+        // Combine beat intensity with low frequency energy
         // ==========================================
-        var peakBass: Float = 0
-        for i in 0..<15 {  // Use more bins for better peak detection
-            if orderedBins[i] > peakBass {
-                peakBass = orderedBins[i]
-            }
-        }
         
-        // MAXIMUM responsiveness for thumbnail pulse - almost no smoothing
-        if peakBass > smoothedBass {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.98  // Instant attack
+        // Weighted combination of sub-bass, bass, and beat intensity
+        let combinedBass = (subBassEnergy + bassEnergy * 0.5) / normalizer
+        let normalizedBass = pow(min(1.0, combinedBass), 0.7)
+        
+        // Mix frequency content with beat detection for the pulse
+        // 60% beat intensity, 40% frequency content
+        let targetBass = beatIntensity * 0.6 + normalizedBass * 0.4
+        
+        // Smooth the bass level
+        if targetBass > smoothedBass {
+            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.7  // Fast attack
         } else {
-            smoothedBass = smoothedBass + (peakBass - smoothedBass) * 0.90  // Very fast decay
+            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.15  // Slow decay
         }
         
+        // Clamp to reasonable range for visual pulse
+        smoothedBass = min(0.9, max(0.05, smoothedBass))
+        
         // ==========================================
-        // STEP 7: Throttled @Published update to limit SwiftUI redraws
-        // Update at max 30fps instead of 86fps
+        // STEP 12: Throttled update to SwiftUI
         // ==========================================
         let finalBins = newBins
         let finalBass = smoothedBass
         
-        let now = CFAbsoluteTimeGetCurrent()
-        if now - lastVisualizationUpdate >= visualizationUpdateInterval {
-            lastVisualizationUpdate = now
+        let updateNow = CFAbsoluteTimeGetCurrent()
+        if updateNow - lastVisualizationUpdate >= visualizationUpdateInterval {
+            lastVisualizationUpdate = updateNow
             
             DispatchQueue.main.async { [weak self] in
                 self?.frequencyBins = finalBins
