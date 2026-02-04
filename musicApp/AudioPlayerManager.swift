@@ -1280,13 +1280,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
             // Modulate by beat intensity - bars pulse with the beat
             // Stronger effect on bass frequencies (lower indices)
             let beatModulation = beatIntensity * (1.0 - Float(i) / 150.0)  // Decreases toward high freqs
-            value = value * (0.7 + beatModulation * 0.6)  // 70-130% based on beat
+            value = value * (0.5 + beatModulation * 0.8)  // 50-130% based on beat
             
             value = min(1.0, value)
             
             // Smooth with different attack/decay for natural feel
-            let smoothUp: Float = 0.6    // Fast attack
-            let smoothDown: Float = 0.15  // Slower decay for smoother visuals
+            let smoothUp: Float = 0.5     // Fast attack
+            let smoothDown: Float = 0.08  // Slower decay for smoother visuals (reduces flicker)
             
             if value > smoothedBins[i] {
                 smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothUp
@@ -1294,10 +1294,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothDown
             }
             
-            // Apply minimum threshold - never fully silent, never maxed out
-            let minVal: Float = 0.08
-            let maxVal: Float = 0.92
-            smoothedBins[i] = minVal + smoothedBins[i] * (maxVal - minVal)
+            // No artificial minimum - let values go to near zero for proper baseline
+            smoothedBins[i] = min(0.95, max(0, smoothedBins[i]))
             
             orderedBins[i] = smoothedBins[i]
         }
@@ -1318,18 +1316,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let normalizedBass = pow(min(1.0, combinedBass), 0.7)
         
         // Mix frequency content with beat detection for the pulse
-        // 60% beat intensity, 40% frequency content
-        let targetBass = beatIntensity * 0.6 + normalizedBass * 0.4
+        // 70% beat intensity, 30% frequency content
+        let targetBass = beatIntensity * 0.7 + normalizedBass * 0.3
         
-        // Smooth the bass level
+        // Smooth the bass level - slower decay to reduce flicker
         if targetBass > smoothedBass {
-            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.7  // Fast attack
+            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.6  // Fast attack
         } else {
-            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.15  // Slow decay
+            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.08  // Slow decay (reduces flicker)
         }
         
-        // Clamp to reasonable range for visual pulse
-        smoothedBass = min(0.9, max(0.05, smoothedBass))
+        // Allow bass to go to zero for proper baseline
+        smoothedBass = min(0.95, max(0, smoothedBass))
         
         // ==========================================
         // STEP 12: Throttled update to SwiftUI

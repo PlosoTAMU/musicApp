@@ -495,10 +495,10 @@ struct NowPlayingView: View {
                                 .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                         }
                     }
-                    // Logarithmic scaling: easy to pulse out, harder to get bigger
-                    // log(1 + x*k) / log(1 + k) normalizes output to 0-1 range
-                    .scaleEffect(1.0 + log(1.0 + CGFloat(audioPlayer.bassLevel) * 4.0) / log(5.0) * 0.18)
-                    .animation(.easeOut(duration: 0.08), value: audioPlayer.bassLevel)
+                    // Logarithmic scaling: punchy response, compressed at top
+                    // sqrt gives quick initial response, then diminishing returns
+                    .scaleEffect(1.0 + sqrt(CGFloat(audioPlayer.bassLevel)) * 0.12)
+                    .animation(.interactiveSpring(response: 0.15, dampingFraction: 0.7), value: audioPlayer.bassLevel)
                     
                     // Visualizer overlay
                     EdgeVisualizerView(audioPlayer: audioPlayer)
@@ -891,19 +891,12 @@ struct DownloadBanner: View {
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     
-    // Geometry - matches thumbnail with subtle pulse
+    // Geometry
     private let baseBoxSize: CGFloat = 220
     private let cornerRadius: CGFloat = 16
-    private let maxBarLength: CGFloat = 55
-    private let minBarLength: CGFloat = 6
-    private let barsPerSide = 25  // 100 total bars = matches FFT bins
-    
-    // Logarithmic scaling helper: easy to pulse out, harder to get bigger
-    @inline(__always)
-    private func logScale(_ value: CGFloat, intensity: CGFloat = 4.0) -> CGFloat {
-        // log(1 + x*k) / log(1 + k) maps 0-1 input to 0-1 output with log curve
-        return log(1.0 + value * intensity) / log(1.0 + intensity)
-    }
+    private let maxBarLength: CGFloat = 50
+    private let minBarLength: CGFloat = 3   // Small baseline
+    private let barsPerSide = 25
     
     var body: some View {
         Canvas { context, size in
@@ -914,9 +907,8 @@ struct EdgeVisualizerView: View {
             let bass = audioPlayer.bassLevel
             guard bins.count >= 100 else { return }
             
-            // Logarithmic scale for box pulse - punchy but controlled
-            let scaledBass = logScale(CGFloat(bass), intensity: 5.0)
-            let pulseScale = 1.0 + scaledBass * 0.18
+            // sqrt scaling for box pulse - punchy but controlled
+            let pulseScale = 1.0 + sqrt(CGFloat(bass)) * 0.12
             let boxSize = baseBoxSize * pulseScale
             let halfBox = boxSize / 2
             let scaledCorner = cornerRadius * pulseScale
@@ -962,31 +954,28 @@ struct EdgeVisualizerView: View {
     
     @inline(__always)
     private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float, index: Int) {
-        // Logarithmic scaling: punchy response that compresses at the top
         let rawValue = CGFloat(value)
-        let scaledValue = logScale(rawValue, intensity: 3.5)
         
-        // Calculate bar length
+        // sqrt scaling: punchy initial response, compressed at top
+        let scaledValue = sqrt(rawValue)
+        
+        // Calculate bar length - small baseline that punches out
         let barLength = minBarLength + scaledValue * (maxBarLength - minBarLength)
         
-        // Rainbow hue based on position around the square
+        // Rainbow hue based on position
         let hue = Double(index) / 100.0
         
-        // Stable opacity with subtle variation
-        let opacity = 0.75 + Double(scaledValue) * 0.25
+        // Opacity scales with value
+        let opacity = 0.6 + Double(scaledValue) * 0.4
         
-        // Saturation and brightness
-        let saturation = 0.9 + Double(scaledValue) * 0.1
-        let brightness = 0.8 + Double(scaledValue) * 0.2
-        
-        let color = Color(hue: hue, saturation: saturation, brightness: brightness, opacity: opacity)
+        let color = Color(hue: hue, saturation: 1.0, brightness: 0.9, opacity: opacity)
         
         var path = Path()
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        // Line width with subtle pulse
-        let lineWidth = 2.5 + scaledValue * 1.0
+        // Consistent line width
+        let lineWidth: CGFloat = 2.5
         
         context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
     }
