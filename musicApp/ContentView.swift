@@ -892,7 +892,7 @@ struct EdgeVisualizerView: View {
     private let baseBoxSize: CGFloat = 220
     private let cornerRadius: CGFloat = 16
     private let maxBarLength: CGFloat = 60
-    private let minBarLength: CGFloat = 4   // Minimum visible bar length
+    private let minBarLength: CGFloat = 1   // Lower minimum for larger dynamic range
     private let barsPerSide = 25  // 100 total bars = matches FFT bins
     
     var body: some View {
@@ -953,11 +953,11 @@ struct EdgeVisualizerView: View {
     @inline(__always)
     private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float, index: Int) {
         // Values are already in 0.08-0.92 range from AudioPlayerManager
-        // Map to bar length ensuring we never hit absolute min or max
+        // Map to bar length with much larger dynamic range
         let normalizedValue = CGFloat(value)
         
-        // Calculate bar length with guaranteed minimum visibility
-        // and maximum that leaves headroom
+        // Calculate bar length with lower minimum for more dynamic range
+        // Now ranges from 1.5px to 56px (was 4px to 56px)
         let barLength = minBarLength + normalizedValue * (maxBarLength - minBarLength - 4)
         
         // Rainbow hue based on position around the square
