@@ -620,7 +620,8 @@ class DownloadManager: ObservableObject {
         let activeDownload = ActiveDownload(
             id: UUID(),
             videoID: videoID,
-            title: "Redownloading \(download.name)..."
+            title: "Redownloading \(download.name)...",
+            progress: 0.0
         )
         
         DispatchQueue.main.async {
@@ -638,7 +639,8 @@ class DownloadManager: ObservableObject {
                     self.activeDownloads[index] = ActiveDownload(
                         id: self.activeDownloads[index].id,
                         videoID: callbackVideoID,
-                        title: "Redownloading \(callbackTitle)..."
+                        title: "Redownloading \(callbackTitle)...",
+                        progress: 0.5
                     )
                     self.objectWillChange.send()
                 }
