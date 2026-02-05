@@ -1159,3 +1159,69 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         return AppDelegate.orientationLock
     }
 }
+
+// MARK: - Auto-Scrolling Text View
+struct ScrollingTextView: View {
+    let text: String
+    let font: Font
+    let width: CGFloat
+    
+    @State private var offset: CGFloat = 0
+    @State private var textWidth: CGFloat = 0
+    
+    var body: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 50) {
+                // First instance
+                Text(text)
+                    .font(font)
+                    .fontWeight(.bold)
+                    .italic()
+                    .foregroundColor(.white)
+                    .fixedSize()
+                    .background(
+                        GeometryReader { textGeo in
+                            Color.clear.onAppear {
+                                textWidth = textGeo.size.width
+                            }
+                        }
+                    )
+                
+                // Second instance for seamless loop
+                Text(text)
+                    .font(font)
+                    .fontWeight(.bold)
+                    .italic()
+                    .foregroundColor(.white)
+                    .fixedSize()
+            }
+            .offset(x: offset)
+            .onAppear {
+                startScrolling()
+            }
+        }
+        .clipped()
+    }
+    
+    private func startScrolling() {
+        // Wait a moment before starting
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            // Calculate duration based on text length (slower for longer text)
+            let duration = Double(textWidth) / 30.0 // Adjust speed here (lower = faster)
+            
+            withAnimation(.linear(duration: duration).repeatForever(autoreverses: false)) {
+                // Scroll to the left by the full width + spacing
+                offset = -(textWidth + 50)
+            }
+        }
+    }
+}
+
+// MARK: - String Width Helper
+extension String {
+    func widthOfString(usingFont font: UIFont) -> CGFloat {
+        let fontAttributes = [NSAttributedString.Key.font: font]
+        let size = self.size(withAttributes: fontAttributes)
+        return size.width
+    }
+}
