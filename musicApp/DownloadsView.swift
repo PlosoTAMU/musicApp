@@ -1,5 +1,3 @@
-import SwiftUI
-
 struct DownloadsView: View {
     @ObservedObject var downloadManager: DownloadManager
     @ObservedObject var playlistManager: PlaylistManager
@@ -36,6 +34,12 @@ struct DownloadsView: View {
                                 }
                                 playlistManager.removeFromAllPlaylists(deletedDownload.id)
                             }
+                        },
+                        onRename: { newName in
+                            downloadManager.renameDownload(download, newName: newName)
+                        },
+                        onRedownload: {
+                            handleRedownload(download)
                         }
                     )
                     .opacity(download.pendingDeletion ? 0.5 : 1.0)
@@ -86,7 +90,22 @@ struct DownloadsView: View {
         }
     }
     
-    // ✅ ADD THIS HELPER
+    // ✅ ADD: Helper method to handle redownload
+    private func handleRedownload(_ download: Download) {
+        guard let videoID = download.videoID,
+              let originalURL = constructURL(from: videoID, source: download.source) else {
+            return
+        }
+        
+        downloadManager.startBackgroundDownload(
+            url: originalURL,
+            videoID: videoID,
+            source: download.source,
+            title: "Redownloading..."
+        )
+    }
+    
+    // ✅ ADD: Helper to reconstruct URL from videoID
     private func constructURL(from videoID: String, source: DownloadSource) -> String? {
         switch source {
         case .youtube:
@@ -97,7 +116,6 @@ struct DownloadsView: View {
             return nil
         }
     }
-
 }
 
 struct DownloadRow: View {
@@ -105,11 +123,11 @@ struct DownloadRow: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     let onAddToPlaylist: () -> Void
     let onDelete: () -> Void
-    let onRename: (String) -> Void  // ✅ ADD THIS
-    let onRedownload: () -> Void    // ✅ ADD THIS
+    let onRename: (String) -> Void
+    let onRedownload: () -> Void
     
-    @State private var showRenameAlert = false  // ✅ ADD THIS
-    @State private var newName: String = ""     // ✅ ADD THIS
+    @State private var showRenameAlert = false
+    @State private var newName: String = ""
     
     private var isCurrentlyPlaying: Bool {
         audioPlayer.currentTrack?.id == download.id
@@ -118,7 +136,6 @@ struct DownloadRow: View {
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
-                // ✅ PERFORMANCE: Async thumbnail loading with caching
                 ZStack {
                     AsyncThumbnailView(
                         thumbnailPath: download.resolvedThumbnailPath,
@@ -161,23 +178,23 @@ struct DownloadRow: View {
             .onTapGesture {
                 handleTap()
             }
-            .contextMenu {  // ✅ ADD THIS
+            .contextMenu {
                 Button {
+                    newName = download.name
                     showRenameAlert = true
                 } label: {
                     Label("Rename", systemImage: "pencil")
                 }
                 
-                if let videoID = download.videoID, !videoID.isEmpty {
+                if let videoID = download.videoID, !videoID.isEmpty, download.source != .folder {
                     Button {
-                        redownload()
+                        onRedownload()
                     } label: {
                         Label("Redownload", systemImage: "arrow.clockwise")
                     }
                 }
             }
             
-            // Buttons stay outside the tap area
             if !download.pendingDeletion {
                 Button(action: onAddToPlaylist) {
                     Image(systemName: "plus.circle")
@@ -202,7 +219,7 @@ struct DownloadRow: View {
             let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
             audioPlayer.addToQueue(track)
         }
-        .alert("Rename Song", isPresented: $showRenameAlert) {  // ✅ ADD THIS
+        .alert("Rename Song", isPresented: $showRenameAlert) {
             TextField("Song name", text: $newName)
             Button("Cancel", role: .cancel) { }
             Button("Rename") {
