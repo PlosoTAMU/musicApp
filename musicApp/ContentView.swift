@@ -470,7 +470,7 @@ struct NowPlayingView: View {
                 
                 // Single container
                 ZStack {
-                    // Main thumbnail with bass pulse
+                    // Main thumbnail with bass pulse (bottom layer)
                     Group {
                         if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                             Image(uiImage: thumbnailImage)
@@ -496,13 +496,16 @@ struct NowPlayingView: View {
                         }
                     }
                     .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.20)  // Punchier pulse
+                    .zIndex(1)  // Thumbnail in middle
                     
-                    // Visualizer overlay
+                    // Visualizer overlay (top layer - always visible)
                     EdgeVisualizerView(audioPlayer: audioPlayer)
                         .frame(width: 320, height: 320)
                         .allowsHitTesting(false)
+                        .zIndex(2)  // Visualizer on top
                 }
                 .frame(width: 320, height: 320)
+                .clipped()  // Prevent overflow
                 .onTapGesture {
                     if audioPlayer.isPlaying {
                         audioPlayer.pause()
@@ -1070,12 +1073,16 @@ struct EdgeVisualizerView: View {
         let hueShift = Double(normalizedValue) * 0.05 - 0.025  // ±2.5% hue shift
         let adjustedHue = (hue + hueShift).truncatingRemainder(dividingBy: 1.0)
         
-        // Boost saturation and brightness with intensity
-        let adjustedSaturation = min(1.0, saturation + Double(normalizedValue) * 0.3)
-        let adjustedBrightness = min(1.0, brightness + Double(normalizedValue) * 0.4)
+        // Ensure lines are always bright and saturated enough to be visible
+        // Boost saturation significantly
+        let adjustedSaturation = min(1.0, max(0.7, saturation + Double(normalizedValue) * 0.3))
         
-        // Opacity varies with intensity
-        let opacity = 0.6 + Double(normalizedValue) * 0.4
+        // Ensure minimum brightness so lines are always visible (even if thumbnail is dark)
+        let baseBrightness = max(0.5, brightness)  // At least 50% brightness
+        let adjustedBrightness = min(1.0, baseBrightness + Double(normalizedValue) * 0.5)
+        
+        // Higher opacity for better visibility
+        let opacity = 0.75 + Double(normalizedValue) * 0.25
         
         let finalColor = Color(hue: adjustedHue, saturation: adjustedSaturation, brightness: adjustedBrightness, opacity: opacity)
         
@@ -1083,9 +1090,11 @@ struct EdgeVisualizerView: View {
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        // Line width pulses with intensity
-        let lineWidth = 2.0 + CGFloat(normalizedValue) * 1.5
+        // Line width pulses with intensity - slightly thicker for visibility
+        let lineWidth = 2.5 + CGFloat(normalizedValue) * 1.5
         
+        // Add glow effect for better visibility against dark backgrounds
+        context.stroke(path, with: .color(finalColor.opacity(0.3)), style: StrokeStyle(lineWidth: lineWidth + 2, lineCap: .round))
         context.stroke(path, with: .color(finalColor), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
     }
 }
