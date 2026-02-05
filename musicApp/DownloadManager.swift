@@ -130,7 +130,7 @@ class DownloadManager: ObservableObject {
                     thumbnailPath: thumbnailPath?.path,
                     videoID: finalVideoID,
                     source: source,  // Keep original source (.spotify) for UI icon
-                    originalURL: originalURL  // Store the original URL
+                    originalURL: url  // Store the original URL
                 )
 
 
