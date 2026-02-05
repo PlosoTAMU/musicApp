@@ -438,15 +438,22 @@ struct NowPlayingView: View {
                     
                     Spacer()
                     
-                    Menu {
-                        Button(action: { 
+                    // ✅ NEW: Loop button outside the menu
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
                             audioPlayer.isLoopEnabled.toggle()
-                        }) {
-                            Label(
-                                audioPlayer.isLoopEnabled ? "Loop: On" : "Loop: Off",
-                                systemImage: audioPlayer.isLoopEnabled ? "repeat.1" : "repeat"
-                            )
                         }
+                    } label: {
+                        Image(systemName: audioPlayer.isLoopEnabled ? "repeat.1" : "repeat")
+                            .font(.title3)
+                            .foregroundColor(audioPlayer.isLoopEnabled ? .blue : .white)
+                            .frame(width: 44, height: 44)
+                            .scaleEffect(audioPlayer.isLoopEnabled ? 1.1 : 1.0)
+                            .rotationEffect(.degrees(audioPlayer.isLoopEnabled ? 360 : 0))
+                    }
+                    
+                    Menu {
+                        // ✅ REMOVED: Loop button (now outside)
                         
                         Divider()
                         
