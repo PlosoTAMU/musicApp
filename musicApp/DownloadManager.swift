@@ -652,7 +652,7 @@ class DownloadManager: ObservableObject {
             guard let self = self else { return }
             
             do {
-                // Download new file
+                // Download new file (already goes to Music directory)
                 let (newFileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(
                     url: originalURL,
                     videoID: videoID
@@ -690,56 +690,73 @@ class DownloadManager: ObservableObject {
                     
                     // Find and update the existing download entry IN-PLACE
                     if let index = self.downloads.firstIndex(where: { $0.id == oldDownloadID }) {
-                        // Move new file to Music directory with proper naming
-                        let targetURL = self.musicDirectory.appendingPathComponent(newFileURL.lastPathComponent)
+                        // ✅ FIX: Check if file is already in correct location
+                        let isAlreadyInMusicDir = newFileURL.deletingLastPathComponent() == self.musicDirectory
                         
-                        do {
-                            // Remove target if exists
-                            if FileManager.default.fileExists(atPath: targetURL.path) {
-                                try FileManager.default.removeItem(at: targetURL)
-                            }
+                        let finalURL: URL
+                        if isAlreadyInMusicDir {
+                            // File is already where it needs to be, just use it
+                            finalURL = newFileURL
+                            print("✅ [DownloadManager] New file already in Music directory")
+                        } else {
+                            // Need to move to Music directory
+                            let targetURL = self.musicDirectory.appendingPathComponent(newFileURL.lastPathComponent)
                             
-                            // Move new file
-                            try FileManager.default.moveItem(at: newFileURL, to: targetURL)
-                            
-                            // Update the download entry with new file URL (keeps same ID!)
-                            self.downloads[index] = Download(
-                                id: oldDownloadID,  // ✅ KEEP SAME ID
-                                name: downloadedTitle,
-                                url: targetURL,  // New file location
-                                thumbnailPath: thumbnailPath?.path,
-                                videoID: videoID,
-                                source: download.source,
-                                originalURL: originalURL
-                            )
-                            
-                            self.saveDownloads()
-                            self.objectWillChange.send()
-                            
-                            print("✅ [DownloadManager] Updated download entry with new file")
-                            
-                            // NOW mark old file for deletion (after new one is ready)
-                            if FileManager.default.fileExists(atPath: oldFileURL.path) {
-                                // Create a temporary download object just for deletion
-                                let oldDownloadForDeletion = Download(
-                                    id: UUID(),  // Different ID so it doesn't conflict
-                                    name: "Old version",
-                                    url: oldFileURL,
-                                    thumbnailPath: oldThumbnailPath,
-                                    videoID: nil,
-                                    source: download.source
-                                )
-                                
-                                self.markForDeletion(oldDownloadForDeletion) { _ in
-                                    onOldDeleted()
+                            do {
+                                // Remove target if exists
+                                if FileManager.default.fileExists(atPath: targetURL.path) {
+                                    try FileManager.default.removeItem(at: targetURL)
                                 }
                                 
-                                print("🗑️ [DownloadManager] Scheduled old file for deletion: \(oldFileURL.lastPathComponent)")
+                                // Move new file
+                                try FileManager.default.moveItem(at: newFileURL, to: targetURL)
+                                finalURL = targetURL
+                                print("✅ [DownloadManager] Moved new file to Music directory")
+                            } catch {
+                                print("❌ [DownloadManager] Failed to move new file: \(error)")
+                                // Use the file where it is
+                                finalURL = newFileURL
+                            }
+                        }
+                        
+                        // Update the download entry with new file URL (keeps same ID!)
+                        self.downloads[index] = Download(
+                            id: oldDownloadID,  // ✅ KEEP SAME ID
+                            name: downloadedTitle,
+                            url: finalURL,  // New file location
+                            thumbnailPath: thumbnailPath?.path,
+                            videoID: videoID,
+                            source: download.source,
+                            originalURL: originalURL
+                        )
+                        
+                        self.saveDownloads()
+                        self.objectWillChange.send()
+                        
+                        print("✅ [DownloadManager] Updated download entry with new file: \(finalURL.path)")
+                        
+                        // NOW mark old file for deletion (only if it's different from new file)
+                        if oldFileURL != finalURL && FileManager.default.fileExists(atPath: oldFileURL.path) {
+                            // Create a temporary download object just for deletion
+                            let oldDownloadForDeletion = Download(
+                                id: UUID(),  // Different ID so it doesn't conflict
+                                name: "Old version",
+                                url: oldFileURL,
+                                thumbnailPath: oldThumbnailPath,
+                                videoID: nil,
+                                source: download.source
+                            )
+                            
+                            self.markForDeletion(oldDownloadForDeletion) { _ in
+                                onOldDeleted()
                             }
                             
-                        } catch {
-                            print("❌ [DownloadManager] Failed to move new file: \(error)")
+                            print("🗑️ [DownloadManager] Scheduled old file for deletion: \(oldFileURL.lastPathComponent)")
+                        } else {
+                            print("ℹ️ [DownloadManager] Old file same as new file or already deleted, skipping deletion")
+                            onOldDeleted()
                         }
+                        
                     } else {
                         print("⚠️ [DownloadManager] Could not find original download entry")
                     }
