@@ -468,7 +468,7 @@ struct NowPlayingView: View {
                 
                 Spacer()
                 
-                // Single container
+                // Single container - no frame constraints, let it bleed
                 ZStack {
                     // Main thumbnail with bass pulse (bottom layer)
                     Group {
@@ -500,12 +500,11 @@ struct NowPlayingView: View {
                     
                     // Visualizer overlay (top layer - always visible)
                     EdgeVisualizerView(audioPlayer: audioPlayer)
-                        .frame(width: 320, height: 320)
                         .allowsHitTesting(false)
                         .zIndex(2)  // Visualizer on top
                 }
-                .frame(width: 320, height: 320)
-                .clipped()  // Prevent overflow
+                .frame(minWidth: 320, minHeight: 320)  // Minimum size, can expand
+                .compositingGroup()  // Group for better rendering
                 .onTapGesture {
                     if audioPlayer.isPlaying {
                         audioPlayer.pause()
