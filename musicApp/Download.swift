@@ -10,32 +10,29 @@ struct Download: Identifiable, Codable {
     let id: UUID
     let name: String
     let url: URL
-    var thumbnailPath: String?  // Now stores just filename like "song.m4a.jpg"
+    var thumbnailPath: String?
     var videoID: String?
     var source: DownloadSource
+    var originalURL: String?  // ✅ ADD THIS - store the original download URL
     var pendingDeletion: Bool = false
     
-    // FIXED: Resolve thumbnail path at runtime
     var resolvedThumbnailPath: String? {
         guard let filename = thumbnailPath else { return nil }
         
-        // If it's already just a filename, construct full path
         if !filename.contains("/") {
             let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             return documentsPath.appendingPathComponent("Thumbnails").appendingPathComponent(filename).path
         }
         
-        // If it's an old absolute path, extract filename and reconstruct
         let justFilename = (filename as NSString).lastPathComponent
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documentsPath.appendingPathComponent("Thumbnails").appendingPathComponent(justFilename).path
     }
     
-    init(id: UUID = UUID(), name: String, url: URL, thumbnailPath: String? = nil, videoID: String? = nil, source: DownloadSource = .youtube) {
+    init(id: UUID = UUID(), name: String, url: URL, thumbnailPath: String? = nil, videoID: String? = nil, source: DownloadSource = .youtube, originalURL: String? = nil) {
         self.id = id
         self.name = name
         self.url = url
-        // FIXED: Store only filename, not full path
         if let path = thumbnailPath {
             self.thumbnailPath = (path as NSString).lastPathComponent
         } else {
@@ -43,6 +40,7 @@ struct Download: Identifiable, Codable {
         }
         self.videoID = videoID
         self.source = source
+        self.originalURL = originalURL  // ✅ ADD THIS
         self.pendingDeletion = false
     }
 }

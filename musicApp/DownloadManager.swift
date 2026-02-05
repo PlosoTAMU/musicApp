@@ -129,7 +129,8 @@ class DownloadManager: ObservableObject {
                     url: fileURL,
                     thumbnailPath: thumbnailPath?.path,
                     videoID: finalVideoID,
-                    source: source  // Keep original source (.spotify) for UI icon
+                    source: source,  // Keep original source (.spotify) for UI icon
+                    originalURL: originalURL  // Store the original URL
                 )
 
 
@@ -313,6 +314,7 @@ class DownloadManager: ObservableObject {
         return waveformsDir.appendingPathComponent("\(videoID).waveform")
     }
     
+    // Update addDownload to preserve originalURL:
     func addDownload(_ download: Download) {
         let targetURL = musicDirectory.appendingPathComponent(download.url.lastPathComponent)
         
@@ -327,7 +329,6 @@ class DownloadManager: ObservableObject {
                 try FileManager.default.moveItem(at: download.url, to: targetURL)
                 print("✅ [DownloadManager] Moved file to Music directory: \(targetURL.lastPathComponent)")
                 
-                // FIXED: Store only the FILENAME, not full path
                 var thumbnailFilename: String? = nil
                 if let thumbPath = download.thumbnailPath {
                     thumbnailFilename = URL(fileURLWithPath: thumbPath).lastPathComponent
@@ -337,16 +338,16 @@ class DownloadManager: ObservableObject {
                     id: download.id,
                     name: download.name,
                     url: targetURL,
-                    thumbnailPath: thumbnailFilename,  // Just filename now
+                    thumbnailPath: thumbnailFilename,
                     videoID: download.videoID,
-                    source: download.source
+                    source: download.source,
+                    originalURL: download.originalURL  // ✅ PRESERVE THIS
                 )
             } catch {
                 print("❌ [DownloadManager] Failed to move file: \(error)")
                 finalDownload = download
             }
         } else {
-            // FIXED: Also convert existing full path to filename
             if let thumbPath = download.thumbnailPath {
                 let thumbnailFilename = URL(fileURLWithPath: thumbPath).lastPathComponent
                 finalDownload = Download(
@@ -355,7 +356,8 @@ class DownloadManager: ObservableObject {
                     url: download.url,
                     thumbnailPath: thumbnailFilename,
                     videoID: download.videoID,
-                    source: download.source
+                    source: download.source,
+                    originalURL: download.originalURL  // ✅ PRESERVE THIS
                 )
             }
         }
@@ -567,7 +569,8 @@ class DownloadManager: ObservableObject {
                     url: correctPath,
                     thumbnailPath: loadedDownloads[i].thumbnailPath,
                     videoID: loadedDownloads[i].videoID,
-                    source: loadedDownloads[i].source
+                    source: loadedDownloads[i].source,
+                    originalURL: loadedDownloads[i].originalURL  // Preserve originalURL
                 )
                 
                 loadedDownloads[i].pendingDeletion = false
@@ -589,6 +592,33 @@ class DownloadManager: ObservableObject {
         } catch {
             print("❌ [DownloadManager] Failed to load: \(error)")
             downloads = []
+        }
+    }
+    // Add this method to DownloadManager class:
+    func redownload(_ download: Download, onOldDeleted: @escaping () -> Void) {
+        guard let originalURL = download.originalURL else {
+            print("❌ [DownloadManager] No original URL stored for redownload")
+            return
+        }
+        
+        guard let videoID = download.videoID else {
+            print("❌ [DownloadManager] No videoID for redownload")
+            return
+        }
+        
+        print("🔄 [DownloadManager] Redownloading from: \(originalURL)")
+        
+        // Start the new download
+        startBackgroundDownload(
+            url: originalURL,
+            videoID: videoID,
+            source: download.source,
+            title: "Redownloading..."
+        )
+        
+        // Mark old one for deletion (will auto-delete in 5 seconds)
+        markForDeletion(download) { deletedDownload in
+            onOldDeleted()
         }
     }
     

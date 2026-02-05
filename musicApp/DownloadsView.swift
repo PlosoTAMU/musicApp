@@ -38,9 +38,17 @@ struct DownloadsView: View {
                         },
                         onRename: { newName in
                             downloadManager.renameDownload(download, newName: newName)
+                            // ✅ Force refresh to show new name immediately
+                            downloadManager.objectWillChange.send()
                         },
                         onRedownload: {
-                            handleRedownload(download)
+                            downloadManager.redownload(download) {
+                                // ✅ Old song is being deleted, update UI if needed
+                                if audioPlayer.currentTrack?.id == download.id {
+                                    audioPlayer.stop()
+                                }
+                                playlistManager.removeFromAllPlaylists(download.id)
+                            }
                         }
                     )
                     .opacity(download.pendingDeletion ? 0.5 : 1.0)
@@ -187,7 +195,7 @@ struct DownloadRow: View {
                     Label("Rename", systemImage: "pencil")
                 }
                 
-                if let videoID = download.videoID, !videoID.isEmpty, download.source != .folder {
+                if download.originalURL != nil {
                     Button {
                         onRedownload()
                     } label: {
