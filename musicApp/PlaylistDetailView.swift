@@ -232,22 +232,23 @@ struct PlaylistSongRow: View {
                     .italic(isCurrentlyPlaying)
                     .lineLimit(1)
                 
-                Spacer()
-                
-                if isCurrentlyPlaying && audioPlayer.isPlaying {
-                    Image(systemName: "speaker.wave.2.fill")
-                        .foregroundColor(.blue)
-                }
+                Spacer()  // ✅ ADD THIS
             }
-            .contentShape(Rectangle())
+            .contentShape(Rectangle())  // ✅ MOVE THIS UP
             .onTapGesture {
                 onTap()
+            }
+            
+            // This stays outside
+            if isCurrentlyPlaying && audioPlayer.isPlaying {
+                Image(systemName: "speaker.wave.2.fill")
+                    .foregroundColor(.blue)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(Color.black)
-        .swipeToQueue {  // ✨ USE THE MODIFIER HERE
+        .swipeToQueue {
             let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
             audioPlayer.addToQueue(track)
         }

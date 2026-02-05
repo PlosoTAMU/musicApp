@@ -136,14 +136,15 @@ struct DownloadRow: View {
                     }
                     .foregroundColor(.secondary)
                 }
+                
+                Spacer()  // ✅ ADD THIS - pushes content left and fills width
             }
-            .contentShape(Rectangle())
+            .contentShape(Rectangle())  // ✅ MOVE THIS UP - makes entire HStack tappable
             .onTapGesture {
                 handleTap()
             }
             
-            Spacer()
-            
+            // Buttons stay outside the tap area
             if !download.pendingDeletion {
                 Button(action: onAddToPlaylist) {
                     Image(systemName: "plus.circle")
@@ -163,7 +164,7 @@ struct DownloadRow: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(Color.black)
-        .swipeToQueue {  // ✨ USE THE MODIFIER HERE
+        .swipeToQueue {
             let folderName = folderName(for: download.source)
             let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
             audioPlayer.addToQueue(track)

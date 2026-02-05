@@ -224,14 +224,12 @@ struct QueueTrackRow: View {
                     .lineLimit(1)
             }
             
-            Spacer()
+            Spacer()  // ✅ ADD THIS
         }
-        .contentShape(Rectangle())
+        .contentShape(Rectangle())  // ✅ ALREADY CORRECT POSITION
         .onTapGesture {
             if !isPlaying {
                 if isPrevious {
-                    // Tap on previous song - need to reconstruct queue
-                    // This is complex, so just play it directly
                     audioPlayer.play(track)
                 } else {
                     audioPlayer.playFromQueue(track)
