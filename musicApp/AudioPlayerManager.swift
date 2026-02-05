@@ -179,7 +179,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     // ✅ NEW: Save settings for current track
-    private func saveTrackSettings() {
+    private func saveCurrentTrackSettings() {
         guard let trackID = currentTrack?.id else { return }
         
         trackSettings[trackID] = TrackSettings(
@@ -187,15 +187,22 @@ class AudioPlayerManager: NSObject, ObservableObject {
             reverbAmount: reverbAmount
         )
         
+        // Save to disk (debounced to avoid excessive writes)
+        saveTrackSettingsToDisk()
+    }
+    
+    // ✅ NEW: Write settings to disk
+    private func saveTrackSettingsToDisk() {
         do {
             let data = try JSONEncoder().encode(trackSettings)
             try data.write(to: trackSettingsFileURL, options: .atomic)
+            print("💾 [AudioPlayer] Saved settings for \(trackSettings.count) tracks")
         } catch {
             print("❌ [AudioPlayer] Failed to save track settings: \(error)")
         }
     }
     
-    // ✅ NEW: Apply settings for track (or use defaults)
+    // ✅ NEW: Apply saved settings for track (or use defaults)
     private func applyTrackSettings(for track: Track) {
         if let settings = trackSettings[track.id] {
             // Restore saved settings

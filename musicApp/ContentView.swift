@@ -523,14 +523,28 @@ struct NowPlayingView: View {
                 Spacer()
                 
                 VStack(spacing: 6) {
-                    Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .italic()
-                        .foregroundColor(.white)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 28)
+                    // ✅ NEW: Auto-scrolling title with continuous loop
+                    GeometryReader { geometry in
+                        let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
+                        let textWidth = titleText.widthOfString(usingFont: UIFont.boldSystemFont(ofSize: 28))
+                        let needsScroll = textWidth > geometry.size.width
+                        
+                        ZStack {
+                            if needsScroll {
+                                ScrollingTextView(
+                                    text: titleText,
+                                    font: .title,
+                                    width: geometry.size.width
+                                )
+                            } else {
+                                Text(titleText)
+                                    .font(.title)
+                                    .fontWeight(.bold)
+                                    .italic()
+                                    .foregroundColor(.white)
+                                    .frame(width: geometry.size.width, alignment: .center)
+                            }
+                        }
                         .onTapGesture {
                             if audioPlayer.isPlaying {
                                 audioPlayer.pause()
@@ -538,6 +552,38 @@ struct NowPlayingView: View {
                                 audioPlayer.resume()
                             }
                         }
+                    }
+                    .frame(height: 40)
+                    .padding(.horizontal, 28)
+                    
+                    Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
+                        .font(.title3)
+                        .foregroundColor(.white.opacity(0.7))
+                        .lineLimit(1)
+                }
+                    // ✅ NEW: Horizontally scrollable title
+                    GeometryReader { geometry in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                                .font(.title)
+                                .fontWeight(.bold)
+                                .italic()
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .frame(minWidth: geometry.size.width, alignment: .center)
+                                .onTapGesture {
+                                    if audioPlayer.isPlaying {
+                                        audioPlayer.pause()
+                                    } else {
+                                        audioPlayer.resume()
+                                    }
+                                }
+                        }
+                        .frame(height: 40)
+                    }
+                    .frame(height: 40)
+                    .padding(.horizontal, 28)
                     
                     Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
                         .font(.title3)
@@ -1112,5 +1158,71 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         return AppDelegate.orientationLock
+    }
+}
+
+// MARK: - Auto-Scrolling Text View
+struct ScrollingTextView: View {
+    let text: String
+    let font: Font
+    let width: CGFloat
+    
+    @State private var offset: CGFloat = 0
+    @State private var textWidth: CGFloat = 0
+    
+    var body: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 50) {
+                // First instance
+                Text(text)
+                    .font(font)
+                    .fontWeight(.bold)
+                    .italic()
+                    .foregroundColor(.white)
+                    .fixedSize()
+                    .background(
+                        GeometryReader { textGeo in
+                            Color.clear.onAppear {
+                                textWidth = textGeo.size.width
+                            }
+                        }
+                    )
+                
+                // Second instance for seamless loop
+                Text(text)
+                    .font(font)
+                    .fontWeight(.bold)
+                    .italic()
+                    .foregroundColor(.white)
+                    .fixedSize()
+            }
+            .offset(x: offset)
+            .onAppear {
+                startScrolling()
+            }
+        }
+        .clipped()
+    }
+    
+    private func startScrolling() {
+        // Wait a moment before starting
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            // Calculate duration based on text length (slower for longer text)
+            let duration = Double(textWidth) / 30.0 // Adjust speed here (lower = faster)
+            
+            withAnimation(.linear(duration: duration).repeatForever(autoreverses: false)) {
+                // Scroll to the left by the full width + spacing
+                offset = -(textWidth + 50)
+            }
+        }
+    }
+}
+
+// MARK: - String Width Helper
+extension String {
+    func widthOfString(usingFont font: UIFont) -> CGFloat {
+        let fontAttributes = [NSAttributedString.Key.font: font]
+        let size = self.size(withAttributes: fontAttributes)
+        return size.width
     }
 }
