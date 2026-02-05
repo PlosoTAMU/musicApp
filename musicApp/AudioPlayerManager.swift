@@ -943,10 +943,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func installVisualizationTap() {
-        guard let player = playerNode else { return }
+        guard let engine = audioEngine else { return }
         
+        // Remove existing tap if present
         if visualizationTapInstalled {
-            player.removeTap(onBus: 0)
+            engine.mainMixerNode.removeTap(onBus: 0)
             visualizationTapInstalled = false
         }
         
@@ -957,14 +958,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // Reset beat detection state for new track
         resetBeatDetectionState()
         
-        let format = player.outputFormat(forBus: 0)
+        // Install tap on main mixer output (AFTER time pitch node)
+        // This ensures visualizer runs at consistent speed regardless of playback rate
+        let format = engine.mainMixerNode.outputFormat(forBus: 0)
         
-        player.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
+        engine.mainMixerNode.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
             self?.processFFTBuffer(buffer)
         }
         
         visualizationTapInstalled = true
-        print("✅ [AudioPlayer] Advanced beat-detection visualizer installed")
+        print("✅ [AudioPlayer] Advanced beat-detection visualizer installed on mixer output")
     }
     
     private func resetBeatDetectionState() {
@@ -990,8 +993,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func removeVisualizationTap() {
-        guard visualizationTapInstalled else { return }
-        playerNode?.removeTap(onBus: 0)
+        guard visualizationTapInstalled, let engine = audioEngine else { return }
+        engine.mainMixerNode.removeTap(onBus: 0)
         visualizationTapInstalled = false
         print("✅ [AudioPlayer] Visualization tap removed")
     }
