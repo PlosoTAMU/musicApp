@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AVFoundation
 
 class DownloadManager: ObservableObject {
     @Published var downloads: [Download] = [] {
@@ -160,7 +161,8 @@ class DownloadManager: ObservableObject {
             url: download.url,
             thumbnailPath: download.thumbnailPath,
             videoID: download.videoID,
-            source: download.source
+            source: download.source,
+            originalURL: download.originalURL
         )
         
         saveDownloads()
@@ -595,7 +597,7 @@ class DownloadManager: ObservableObject {
         }
     }
 
-    // ✅ UPDATED: Don't delete old file immediately, wait for new download to finish
+    // ✅ FIXED: Proper redownload with banner and validation
     func redownload(_ download: Download, onOldDeleted: @escaping () -> Void) {
         guard let originalURL = download.originalURL else {
             print("❌ [DownloadManager] No original URL stored for redownload")
@@ -607,54 +609,146 @@ class DownloadManager: ObservableObject {
             return
         }
         
-        print("🔄 [DownloadManager] Redownloading from: \(originalURL)")
+        print("🔄 [DownloadManager] Starting redownload for: \(download.name)")
         
-        // Store the old download ID to delete after new one completes
+        // Store reference to old download
         let oldDownloadID = download.id
+        let oldFileURL = download.url
+        let oldThumbnailPath = download.thumbnailPath
         
-        // Start the new download with completion handler
-        Task {
-            do {
-                // Wait for download to complete
-                let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: originalURL, videoID: videoID)
+        // Create active download entry (this shows the banner)
+        let activeDownload = ActiveDownload(
+            id: UUID(),
+            videoID: videoID,
+            title: "Redownloading \(download.name)..."
+        )
+        
+        DispatchQueue.main.async {
+            self.activeDownloads.append(activeDownload)
+        }
+        
+        let targetDownloadID = activeDownload.id
+        
+        // Set up title callback
+        EmbeddedPython.shared.onTitleFetched = { [weak self] callbackVideoID, callbackTitle in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
                 
+                if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
+                    self.activeDownloads[index] = ActiveDownload(
+                        id: self.activeDownloads[index].id,
+                        videoID: callbackVideoID,
+                        title: "Redownloading \(callbackTitle)..."
+                    )
+                    self.objectWillChange.send()
+                }
+            }
+        }
+        
+        // Start download in background
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
+            
+            do {
+                // Download new file
+                let (newFileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(
+                    url: originalURL,
+                    videoID: videoID
+                )
+                
+                // Wait for thumbnail
                 var thumbnailPath: URL? = nil
                 for attempt in 1...5 {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: newFileURL)
                     if thumbnailPath != nil { break }
                 }
                 
                 if thumbnailPath == nil && !videoID.isEmpty {
-                    EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
+                    EmbeddedPython.shared.ensureThumbnail(for: newFileURL, videoID: videoID)
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: newFileURL)
                 }
                 
-                let newDownload = Download(
-                    name: downloadedTitle,
-                    url: fileURL,
-                    thumbnailPath: thumbnailPath?.path,
-                    videoID: videoID,
-                    source: download.source,
-                    originalURL: originalURL
-                )
+                // Validate the new file is playable
+                let testFile = try AVAudioFile(forReading: newFileURL)
+                guard testFile.length > 0 else {
+                    throw NSError(
+                        domain: "DownloadManager",
+                        code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "Downloaded file is empty"]
+                    )
+                }
+                
+                print("✅ [DownloadManager] New file validated: \(newFileURL.lastPathComponent)")
                 
                 await MainActor.run {
-                    // Add new download
-                    self.addDownload(newDownload)
+                    // Remove from active downloads
+                    self.activeDownloads.removeAll { $0.id == targetDownloadID }
                     
-                    // NOW mark old one for deletion (only after new download succeeded)
-                    if let oldDownload = self.downloads.first(where: { $0.id == oldDownloadID }) {
-                        self.markForDeletion(oldDownload) { deletedDownload in
-                            onOldDeleted()
+                    // Find and update the existing download entry IN-PLACE
+                    if let index = self.downloads.firstIndex(where: { $0.id == oldDownloadID }) {
+                        // Move new file to Music directory with proper naming
+                        let targetURL = self.musicDirectory.appendingPathComponent(newFileURL.lastPathComponent)
+                        
+                        do {
+                            // Remove target if exists
+                            if FileManager.default.fileExists(atPath: targetURL.path) {
+                                try FileManager.default.removeItem(at: targetURL)
+                            }
+                            
+                            // Move new file
+                            try FileManager.default.moveItem(at: newFileURL, to: targetURL)
+                            
+                            // Update the download entry with new file URL (keeps same ID!)
+                            self.downloads[index] = Download(
+                                id: oldDownloadID,  // ✅ KEEP SAME ID
+                                name: downloadedTitle,
+                                url: targetURL,  // New file location
+                                thumbnailPath: thumbnailPath?.path,
+                                videoID: videoID,
+                                source: download.source,
+                                originalURL: originalURL
+                            )
+                            
+                            self.saveDownloads()
+                            self.objectWillChange.send()
+                            
+                            print("✅ [DownloadManager] Updated download entry with new file")
+                            
+                            // NOW mark old file for deletion (after new one is ready)
+                            if FileManager.default.fileExists(atPath: oldFileURL.path) {
+                                // Create a temporary download object just for deletion
+                                let oldDownloadForDeletion = Download(
+                                    id: UUID(),  // Different ID so it doesn't conflict
+                                    name: "Old version",
+                                    url: oldFileURL,
+                                    thumbnailPath: oldThumbnailPath,
+                                    videoID: nil,
+                                    source: download.source
+                                )
+                                
+                                self.markForDeletion(oldDownloadForDeletion) { _ in
+                                    onOldDeleted()
+                                }
+                                
+                                print("🗑️ [DownloadManager] Scheduled old file for deletion: \(oldFileURL.lastPathComponent)")
+                            }
+                            
+                        } catch {
+                            print("❌ [DownloadManager] Failed to move new file: \(error)")
                         }
+                    } else {
+                        print("⚠️ [DownloadManager] Could not find original download entry")
                     }
                 }
                 
-                print("✅ [DownloadManager] Redownload complete, old file marked for deletion")
             } catch {
                 print("❌ [DownloadManager] Redownload failed: \(error)")
+                
+                await MainActor.run {
+                    self.activeDownloads.removeAll { $0.id == targetDownloadID }
+                }
             }
         }
     }
