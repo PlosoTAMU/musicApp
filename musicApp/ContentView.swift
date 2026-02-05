@@ -471,7 +471,7 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, 35)
+                .padding(.top, 40)
                 
                 Spacer()
                 

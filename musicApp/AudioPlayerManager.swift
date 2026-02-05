@@ -471,6 +471,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 self.currentPlaylist = shuffle ? tracks.shuffled() : tracks
                 self.currentIndex = 0
                 self.previousQueue.removeAll()
+            
+                // ✅ AUTO-DISABLE: Disable loop when loading a playlist
+                if self.isLoopEnabled {
+                    self.isLoopEnabled = false
+                    print("🔁 [AudioPlayer] Loop disabled - playlist loaded")
+                }
                 
                 if !self.currentPlaylist.isEmpty {
                     self.play(self.currentPlaylist[0])
@@ -931,6 +937,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func addToQueue(_ track: Track) {
         DispatchQueue.main.async {
             self.queue.append(track)
+        
+            // ✅ AUTO-DISABLE: Disable loop when adding to queue
+            if self.isLoopEnabled {
+                self.isLoopEnabled = false
+                print("🔁 [AudioPlayer] Loop disabled - song added to queue")
+            }
             
             if self.currentTrack == nil {
                 self.isPlaylistMode = false
@@ -943,6 +955,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func playNext(_ track: Track) {
         DispatchQueue.main.async {
             self.queue.insert(track, at: 0)
+        
+            // ✅ AUTO-DISABLE: Disable loop when playing next
+            if self.isLoopEnabled {
+                self.isLoopEnabled = false
+                print("🔁 [AudioPlayer] Loop disabled - song queued to play next")
+            }
             
             if self.currentTrack == nil {
                 self.isPlaylistMode = false
@@ -972,6 +990,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func playFromQueue(_ track: Track) {
+        // ✅ AUTO-DISABLE: Disable loop when playing from queue
+        if isLoopEnabled {
+            isLoopEnabled = false
+            print("🔁 [AudioPlayer] Loop disabled - playing from queue")
         if let current = currentTrack {
             previousQueue.append(current)
         }
