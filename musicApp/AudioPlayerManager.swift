@@ -508,8 +508,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 self.seekOffset = 0
                 self.needsReschedule = false
                 self.isHandlingRouteChange = false
-
-                self.applyTrackSettings(for: track) // ✅ APPLY saved settings
             }
             
             do {
@@ -580,6 +578,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     if let index = self.currentPlaylist.firstIndex(where: { $0.id == track.id }) {
                         self.currentIndex = index
                     }
+                    
+                    // ✅ Apply saved settings AFTER audio engine is ready
+                    self.applyTrackSettings(for: track)
                     
                     self.startTimeUpdates()
                     self.updateNowPlayingInfo()

@@ -560,34 +560,6 @@ struct NowPlayingView: View {
                         .font(.title3)
                         .foregroundColor(.white.opacity(0.7))
                         .lineLimit(1)
-                    // ✅ NEW: Horizontally scrollable title
-                    GeometryReader { geometry in
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                                .font(.title)
-                                .fontWeight(.bold)
-                                .italic()
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                                .frame(minWidth: geometry.size.width, alignment: .center)
-                                .onTapGesture {
-                                    if audioPlayer.isPlaying {
-                                        audioPlayer.pause()
-                                    } else {
-                                        audioPlayer.resume()
-                                    }
-                                }
-                        }
-                        .frame(height: 40)
-                    }
-                    .frame(height: 40)
-                    .padding(.horizontal, 28)
-                    
-                    Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
-                        .font(.title3)
-                        .foregroundColor(.white.opacity(0.7))
-                        .lineLimit(1)
                 }
                 
                 
