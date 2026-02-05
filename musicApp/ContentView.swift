@@ -952,24 +952,27 @@ struct EdgeVisualizerView: View {
     
     @inline(__always)
     private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float, index: Int) {
-        // Values are already in 0.08-0.92 range from AudioPlayerManager
-        // Map to bar length with much larger dynamic range
-        let normalizedValue = CGFloat(value)
+        // Values come from AudioPlayerManager in 0.08-0.92 range
+        // Remap to 0-1 range for better control
+        let remappedValue = (CGFloat(value) - 0.08) / (0.92 - 0.08)  // 0.08->0, 0.92->1
+        let clampedValue = max(0, min(1, remappedValue))
         
-        // Calculate bar length with lower minimum for more dynamic range
-        // Now ranges from 1.5px to 56px (was 4px to 56px)
-        let barLength = minBarLength + normalizedValue * (maxBarLength - minBarLength - 4)
+        // Calculate bar length - when paused/quiet, value approaches 0 and bar becomes tiny
+        let barLength = minBarLength + clampedValue * (maxBarLength - minBarLength)
+        
+        // Only draw if there's meaningful length
+        guard barLength > 0.5 else { return }
         
         // Rainbow hue based on position around the square
         // Creates smooth color gradient around the perimeter
         let hue = Double(index) / 100.0
         
         // Opacity varies with intensity for depth effect
-        let opacity = 0.5 + Double(value) * 0.5
+        let opacity = 0.5 + Double(clampedValue) * 0.5
         
         // Saturation and brightness pulse slightly with value
-        let saturation = 0.85 + Double(value) * 0.15
-        let brightness = 0.7 + Double(value) * 0.3
+        let saturation = 0.85 + Double(clampedValue) * 0.15
+        let brightness = 0.7 + Double(clampedValue) * 0.3
         
         let color = Color(hue: hue, saturation: saturation, brightness: brightness, opacity: opacity)
         
@@ -978,7 +981,7 @@ struct EdgeVisualizerView: View {
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
         // Line width also pulses slightly with intensity
-        let lineWidth = 2.0 + CGFloat(value) * 1.5
+        let lineWidth = 2.0 + CGFloat(clampedValue) * 1.5
         
         context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
     }
