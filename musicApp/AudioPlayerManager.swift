@@ -990,10 +990,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func playFromQueue(_ track: Track) {
-        // ✅ AUTO-DISABLE: Disable loop when playing from queue
+    // ✅ AUTO-DISABLE: Disable loop when playing from queue
         if isLoopEnabled {
             isLoopEnabled = false
             print("🔁 [AudioPlayer] Loop disabled - playing from queue")
+        }
         if let current = currentTrack {
             previousQueue.append(current)
         }
