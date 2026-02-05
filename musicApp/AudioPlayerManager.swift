@@ -1169,7 +1169,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let subBassThreshold = avgSubBass * 1.2  // Much more sensitive to bass
         
         let now = CFAbsoluteTimeGetCurrent()
-        let minBeatInterval: CFAbsoluteTime = 0.07  // Allow even faster beats
+        let minBeatInterval: CFAbsoluteTime = 0.14  // Allow even faster beats
         
         var beatDetected = false
         var beatStrength: Float = 0

@@ -895,6 +895,8 @@ struct EdgeVisualizerView: View {
     private let minBarLength: CGFloat = 1   // Lower minimum for larger dynamic range
     private let barsPerSide = 25  // 100 total bars = matches FFT bins
     
+    @State private var dominantColors: [Color] = []
+    
     var body: some View {
         Canvas { context, size in
             let centerX = size.width / 2
@@ -919,7 +921,7 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
                 let y = centerY - halfBox
-                drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex], index: barIndex)
+                drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex], index: barIndex, colors: dominantColors)
                 barIndex += 1
             }
             
@@ -927,7 +929,7 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX + halfBox
                 let y = centerY - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
-                drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex], index: barIndex)
+                drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex], index: barIndex, colors: dominantColors)
                 barIndex += 1
             }
             
@@ -935,7 +937,7 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
                 let y = centerY + halfBox
-                drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex], index: barIndex)
+                drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex], index: barIndex, colors: dominantColors)
                 barIndex += 1
             }
             
@@ -943,15 +945,100 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX - halfBox
                 let y = centerY + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
-                drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex], index: barIndex)
+                drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex], index: barIndex, colors: dominantColors)
                 barIndex += 1
             }
         }
         .drawingGroup()
+        .onChange(of: audioPlayer.currentTrack) { newTrack in
+            updateColors(for: newTrack)
+        }
+        .onAppear {
+            updateColors(for: audioPlayer.currentTrack)
+        }
+    }
+    
+    private func updateColors(for track: Track?) {
+        guard let track = track else {
+            dominantColors = [Color.white]
+            return
+        }
+        
+        let filename = track.url.lastPathComponent.replacingOccurrences(of: ".mp3", with: "")
+        let thumbnailsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Thumbnails", isDirectory: true)
+        let thumbnailPath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+        
+        guard FileManager.default.fileExists(atPath: thumbnailPath.path),
+              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
+            dominantColors = [Color.white]
+            return
+        }
+        
+        dominantColors = extractDominantColors(from: image)
+    }
+    
+    private func extractDominantColors(from image: UIImage) -> [Color] {
+        guard let cgImage = image.cgImage else { return [Color.white] }
+        
+        // Resize to small size for performance
+        let size = CGSize(width: 50, height: 50)
+        UIGraphicsBeginImageContext(size)
+        image.draw(in: CGRect(origin: .zero, size: size))
+        guard let resizedImage = UIGraphicsGetImageFromCurrentImageContext(),
+              let resizedCGImage = resizedImage.cgImage,
+              let dataProvider = resizedCGImage.dataProvider,
+              let pixelData = dataProvider.data,
+              let data = CFDataGetBytePtr(pixelData) else {
+            UIGraphicsEndImageContext()
+            return [Color.white]
+        }
+        UIGraphicsEndImageContext()
+        
+        let bytesPerPixel = 4
+        let bytesPerRow = resizedCGImage.bytesPerRow
+        
+        // Sample colors from the image
+        var colorCounts: [String: (color: Color, count: Int)] = [:]
+        
+        for y in 0..<50 {
+            for x in 0..<50 {
+                let pixelIndex = (y * bytesPerRow) + (x * bytesPerPixel)
+                let r = CGFloat(data[pixelIndex]) / 255.0
+                let g = CGFloat(data[pixelIndex + 1]) / 255.0
+                let b = CGFloat(data[pixelIndex + 2]) / 255.0
+                
+                // Skip very dark or very light colors
+                let brightness = (r + g + b) / 3.0
+                guard brightness > 0.2 && brightness < 0.9 else { continue }
+                
+                // Quantize to reduce similar colors
+                let qR = Int(r * 4) / 4
+                let qG = Int(g * 4) / 4
+                let qB = Int(b * 4) / 4
+                let key = "\(qR)-\(qG)-\(qB)"
+                
+                let color = Color(red: r, green: g, blue: b)
+                if var existing = colorCounts[key] {
+                    existing.count += 1
+                    colorCounts[key] = existing
+                } else {
+                    colorCounts[key] = (color: color, count: 1)
+                }
+            }
+        }
+        
+        // Get top 3 most common colors
+        let sortedColors = colorCounts.values
+            .sorted { $0.count > $1.count }
+            .prefix(3)
+            .map { $0.color }
+        
+        return sortedColors.isEmpty ? [Color.white] : sortedColors
     }
     
     @inline(__always)
-    private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float, index: Int) {
+    private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float, index: Int, colors: [Color]) {
         // Values now range 0-1 from AudioPlayerManager
         // 0 = no activity, line should not be drawn
         guard value > 0.01 else { return }  // Skip near-zero values
@@ -961,27 +1048,45 @@ struct EdgeVisualizerView: View {
         // Calculate bar length - 0 means invisible, 1 means full length
         let barLength = normalizedValue * maxBarLength
         
-        // Rainbow hue based on position around the square
-        // Creates smooth color gradient around the perimeter
-        let hue = Double(index) / 100.0
+        // Choose color from extracted palette based on position and intensity
+        let baseColor: Color
+        if colors.isEmpty {
+            baseColor = Color.white
+        } else {
+            // Cycle through the dominant colors based on position
+            let colorIndex = index % colors.count
+            baseColor = colors[colorIndex]
+        }
         
-        // Opacity varies with intensity for depth effect
-        let opacity = 0.5 + Double(normalizedValue) * 0.5
+        // Extract HSB from base color and modify for visual interest
+        let uiColor = UIColor(baseColor)
+        var hue: CGFloat = 0
+        var saturation: CGFloat = 0
+        var brightness: CGFloat = 0
+        var alpha: CGFloat = 0
+        uiColor.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
         
-        // Saturation and brightness pulse slightly with value
-        let saturation = 0.85 + Double(normalizedValue) * 0.15
-        let brightness = 0.7 + Double(normalizedValue) * 0.3
+        // Shift hue slightly based on intensity for variation
+        let hueShift = Double(normalizedValue) * 0.05 - 0.025  // ±2.5% hue shift
+        let adjustedHue = (hue + hueShift).truncatingRemainder(dividingBy: 1.0)
         
-        let color = Color(hue: hue, saturation: saturation, brightness: brightness, opacity: opacity)
+        // Boost saturation and brightness with intensity
+        let adjustedSaturation = min(1.0, saturation + Double(normalizedValue) * 0.3)
+        let adjustedBrightness = min(1.0, brightness + Double(normalizedValue) * 0.4)
+        
+        // Opacity varies with intensity
+        let opacity = 0.6 + Double(normalizedValue) * 0.4
+        
+        let finalColor = Color(hue: adjustedHue, saturation: adjustedSaturation, brightness: adjustedBrightness, opacity: opacity)
         
         var path = Path()
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        // Line width also pulses slightly with intensity
+        // Line width pulses with intensity
         let lineWidth = 2.0 + CGFloat(normalizedValue) * 1.5
         
-        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+        context.stroke(path, with: .color(finalColor), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
     }
 }
 
