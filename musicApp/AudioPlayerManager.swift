@@ -17,13 +17,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var reverbAmount: Double = 0 {
         didSet { 
             applyReverb()
-            saveTrackSettings() // ✅ SAVE when changed
+            saveCurrentTrackSettings() // ✅ SAVE when changed
         }
     }
     @Published var playbackSpeed: Double = 1.0 {
         didSet { 
             applyPlaybackSpeed()
-            saveTrackSettings() // ✅ SAVE when changed
+            saveCurrentTrackSettings() // ✅ SAVE when changed
         }
     }
     
