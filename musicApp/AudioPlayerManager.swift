@@ -754,6 +754,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     private func applyPlaybackSpeed() {
+        let previousSpeed = savedPlaybackSpeed
+        
         audioQueue.async {
             guard let timePitch = self.timePitchNode else { return }
             
@@ -771,6 +773,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             if self.playbackSpeed != 2.0 {
                 self.savedPlaybackSpeed = self.playbackSpeed
+            }
+            
+            // If we crossed the 1.0x threshold, reinstall the tap on the appropriate node
+            let crossedThreshold = (previousSpeed < 1.0 && self.playbackSpeed >= 1.0) ||
+                                   (previousSpeed >= 1.0 && self.playbackSpeed < 1.0)
+            
+            if crossedThreshold && self.isPlaying {
+                print("⚡ Playback speed crossed 1.0x threshold, reinstalling visualizer tap")
+                self.removeVisualizationTap()
+                self.installVisualizationTap()
             }
             
             DispatchQueue.main.async {
@@ -943,11 +955,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func installVisualizationTap() {
-        guard let engine = audioEngine else { return }
+        guard let engine = audioEngine, let player = playerNode else { return }
         
-        // Remove existing tap if present
+        // Remove existing tap if present from both possible locations
         if visualizationTapInstalled {
+            // Try removing from both locations (one will fail silently)
             engine.mainMixerNode.removeTap(onBus: 0)
+            player.removeTap(onBus: 0)
             visualizationTapInstalled = false
         }
         
@@ -958,16 +972,24 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // Reset beat detection state for new track
         resetBeatDetectionState()
         
-        // Install tap on main mixer output (AFTER time pitch node)
-        // This ensures visualizer runs at consistent speed regardless of playback rate
-        let format = engine.mainMixerNode.outputFormat(forBus: 0)
-        
-        engine.mainMixerNode.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
-            self?.processFFTBuffer(buffer)
+        // Choose tap location based on playback speed
+        // For speeds < 1.0x: Use mixer output (maintains real-time visualization)
+        // For speeds >= 1.0x: Use player output (visualization speeds up with audio)
+        if playbackSpeed < 1.0 {
+            let format = engine.mainMixerNode.outputFormat(forBus: 0)
+            engine.mainMixerNode.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
+                self?.processFFTBuffer(buffer)
+            }
+            print("✅ [AudioPlayer] Visualizer installed on mixer output (slow playback mode)")
+        } else {
+            let format = player.outputFormat(forBus: 0)
+            player.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
+                self?.processFFTBuffer(buffer)
+            }
+            print("✅ [AudioPlayer] Visualizer installed on player output (normal/fast playback mode)")
         }
         
         visualizationTapInstalled = true
-        print("✅ [AudioPlayer] Advanced beat-detection visualizer installed on mixer output")
     }
     
     private func resetBeatDetectionState() {
@@ -993,8 +1015,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func removeVisualizationTap() {
-        guard visualizationTapInstalled, let engine = audioEngine else { return }
+        guard visualizationTapInstalled, let engine = audioEngine, let player = playerNode else { return }
+        
+        // Remove from both possible locations (one will fail silently, that's ok)
         engine.mainMixerNode.removeTap(onBus: 0)
+        player.removeTap(onBus: 0)
+        
         visualizationTapInstalled = false
         print("✅ [AudioPlayer] Visualization tap removed")
     }
