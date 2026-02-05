@@ -1283,11 +1283,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
             let beatModulation = beatIntensity * (1.0 - Float(i) / 150.0)  // Decreases toward high freqs
             value = value * (0.55 + beatModulation * 0.9)  // 55-145% based on beat (even more punch!)
             
-            value = min(1.0, value)
+            value = min(1.0, max(0, value))
             
             // Smooth with different attack/decay for PUNCHY feel
             let smoothUp: Float = 0.90    // Near-instant attack
-            let smoothDown: Float = 0.35  // Even faster decay - won't stay static (was 0.25)
+            let smoothDown: Float = 0.35  // Even faster decay - won't stay static
             
             if value > smoothedBins[i] {
                 smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothUp
@@ -1295,12 +1295,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothDown
             }
             
-            // Apply minimum threshold - never fully silent, never maxed out
-            let minVal: Float = 0.08
-            let maxVal: Float = 0.92
-            smoothedBins[i] = minVal + smoothedBins[i] * (maxVal - minVal)
-            
-            orderedBins[i] = smoothedBins[i]
+            // NO artificial floor - 0 means no activity, lines should be invisible
+            // Values naturally range 0-1 based on actual audio energy
+            orderedBins[i] = min(1.0, max(0, smoothedBins[i]))
         }
         
         // Shuffle for visual distribution
@@ -1329,8 +1326,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
             smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.35  // Much faster decay
         }
         
-        // Clamp to reasonable range for visual pulse
-        smoothedBass = min(0.9, max(0.05, smoothedBass))
+        // NO artificial floor - 0 means no pulse, thumbnail stays static
+        smoothedBass = min(1.0, max(0, smoothedBass))
         
         // ==========================================
         // STEP 12: Throttled update to SwiftUI
