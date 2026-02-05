@@ -15,11 +15,22 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
     @Published var reverbAmount: Double = 0 {
-        didSet { applyReverb() }
+        didSet { 
+            applyReverb()
+            saveTrackSettings() // ✅ SAVE when changed
+        }
     }
     @Published var playbackSpeed: Double = 1.0 {
-        didSet { applyPlaybackSpeed() }
+        didSet { 
+            applyPlaybackSpeed()
+            saveTrackSettings() // ✅ SAVE when changed
+        }
     }
+    
+    // ✅ NEW: Store settings per track
+    private var trackSettings: [UUID: TrackSettings] = [:]
+    private let trackSettingsFileURL: URL
+    
     // FIXED: Dedicated high-priority audio thread
     private let audioQueue = DispatchQueue(
         label: "com.musicapp.audioplayback",
@@ -132,12 +143,73 @@ class AudioPlayerManager: NSObject, ObservableObject {
     var onPlaybackEnded: (() -> Void)?
     
     override init() {
+        // Setup track settings file URL
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        trackSettingsFileURL = documentsPath.appendingPathComponent("track_settings.json")
+        
         super.init()
+        
+        loadTrackSettings() // ✅ LOAD saved settings
         setupAudioSession()
         setupAudioEngine()
         setupRemoteControls()
         setupInterruptionHandling()
     }
+    
+    // ✅ NEW: Track settings structure
+    private struct TrackSettings: Codable {
+        var playbackSpeed: Double
+        var reverbAmount: Double
+    }
+    
+    // ✅ NEW: Load saved settings
+    private func loadTrackSettings() {
+        guard FileManager.default.fileExists(atPath: trackSettingsFileURL.path) else {
+            print("ℹ️ [AudioPlayer] No saved track settings")
+            return
+        }
+        
+        do {
+            let data = try Data(contentsOf: trackSettingsFileURL)
+            trackSettings = try JSONDecoder().decode([UUID: TrackSettings].self, from: data)
+            print("✅ [AudioPlayer] Loaded settings for \(trackSettings.count) tracks")
+        } catch {
+            print("❌ [AudioPlayer] Failed to load track settings: \(error)")
+        }
+    }
+    
+    // ✅ NEW: Save settings for current track
+    private func saveTrackSettings() {
+        guard let trackID = currentTrack?.id else { return }
+        
+        trackSettings[trackID] = TrackSettings(
+            playbackSpeed: playbackSpeed,
+            reverbAmount: reverbAmount
+        )
+        
+        do {
+            let data = try JSONEncoder().encode(trackSettings)
+            try data.write(to: trackSettingsFileURL, options: .atomic)
+        } catch {
+            print("❌ [AudioPlayer] Failed to save track settings: \(error)")
+        }
+    }
+    
+    // ✅ NEW: Apply settings for track (or use defaults)
+    private func applyTrackSettings(for track: Track) {
+        if let settings = trackSettings[track.id] {
+            // Restore saved settings
+            print("📼 [AudioPlayer] Restoring settings: \(settings.playbackSpeed)x speed, \(settings.reverbAmount)% reverb")
+            playbackSpeed = settings.playbackSpeed
+            reverbAmount = settings.reverbAmount
+        } else {
+            // Use defaults for new track
+            print("📼 [AudioPlayer] Using default settings: 1.0x speed, 0% reverb")
+            playbackSpeed = 1.0
+            reverbAmount = 0.0
+        }
+    }
+
     
     private func setupAudioEngine() {
         audioEngine = AVAudioEngine()
@@ -423,6 +495,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 self.seekOffset = 0
                 self.needsReschedule = false
                 self.isHandlingRouteChange = false
+
+                self.applyTrackSettings(for: track) // ✅ APPLY saved settings
             }
             
             do {

@@ -594,7 +594,8 @@ class DownloadManager: ObservableObject {
             downloads = []
         }
     }
-    // Add this method to DownloadManager class:
+
+    // ✅ UPDATED: Don't delete old file immediately, wait for new download to finish
     func redownload(_ download: Download, onOldDeleted: @escaping () -> Void) {
         guard let originalURL = download.originalURL else {
             print("❌ [DownloadManager] No original URL stored for redownload")
@@ -608,17 +609,53 @@ class DownloadManager: ObservableObject {
         
         print("🔄 [DownloadManager] Redownloading from: \(originalURL)")
         
-        // Start the new download
-        startBackgroundDownload(
-            url: originalURL,
-            videoID: videoID,
-            source: download.source,
-            title: "Redownloading..."
-        )
+        // Store the old download ID to delete after new one completes
+        let oldDownloadID = download.id
         
-        // Mark old one for deletion (will auto-delete in 5 seconds)
-        markForDeletion(download) { deletedDownload in
-            onOldDeleted()
+        // Start the new download with completion handler
+        Task {
+            do {
+                // Wait for download to complete
+                let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: originalURL, videoID: videoID)
+                
+                var thumbnailPath: URL? = nil
+                for attempt in 1...5 {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+                    if thumbnailPath != nil { break }
+                }
+                
+                if thumbnailPath == nil && !videoID.isEmpty {
+                    EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+                }
+                
+                let newDownload = Download(
+                    name: downloadedTitle,
+                    url: fileURL,
+                    thumbnailPath: thumbnailPath?.path,
+                    videoID: videoID,
+                    source: download.source,
+                    originalURL: originalURL
+                )
+                
+                await MainActor.run {
+                    // Add new download
+                    self.addDownload(newDownload)
+                    
+                    // NOW mark old one for deletion (only after new download succeeded)
+                    if let oldDownload = self.downloads.first(where: { $0.id == oldDownloadID }) {
+                        self.markForDeletion(oldDownload) { deletedDownload in
+                            onOldDeleted()
+                        }
+                    }
+                }
+                
+                print("✅ [DownloadManager] Redownload complete, old file marked for deletion")
+            } catch {
+                print("❌ [DownloadManager] Redownload failed: \(error)")
+            }
         }
     }
     
