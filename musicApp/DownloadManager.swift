@@ -146,6 +146,26 @@ class DownloadManager: ObservableObject {
             }
         }
     }
+    func renameDownload(_ download: Download, newName: String) {
+        guard let index = downloads.firstIndex(where: { $0.id == download.id }) else { return }
+        
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+        
+        // Update the download with new name
+        downloads[index] = Download(
+            id: download.id,
+            name: trimmedName,
+            url: download.url,
+            thumbnailPath: download.thumbnailPath,
+            videoID: download.videoID,
+            source: download.source
+        )
+        
+        saveDownloads()
+        objectWillChange.send()
+        print("✅ [DownloadManager] Renamed to: \(trimmedName)")
+    }
 
     // ✅ ADD: Helper method to convert Spotify to YouTube
     private func convertSpotifyToYouTube(spotifyURL: String) async throws -> String {

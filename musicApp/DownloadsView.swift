@@ -85,6 +85,19 @@ struct DownloadsView: View {
             )
         }
     }
+    
+    // ✅ ADD THIS HELPER
+    private func constructURL(from videoID: String, source: DownloadSource) -> String? {
+        switch source {
+        case .youtube:
+            return "https://www.youtube.com/watch?v=\(videoID)"
+        case .spotify:
+            return "https://open.spotify.com/track/\(videoID)"
+        case .folder:
+            return nil
+        }
+    }
+
 }
 
 struct DownloadRow: View {
@@ -92,6 +105,11 @@ struct DownloadRow: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     let onAddToPlaylist: () -> Void
     let onDelete: () -> Void
+    let onRename: (String) -> Void  // ✅ ADD THIS
+    let onRedownload: () -> Void    // ✅ ADD THIS
+    
+    @State private var showRenameAlert = false  // ✅ ADD THIS
+    @State private var newName: String = ""     // ✅ ADD THIS
     
     private var isCurrentlyPlaying: Bool {
         audioPlayer.currentTrack?.id == download.id
@@ -137,11 +155,26 @@ struct DownloadRow: View {
                     .foregroundColor(.secondary)
                 }
                 
-                Spacer()  // ✅ ADD THIS - pushes content left and fills width
+                Spacer()
             }
-            .contentShape(Rectangle())  // ✅ MOVE THIS UP - makes entire HStack tappable
+            .contentShape(Rectangle())
             .onTapGesture {
                 handleTap()
+            }
+            .contextMenu {  // ✅ ADD THIS
+                Button {
+                    showRenameAlert = true
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                
+                if let videoID = download.videoID, !videoID.isEmpty {
+                    Button {
+                        redownload()
+                    } label: {
+                        Label("Redownload", systemImage: "arrow.clockwise")
+                    }
+                }
             }
             
             // Buttons stay outside the tap area
@@ -168,6 +201,15 @@ struct DownloadRow: View {
             let folderName = folderName(for: download.source)
             let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
             audioPlayer.addToQueue(track)
+        }
+        .alert("Rename Song", isPresented: $showRenameAlert) {  // ✅ ADD THIS
+            TextField("Song name", text: $newName)
+            Button("Cancel", role: .cancel) { }
+            Button("Rename") {
+                onRename(newName)
+            }
+        } message: {
+            Text("Enter a new name for this song")
         }
     }
     

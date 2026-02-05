@@ -124,6 +124,20 @@ struct PlaylistDetailView: View {
                         onTap: {
                             let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
                             audioPlayer.play(track)
+                        },
+                        onRename: { newName in  // ✅ ADD THIS
+                            downloadManager.renameDownload(download, newName: newName)
+                        },
+                        onRedownload: {  // ✅ ADD THIS
+                            if let videoID = download.videoID,
+                            let originalURL = constructURL(from: videoID, source: download.source) {
+                                downloadManager.startBackgroundDownload(
+                                    url: originalURL,
+                                    videoID: videoID,
+                                    source: download.source,
+                                    title: "Redownloading..."
+                                )
+                            }
                         }
                     )
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
@@ -183,6 +197,17 @@ struct PlaylistDetailView: View {
             updateTotalDuration()
         }
     }
+
+    private func constructURL(from videoID: String, source: DownloadSource) -> String? {
+        switch source {
+        case .youtube:
+            return "https://www.youtube.com/watch?v=\(videoID)"
+        case .spotify:
+            return "https://open.spotify.com/track/\(videoID)"
+        case .folder:
+            return nil
+        }
+    }
     
     private func updateTotalDuration() {
         totalDuration = 0
@@ -211,6 +236,11 @@ struct PlaylistSongRow: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     let playlist: Playlist
     let onTap: () -> Void
+    let onRename: (String) -> Void       // ✅ ADD THIS
+    let onRedownload: () -> Void         // ✅ ADD THIS
+    
+    @State private var showRenameAlert = false  // ✅ ADD THIS
+    @State private var newName: String = ""     // ✅ ADD THIS
     
     private var isCurrentlyPlaying: Bool {
         audioPlayer.currentTrack?.id == download.id

@@ -178,6 +178,7 @@ struct QueueView: View {
     }
 }
 
+
 struct QueueTrackRow: View {
     let track: Track
     @ObservedObject var downloadManager: DownloadManager
@@ -185,7 +186,9 @@ struct QueueTrackRow: View {
     let isPrevious: Bool
     @ObservedObject var audioPlayer: AudioPlayerManager
     
-    // ✅ PERFORMANCE: Cache the download lookup
+    @State private var showRenameAlert = false  // ✅ ADD THIS
+    @State private var newName: String = ""     // ✅ ADD THIS
+    
     private var download: Download? {
         downloadManager.getDownload(byID: track.id)
     }
@@ -193,7 +196,6 @@ struct QueueTrackRow: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                // ✅ PERFORMANCE: Async thumbnail loading
                 AsyncThumbnailView(
                     thumbnailPath: download?.resolvedThumbnailPath,
                     size: 48,
@@ -224,9 +226,9 @@ struct QueueTrackRow: View {
                     .lineLimit(1)
             }
             
-            Spacer()  // ✅ ADD THIS
+            Spacer()
         }
-        .contentShape(Rectangle())  // ✅ ALREADY CORRECT POSITION
+        .contentShape(Rectangle())
         .onTapGesture {
             if !isPlaying {
                 if isPrevious {
@@ -242,5 +244,56 @@ struct QueueTrackRow: View {
                 }
             }
         }
+        .contextMenu {  // ✅ ADD THIS
+            if let download = download {
+                Button {
+                    newName = download.name
+                    showRenameAlert = true
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                
+                if let videoID = download.videoID, !videoID.isEmpty {
+                    Button {
+                        redownload(download: download)
+                    } label: {
+                        Label("Redownload", systemImage: "arrow.clockwise")
+                    }
+                }
+            }
+        }
+        .alert("Rename Song", isPresented: $showRenameAlert) {  // ✅ ADD THIS
+            TextField("Song name", text: $newName)
+            Button("Cancel", role: .cancel) { }
+            Button("Rename") {
+                if let download = download {
+                    downloadManager.renameDownload(download, newName: newName)
+                }
+            }
+        } message: {
+            Text("Enter a new name for this song")
+        }
+    }
+    
+    // ✅ ADD THIS HELPER
+    private func redownload(download: Download) {
+        guard let videoID = download.videoID else { return }
+        let url: String
+        
+        switch download.source {
+        case .youtube:
+            url = "https://www.youtube.com/watch?v=\(videoID)"
+        case .spotify:
+            url = "https://open.spotify.com/track/\(videoID)"
+        case .folder:
+            return // Can't redownload folder imports
+        }
+        
+        downloadManager.startBackgroundDownload(
+            url: url,
+            videoID: videoID,
+            source: download.source,
+            title: "Redownloading..."
+        )
     }
 }
