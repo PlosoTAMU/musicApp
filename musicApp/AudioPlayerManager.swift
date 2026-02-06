@@ -718,7 +718,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             player.play()
             
             // ✅ FIX: Reinstall visualization tap after resume (player.stop() removes it)
-
+            self.resetBeatDetectionState()
             self.installVisualizationTap()
             
             DispatchQueue.main.async {
@@ -884,9 +884,21 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     func previous() {
         if isPlaylistMode {
-            guard !currentPlaylist.isEmpty else { return }
-            currentIndex = (currentIndex - 1 + currentPlaylist.count) % currentPlaylist.count
-            play(currentPlaylist[currentIndex])
+            // ✅ FIXED: Use previousQueue in playlist mode too
+            if !previousQueue.isEmpty {
+                // Add current to start of playlist queue
+                if let current = currentTrack,
+                let currentIdx = currentPlaylist.firstIndex(where: { $0.id == current.id }) {
+                    currentIndex = currentIdx
+                }
+                
+                // Play the previous track
+                let previousTrack = previousQueue.removeLast()
+                play(previousTrack)
+            } else {
+                // No previous songs, just seek to start
+                seek(to: 0)
+            }
         } else {
             if !previousQueue.isEmpty {
                 if let current = currentTrack {
@@ -906,6 +918,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
             return
         }
         
+        // ✅ FIXED: Add current track to previousQueue in BOTH modes
+        if let current = currentTrack {
+            previousQueue.append(current)
+        }
+        
         if isPlaylistMode {
             guard !currentPlaylist.isEmpty else {
                 DispatchQueue.main.async {
@@ -917,10 +934,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
             currentIndex = (currentIndex + 1) % currentPlaylist.count
             play(currentPlaylist[currentIndex])
         } else {
-            if let current = currentTrack {
-                previousQueue.append(current)
-            }
-            
             if !queue.isEmpty {
                 let nextTrack = queue.removeFirst()
                 play(nextTrack)
