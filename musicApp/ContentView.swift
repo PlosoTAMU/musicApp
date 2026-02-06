@@ -848,7 +848,9 @@ struct VolumeSlider: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
         let volumeView = MPVolumeView(frame: .zero)
         volumeView.showsVolumeSlider = true
-        // Hide the route button by setting frame
+        volumeView.showsRouteButton = false  // ✅ ADDED: Explicitly hide route button
+        
+        // Hide the route button by iterating subviews
         for subview in volumeView.subviews {
             if subview is UIButton {
                 subview.isHidden = true
@@ -857,11 +859,37 @@ struct VolumeSlider: UIViewRepresentable {
     
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
+                // ✅ FIXED: Always use white with smaller thumb
                 slider.minimumTrackTintColor = .white
                 slider.maximumTrackTintColor = .white.withAlphaComponent(0.3)
                 slider.isContinuous = true
                 
-                let thumbSize: CGFloat = 14
+                // ✅ FIXED: Consistent smaller thumb size
+                let thumbSize: CGFloat = 12  // Changed from 14 to 12
+                let thumbImage = UIGraphicsImageRenderer(size: CGSize(width: thumbSize, height: thumbSize)).image { context in
+                    UIColor.white.setFill()
+                    context.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize))
+                }
+                slider.setThumbImage(thumbImage, for: .normal)
+                slider.setThumbImage(thumbImage, for: .highlighted)
+                
+                // ✅ ADDED: Force refresh to apply styling
+                slider.setNeedsLayout()
+                slider.layoutIfNeeded()
+            }
+        }
+        
+        return volumeView
+    }
+    
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {
+        // ✅ ADDED: Re-apply styling on every update
+        DispatchQueue.main.async {
+            if let slider = uiView.subviews.first(where: { $0 is UISlider }) as? UISlider {
+                slider.minimumTrackTintColor = .white
+                slider.maximumTrackTintColor = .white.withAlphaComponent(0.3)
+                
+                let thumbSize: CGFloat = 12
                 let thumbImage = UIGraphicsImageRenderer(size: CGSize(width: thumbSize, height: thumbSize)).image { context in
                     UIColor.white.setFill()
                     context.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize))
@@ -870,11 +898,7 @@ struct VolumeSlider: UIViewRepresentable {
                 slider.setThumbImage(thumbImage, for: .highlighted)
             }
         }
-        
-        return volumeView
     }
-    
-    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
 
 struct DownloadBanner: View {

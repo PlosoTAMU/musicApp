@@ -72,7 +72,6 @@ struct QueueView: View {
                 } else {
                     List {
                         // FIXED: Show previous songs
-                        // In QueueView, change this section:
                         if !audioPlayer.previousQueue.isEmpty {
                             Section(header: Text("Previous")) {
                                 // FIXED: Show in normal order (most recent at bottom)
