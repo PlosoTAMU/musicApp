@@ -477,7 +477,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 self.isPlaylistMode = true
                 self.currentPlaylist = shuffle ? tracks.shuffled() : tracks
                 self.currentIndex = 0
-                self.previousQueue.removeAll()
             
                 // ✅ AUTO-DISABLE: Disable loop when loading a playlist
                 if self.isLoopEnabled {
