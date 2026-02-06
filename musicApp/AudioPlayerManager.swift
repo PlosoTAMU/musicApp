@@ -563,6 +563,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 
                 player.play()
 
+                self.resetBeatDetectionState()
                 self.installVisualizationTap()
                 
                 let frameCount = Double(file.length)
@@ -718,6 +719,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             player.play()
             
             // ✅ FIX: Reinstall visualization tap after resume (player.stop() removes it)
+
             self.installVisualizationTap()
             
             DispatchQueue.main.async {
@@ -1117,6 +1119,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         sampleCount = 0
         smoothedBins = [Float](repeating: 0, count: 100)
         smoothedBass = 0
+        
+        // ✅ ADDED: Force update UI to zero immediately
+        DispatchQueue.main.async { [weak self] in
+            self?.frequencyBins = [Float](repeating: 0, count: 100)
+            self?.bassLevel = 0
+        }
     }
 
     private func removeVisualizationTap() {
