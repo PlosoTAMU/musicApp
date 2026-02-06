@@ -494,6 +494,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func play(_ track: Track) {
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
+    
+        // ✅ FIX: Reset visualization IMMEDIATELY and SYNCHRONOUSLY
+        // This ensures UI shows zero before any async work happens
+        if Thread.isMainThread {
+            self.frequencyBins = [Float](repeating: 0, count: 100)
+            self.bassLevel = 0
+        } else {
+            DispatchQueue.main.sync {
+                self.frequencyBins = [Float](repeating: 0, count: 100)
+                self.bassLevel = 0
+            }
+        }
         
         audioQueue.async { [weak self] in
             guard let self = self else { return }
