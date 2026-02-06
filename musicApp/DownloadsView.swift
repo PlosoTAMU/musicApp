@@ -72,6 +72,9 @@ struct DownloadsView: View {
             .scrollIndicators(.visible)
             .searchable(text: $searchText, prompt: "Search downloads")
             .navigationTitle("Downloads")
+            .safeAreaInset(edge: .bottom) {  // ✅ ADD THIS
+                Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {

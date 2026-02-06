@@ -46,6 +46,9 @@ struct PlaylistsView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .scrollIndicators(.visible) // FIXED: Add scroll bar
+            .safeAreaInset(edge: .bottom) {  // ✅ ADD THIS
+                Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {

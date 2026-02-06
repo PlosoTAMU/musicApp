@@ -12,6 +12,7 @@ class DownloadManager: ObservableObject {
     @Published var activeDownloads: [ActiveDownload] = []
     private var deletionTimers: [UUID: Timer] = [:]
     private let timerLock = NSLock()
+    private var updateDebounceTimer: Timer?
     
     // ✅ PERFORMANCE: Cached sorted downloads
     private var _sortedDownloadsCache: [Download]?
@@ -52,6 +53,12 @@ class DownloadManager: ObservableObject {
     func getMusicDirectory() -> URL {
         return musicDirectory
     }
+    private func notifyChange() {
+        updateDebounceTimer?.invalidate()
+        updateDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
+            self?.notifyChange()
+        }
+    }
     
     func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String = "Fetching info") {
         let activeDownload = ActiveDownload(id: UUID(), videoID: videoID, title: title, progress: 0.0)
@@ -67,7 +74,7 @@ class DownloadManager: ObservableObject {
                 if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
                     self.activeDownloads[index].title = callbackTitle
                     self.activeDownloads[index].progress = 0.5
-                    self.objectWillChange.send()
+                    self.notifyChange()
                 }
             }
         }
@@ -85,7 +92,7 @@ class DownloadManager: ObservableObject {
                     await MainActor.run {
                         if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
                             self.activeDownloads[index].title = "Converting Spotify link..."
-                            self.objectWillChange.send()
+                            self.notifyChange()
                         }
                     }
                     
@@ -103,7 +110,7 @@ class DownloadManager: ObservableObject {
                     await MainActor.run {
                         if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
                             self.activeDownloads[index].title = "Downloading from YouTube..."
-                            self.objectWillChange.send()
+                            self.notifyChange()
                         }
                     }
                 }
@@ -166,7 +173,7 @@ class DownloadManager: ObservableObject {
         )
         
         saveDownloads()
-        objectWillChange.send()
+        notifyChange()
         print("✅ [DownloadManager] Renamed to: \(trimmedName)")
     }
 
@@ -366,7 +373,7 @@ class DownloadManager: ObservableObject {
         
         downloads.append(finalDownload)
         saveDownloads()
-        objectWillChange.send()
+        notifyChange()
     }
     
     func getThumbnailFullPath(for download: Download) -> String? {
@@ -394,7 +401,7 @@ class DownloadManager: ObservableObject {
         timerLock.unlock()
         
         downloads[index].pendingDeletion = true
-        objectWillChange.send()
+        notifyChange()
         
         let timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
             self?.confirmDeletion(download, onDelete: onDelete)
@@ -414,7 +421,7 @@ class DownloadManager: ObservableObject {
         deletionTimers.removeValue(forKey: download.id)
         timerLock.unlock()
 
-        objectWillChange.send()
+        notifyChange()
     }
     
     private func confirmDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
@@ -642,7 +649,7 @@ class DownloadManager: ObservableObject {
                         title: "Redownloading \(callbackTitle)...",
                         progress: 0.5
                     )
-                    self.objectWillChange.send()
+                    self.notifyChange()
                 }
             }
         }
@@ -731,7 +738,7 @@ class DownloadManager: ObservableObject {
                         )
                         
                         self.saveDownloads()
-                        self.objectWillChange.send()
+                        self.notifyChange()
                         
                         print("✅ [DownloadManager] Updated download entry with new file: \(finalURL.path)")
                         

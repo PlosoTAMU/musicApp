@@ -91,7 +91,7 @@ final class ThumbnailCache {
     
     private init() {
         cache.countLimit = 100  // Keep up to 100 thumbnails in memory
-        cache.totalCostLimit = 50 * 1024 * 1024  // ~50MB limit
+        cache.totalCostLimit = 100 * 1024 * 1024  // ~50MB limit
     }
     
     func get(_ path: String) -> UIImage? {

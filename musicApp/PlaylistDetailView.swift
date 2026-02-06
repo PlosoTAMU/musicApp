@@ -168,6 +168,9 @@ struct PlaylistDetailView: View {
             .background(Color.black)
             .environment(\.editMode, .constant(.active))
             .scrollIndicators(.visible)
+            .safeAreaInset(edge: .bottom) {  // ✅ ADD THIS
+                Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
+            }
         }
         .navigationTitle(playlist.name)
         .navigationBarTitleDisplayMode(.inline)
