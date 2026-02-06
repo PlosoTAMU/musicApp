@@ -33,7 +33,7 @@ struct QueueView: View {
                     .background(Color.gray.opacity(0.1))
                 }
                 
-                if audioPlayer.currentTrack == nil {
+                if audioPlayer.currentTrack == nil && audioPlayer.previousQueue.isEmpty {
                     VStack(spacing: 16) {
                         Spacer()
                         Image(systemName: "music.note.list")
@@ -49,6 +49,26 @@ struct QueueView: View {
                             .padding(.horizontal, 40)
                         Spacer()
                     }
+                } else if audioPlayer.currentTrack == nil && !audioPlayer.previousQueue.isEmpty {
+                    // Show only previous songs when playback has ended
+                    List {
+                        Section(header: Text("Previously Played")) {
+                            ForEach(audioPlayer.previousQueue) { track in
+                                QueueTrackRow(
+                                    track: track,
+                                    downloadManager: downloadManager,
+                                    isPlaying: false,
+                                    isPrevious: true,
+                                    audioPlayer: audioPlayer
+                                )
+                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                                .listRowBackground(Color.clear)
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
+                    .scrollIndicators(.visible)
                 } else {
                     List {
                         // FIXED: Show previous songs
