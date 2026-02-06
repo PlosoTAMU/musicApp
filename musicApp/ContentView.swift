@@ -444,7 +444,7 @@ struct NowPlayingView: View {
                             audioPlayer.isLoopEnabled.toggle()
                         }
                     } label: {
-                        Image(systemName: audioPlayer.isLoopEnabled ? "repeat.1" : "repeat")
+                        Image(systemName: "repeat")
                             .font(.title3)
                             .foregroundColor(audioPlayer.isLoopEnabled ? .blue : .white)
                             .frame(width: 44, height: 44)

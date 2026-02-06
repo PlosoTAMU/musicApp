@@ -1,5 +1,3 @@
-// PlaylistDetailView.txt
-
 import SwiftUI
 import AVFoundation
 
@@ -18,6 +16,7 @@ struct SelectSongsSheet: View {
                         playlistManager.addToPlaylist(playlistID, downloadID: download.id)
                     } label: {
                         HStack(spacing: 12) {
+                            // ✅ PERFORMANCE: Async thumbnail loading
                             AsyncThumbnailView(
                                 thumbnailPath: download.resolvedThumbnailPath,
                                 size: 48,
@@ -108,21 +107,6 @@ struct PlaylistDetailView: View {
                         .background(Color.green)
                         .cornerRadius(8)
                     }
-                    
-                    // ✅ NEW: Loop button for playlist
-                    Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                            audioPlayer.isLoopEnabled.toggle()
-                        }
-                    } label: {
-                        Image(systemName: audioPlayer.isLoopEnabled ? "repeat.1" : "repeat")
-                            .font(.title3)
-                            .foregroundColor(audioPlayer.isLoopEnabled ? .blue : .gray)
-                            .frame(width: 44, height: 44)
-                            .background(audioPlayer.isLoopEnabled ? Color.blue.opacity(0.2) : Color.clear)
-                            .cornerRadius(8)
-                            .scaleEffect(audioPlayer.isLoopEnabled ? 1.1 : 1.0)
-                    }
                 }
                 
                 Text("\(tracks.count) songs • \(formatDuration(totalDuration))")
@@ -141,10 +125,10 @@ struct PlaylistDetailView: View {
                             let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
                             audioPlayer.play(track)
                         },
-                        onRename: { newName in
+                        onRename: { newName in  // ✅ ADD THIS
                             downloadManager.renameDownload(download, newName: newName)
                         },
-                        onRedownload: {
+                        onRedownload: {  // ✅ ADD THIS
                             if let videoID = download.videoID,
                             let originalURL = constructURL(from: videoID, source: download.source) {
                                 downloadManager.startBackgroundDownload(
@@ -252,11 +236,11 @@ struct PlaylistSongRow: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     let playlist: Playlist
     let onTap: () -> Void
-    let onRename: (String) -> Void
-    let onRedownload: () -> Void
+    let onRename: (String) -> Void       // ✅ ADD THIS
+    let onRedownload: () -> Void         // ✅ ADD THIS
     
-    @State private var showRenameAlert = false
-    @State private var newName: String = ""
+    @State private var showRenameAlert = false  // ✅ ADD THIS
+    @State private var newName: String = ""     // ✅ ADD THIS
     
     private var isCurrentlyPlaying: Bool {
         audioPlayer.currentTrack?.id == download.id
@@ -265,6 +249,7 @@ struct PlaylistSongRow: View {
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
+                // ✅ PERFORMANCE: Async thumbnail loading
                 AsyncThumbnailView(
                     thumbnailPath: download.resolvedThumbnailPath,
                     size: 48,
@@ -277,13 +262,14 @@ struct PlaylistSongRow: View {
                     .italic(isCurrentlyPlaying)
                     .lineLimit(1)
                 
-                Spacer()
+                Spacer()  // ✅ ADD THIS
             }
-            .contentShape(Rectangle())
+            .contentShape(Rectangle())  // ✅ MOVE THIS UP
             .onTapGesture {
                 onTap()
             }
             
+            // This stays outside
             if isCurrentlyPlaying && audioPlayer.isPlaying {
                 Image(systemName: "speaker.wave.2.fill")
                     .foregroundColor(.blue)
