@@ -62,6 +62,7 @@ struct AsyncThumbnailView: View {
             image = cached
             return
         }
+        let startLabel = "Thumbnail_Load_\(path.split(separator: "/").last ?? "unknown")"
         
         loadTask = Task.detached(priority: .utility) {
             PerformanceMonitor.shared.start(startLabel) // ✅ ADDED
