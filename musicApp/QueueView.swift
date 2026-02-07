@@ -176,7 +176,7 @@ struct QueueView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
-                    .environment(\.editMode, audioPlayer.queue.isEmpty ? .constant(.inactive) : .constant(.active))
+                    .environment(\.editMode, .constant(.active))
                     .scrollIndicators(.visible) // FIXED: Add scroll bar
                     .safeAreaInset(edge: .bottom) {  // ✅ ADD THIS
                         Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)

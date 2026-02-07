@@ -594,6 +594,14 @@ struct NowPlayingView: View {
                 
                 
                 VStack(spacing: 2) {
+                    HStack {
+                        Spacer()
+                        
+                        Text(formatTime(audioPlayer.duration / audioPlayer.playbackSpeed))
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    
                     Slider(value: sliderBinding, in: 0...max(audioPlayer.duration, 1)) { editing in
                         isSeeking = editing
                         if editing {

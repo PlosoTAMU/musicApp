@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 
+/// Lightweight performance profiler for identifying bottlenecks
 class PerformanceMonitor {
     static let shared = PerformanceMonitor()
     
@@ -128,79 +129,59 @@ class PerformanceMonitor {
             currentFPS = Double(frameTimestamps.count - 1) / duration
         }
         print("🎬 Current FPS: \(String(format: "%.1f", currentFPS))")
+        print("")
         
-        // Find bottlenecks
+        // Top 10 slowest by average
+        print("⏱️  SLOWEST OPERATIONS (by average time):")
         let sortedByAvg = snapshot.sorted { $0.value.averageTime > $1.value.averageTime }
+        for (label, metric) in sortedByAvg.prefix(10) {
+            let paddedLabel = label.padding(toLength: 35, withPad: " ", startingAt: 0)
+            let avgStr = String(format: "%6.2fms", metric.averageTime)
+            let maxStr = String(format: "%6.2fms", metric.maxTime)
+            let minStr = String(format: "%6.2fms", metric.minTime)
+            print("   \(paddedLabel) Avg: \(avgStr)  Max: \(maxStr)  Min: \(minStr)  Count: \(metric.callCount)")
+        }
+        print("")
+        
+        // Top 5 by total time (biggest time sinks)
+        print("🔥 BIGGEST TIME SINKS (by total time):")
         let sortedByTotal = snapshot.sorted { $0.value.totalTime > $1.value.totalTime }
-        let sortedByFrequency = snapshot.sorted { $0.value.callCount > $1.value.callCount }
-        
-        print("\n🐌 SLOWEST OPERATIONS (by average time):")
-        print(String(repeating: "-", count: 80))
-        for (label, metric) in sortedByAvg.prefix(5) {
-            print(String(format: "  %-35s Avg: %6.2fms  Max: %6.2fms  Min: %6.2fms",
-                        label,
-                        metric.averageTime,
-                        metric.maxTime,
-                        metric.minTime))
-        }
-        
-        print("\n⏱️  MOST TIME CONSUMING (by total time):")
-        print(String(repeating: "-", count: 80))
         for (label, metric) in sortedByTotal.prefix(5) {
-            let percentage = (metric.totalTime / sortedByTotal.reduce(0) { $0 + $1.value.totalTime }) * 100
-            print(String(format: "  %-35s Total: %7.1fms  Calls: %5d  (%4.1f%%)",
-                        label,
-                        metric.totalTime,
-                        metric.callCount,
-                        percentage))
+            let paddedLabel = label.padding(toLength: 35, withPad: " ", startingAt: 0)
+            let totalStr = String(format: "%8.1fms", metric.totalTime)
+            let pct = (metric.totalTime / sortedByTotal.first!.value.totalTime) * 100
+            print("   \(paddedLabel) Total: \(totalStr)  (\(String(format: "%.1f", pct))%)")
         }
+        print("")
         
-        print("\n🔄 MOST FREQUENT OPERATIONS:")
-        print(String(repeating: "-", count: 80))
-        for (label, metric) in sortedByFrequency.prefix(5) {
-            let callsPerSecond = Double(metric.callCount) / Date().timeIntervalSince(metric.lastUpdated.addingTimeInterval(-30))
-            print(String(format: "  %-35s Calls: %5d  Rate: %5.1f/sec",
-                        label,
-                        metric.callCount,
-                        callsPerSecond))
-        }
-        
-        // Key findings
-        print("\n💡 KEY FINDINGS:")
-        print(String(repeating: "-", count: 80))
-        
-        if currentFPS < 30 {
-            print("  ⚠️  Low framerate detected (\(String(format: "%.1f", currentFPS)) fps)")
-        }
-        
-        if let fftMetric = snapshot["FFT_Processing"] {
-            let fftFreq = Double(fftMetric.callCount) / 30.0
-            print("  🎵 FFT running at \(String(format: "%.1f", fftFreq)) Hz (target: 30 Hz)")
-        }
-        
-        if let swiftUIMetric = snapshot["FFT_to_SwiftUI"] {
-            if swiftUIMetric.averageTime > 10 {
-                print("  ⚠️  SwiftUI updates are slow (avg: \(String(format: "%.1f", swiftUIMetric.averageTime))ms)")
+        // Identify potential bottlenecks
+        print("🚨 POTENTIAL BOTTLENECKS:")
+        var bottlenecks = 0
+        for (label, metric) in snapshot {
+            if metric.averageTime > 16 {
+                bottlenecks += 1
+                print("   • \(label): \(String(format: "%.1fms", metric.averageTime)) avg (drops below 60fps)")
             }
         }
-        
-        let totalOperations = snapshot.values.reduce(0) { $0 + $1.callCount }
-        print("  📈 Total operations tracked: \(totalOperations)")
+        if bottlenecks == 0 {
+            print("   ✅ None detected - all operations under 16ms")
+        }
         
         print(String(repeating: "=", count: 80) + "\n")
     }
     
-    // Manual export trigger
-    func printStats() {
+    // Manual export for on-demand statistics
+    func printStatsNow() {
         exportStats()
     }
     
-    // Reset all metrics
+    // Reset all metrics (useful for testing specific scenarios)
     func reset() {
         lock.lock()
         metrics.removeAll()
         frameTimestamps.removeAll()
+        lastFPSReport = CFAbsoluteTimeGetCurrent()
         lock.unlock()
-        print("🔄 [Perf] Metrics reset")
+        print("🔄 [PerformanceMonitor] Metrics reset")
     }
 }

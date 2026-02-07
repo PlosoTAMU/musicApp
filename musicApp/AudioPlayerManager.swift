@@ -63,7 +63,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     // Throttle visualization updates to ~60fps for smoother animation
     private var lastVisualizationUpdate: CFAbsoluteTime = 0
-    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 30.0  // 60fps
+    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 60.0  // 60fps
     
     // FFT setup - use 2048 for better frequency resolution (especially for beat detection)
     private var fftSetup: FFTSetup?
