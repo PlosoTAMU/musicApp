@@ -597,7 +597,7 @@ struct NowPlayingView: View {
                     HStack {
                         Spacer()
                         
-                        Text(formatTime(audioPlayer.duration / audioPlayer.playbackSpeed))
+                        Text("-" + formatTime((audioPlayer.duration - (isSeeking ? localSeekPosition : audioPlayer.currentTime)) / audioPlayer.playbackSpeed))
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
                     }
