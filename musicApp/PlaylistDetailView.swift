@@ -313,9 +313,7 @@ struct PlaylistSongRow: View {
                 TextField("Song name", text: $newName)
                 Button("Cancel", role: .cancel) { }
                 Button("Rename") {
-                    if let download = download {
-                        onRename(newName)
-                    }
+                    onRename(newName)
                 }
             } message: {
                 Text("Enter a new name for this song")
