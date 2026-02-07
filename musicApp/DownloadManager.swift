@@ -544,6 +544,8 @@ class DownloadManager: ObservableObject {
     
     
     private func saveDownloads() {
+        PerformanceMonitor.shared.start("DownloadManager_Save")
+        defer { PerformanceMonitor.shared.end("DownloadManager_Save") }
         do {
             let encoder = JSONEncoder()
             let downloadsToSave = downloads.filter { !$0.pendingDeletion }
@@ -556,6 +558,8 @@ class DownloadManager: ObservableObject {
     }
     
     private func loadDownloads() {
+        PerformanceMonitor.shared.start("DownloadManager_Load")
+        defer { PerformanceMonitor.shared.end("DownloadManager_Load") }
         guard FileManager.default.fileExists(atPath: downloadsFileURL.path) else {
             print("ℹ️ [DownloadManager] No saved downloads")
             return

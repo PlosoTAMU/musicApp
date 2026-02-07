@@ -64,6 +64,8 @@ struct AsyncThumbnailView: View {
         }
         
         loadTask = Task.detached(priority: .utility) {
+            PerformanceMonitor.shared.start("Thumbnail_Load_\(path)")
+            defer { PerformanceMonitor.shared.end("Thumbnail_Load_\(path)") }
             guard let loadedImage = UIImage(contentsOfFile: path) else {
                 return
             }

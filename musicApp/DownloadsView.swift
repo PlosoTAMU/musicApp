@@ -51,6 +51,7 @@ struct DownloadsView: View {
                             }
                         }
                     )
+                    .measurePerformance("DownloadRow[\(download.id)]") // ✅ ADDED
                     .opacity(download.pendingDeletion ? 0.5 : 1.0)
                     .overlay(
                         download.pendingDeletion ?
@@ -66,6 +67,7 @@ struct DownloadsView: View {
                     .listRowBackground(Color.black)
                 }
             }
+            .measurePerformance("DownloadsList") // ✅ ADDED
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color.black)

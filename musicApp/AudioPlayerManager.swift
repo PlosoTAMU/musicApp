@@ -1167,6 +1167,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
 
     /// Advanced FFT-based frequency analysis with beat detection
     private func processFFTBuffer(_ buffer: AVAudioPCMBuffer) {
+        PerformanceMonitor.shared.start("processFFTBuffer") // ✅ ADDED
+        defer { PerformanceMonitor.shared.end("processFFTBuffer") } // ✅ ADDED
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
         guard frameLength > 0 else { return }
@@ -1507,10 +1509,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let updateNow = CFAbsoluteTimeGetCurrent()
         if updateNow - lastVisualizationUpdate >= visualizationUpdateInterval {
             lastVisualizationUpdate = updateNow
-            
+    
+            PerformanceMonitor.shared.start("FFT_to_SwiftUI") // ✅ ADDED
             DispatchQueue.main.async { [weak self] in
                 self?.frequencyBins = finalBins
                 self?.bassLevel = finalBass
+                PerformanceMonitor.shared.end("FFT_to_SwiftUI") // ✅ ADDED
             }
         }
     }
