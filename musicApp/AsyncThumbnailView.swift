@@ -63,7 +63,7 @@ struct AsyncThumbnailView: View {
             return
         }
         
-        loadTask = Task.detached(priority: .medium) {
+        loadTask = Task.detached(priority: .utility) {
             guard let loadedImage = UIImage(contentsOfFile: path) else {
                 return
             }

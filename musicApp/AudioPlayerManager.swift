@@ -63,7 +63,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     // Throttle visualization updates to ~60fps for smoother animation
     private var lastVisualizationUpdate: CFAbsoluteTime = 0
-    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 60.0  // 60fps
+    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 30.0  // 60fps
     
     // FFT setup - use 2048 for better frequency resolution (especially for beat detection)
     private var fftSetup: FFTSetup?
@@ -574,8 +574,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 
                 player.play()
 
-                self.resetBeatDetectionState()
-                self.installVisualizationTap()
+                // ✅ FIX: Move visualizer setup OFF critical path
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    self?.resetBeatDetectionState()
+                    self?.installVisualizationTap()
+                }
                 
                 let frameCount = Double(file.length)
                 let sampleRate = file.fileFormat.sampleRate
@@ -1080,10 +1083,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
 
     // MARK: - FFT-Based Visualization with Beat Detection
 
-    private func setupFFT() {
-        fftLog2n = vDSP_Length(log2(Float(fftSize)))
-        fftSetup = vDSP_create_fftsetup(fftLog2n, FFTRadix(kFFTRadix2))
-    }
+    
 
     private func installVisualizationTap() {
         guard let engine = audioEngine, let player = playerNode else { return }
@@ -1097,7 +1097,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         if fftSetup == nil {
-            setupFFT()
+            fftLog2n = vDSP_Length(log2(Float(fftSize)))
+            fftSetup = vDSP_create_fftsetup(fftLog2n, FFTRadix(kFFTRadix2))
         }
         
         // Reset beat detection state for new track
@@ -1145,9 +1146,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
         smoothedBass = 0
         
         // ✅ ADDED: Force update UI to zero immediately
+        // ✅ CHANGED: Use async dispatch to avoid blocking
         DispatchQueue.main.async { [weak self] in
-            self?.frequencyBins = [Float](repeating: 0, count: 100)
-            self?.bassLevel = 0
+            guard let self = self else { return }
+            self.frequencyBins = [Float](repeating: 0, count: 100)
+            self.bassLevel = 0
         }
     }
 
