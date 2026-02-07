@@ -492,6 +492,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func play(_ track: Track) {
+        PerformanceMonitor.shared.start("AudioPlayer_Play") // ✅ ADDED
+        defer { PerformanceMonitor.shared.end("AudioPlayer_Play") } // ✅ ADDED
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
     

@@ -42,6 +42,9 @@ struct ContentView: View {
                     Label("Queue", systemImage: "list.number")
                 }
             }
+            .onAppear {
+                startFPSTracking()
+            }
             
             VStack(spacing: 0) {
                 Spacer()
@@ -90,6 +93,26 @@ struct ContentView: View {
         }
 
         
+    }
+
+    // ✅ ADD: FPS tracking with CADisplayLink
+    private func startFPSTracking() {
+        let displayLink = CADisplayLink(target: FPSTracker.shared, selector: #selector(FPSTracker.tick))
+        displayLink.add(to: .main, forMode: .common)
+    }
+
+    // ✅ ADD: FPS tracker class
+    class FPSTracker {
+        static let shared = FPSTracker()
+        private var lastTimestamp: CFTimeInterval = 0
+        
+        @objc func tick(displayLink: CADisplayLink) {
+            if lastTimestamp > 0 {
+                let fps = 1.0 / (displayLink.timestamp - lastTimestamp)
+                PerformanceMonitor.shared.recordFrame()
+            }
+            lastTimestamp = displayLink.timestamp
+        }
     }
 
     private func handleIncomingURL(_ url: URL) {
@@ -962,6 +985,8 @@ struct EdgeVisualizerView: View {
     
     var body: some View {
         Canvas { context, size in
+
+            
             let centerX = size.width / 2
             let centerY = size.height / 2
             
