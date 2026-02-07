@@ -249,33 +249,83 @@ struct PlaylistSongRow: View {
         audioPlayer.currentTrack?.id == download.id
     }
     
+    // In PlaylistDetailView.txt, replace PlaylistSongRow body:
+
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
-                // ✅ PERFORMANCE: Async thumbnail loading
-                AsyncThumbnailView(
-                    thumbnailPath: download.resolvedThumbnailPath,
-                    size: 48,
-                    cornerRadius: 8
-                )
+                // ✅ FIXED: Add play/pause icon overlay on thumbnail
+                ZStack {
+                    AsyncThumbnailView(
+                        thumbnailPath: download.resolvedThumbnailPath,
+                        size: 48,
+                        cornerRadius: 8
+                    )
+                    
+                    // ✅ ADDED: Play/Pause icon overlay
+                    if isCurrentlyPlaying && audioPlayer.isPlaying {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.black.opacity(0.4))
+                            .frame(width: 48, height: 48)
+                        Image(systemName: "pause.fill")
+                            .foregroundColor(.white)
+                            .font(.system(size: 14))
+                    }
+                }
+                .frame(width: 48, height: 48)
                 
-                Text(download.name)
-                    .font(.body)
-                    .fontWeight(isCurrentlyPlaying ? .bold : .regular)
-                    .italic(isCurrentlyPlaying)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(download.name)
+                        .font(.body)
+                        .fontWeight(isCurrentlyPlaying ? .bold : .regular)
+                        .italic(isCurrentlyPlaying)
+                        .foregroundColor(isCurrentlyPlaying ? .blue : .primary)  // ✅ Blue when playing
+                        .lineLimit(1)
+                    
+                    Text(download.source.rawValue.capitalized)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 
-                Spacer()  // ✅ ADD THIS
+                Spacer()
             }
-            .contentShape(Rectangle())  // ✅ MOVE THIS UP
+            .contentShape(Rectangle())
             .onTapGesture {
                 onTap()
             }
+            .contextMenu {
+                Button {
+                    newName = download.name
+                    showRenameAlert = true
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                
+                if let videoID = download.videoID, !videoID.isEmpty {
+                    Button {
+                        onRedownload()
+                    } label: {
+                        Label("Redownload", systemImage: "arrow.clockwise")
+                    }
+                }
+            }
+            .alert("Rename Song", isPresented: $showRenameAlert) {
+                TextField("Song name", text: $newName)
+                Button("Cancel", role: .cancel) { }
+                Button("Rename") {
+                    if let download = download {
+                        onRename(newName)
+                    }
+                }
+            } message: {
+                Text("Enter a new name for this song")
+            }
             
-            // This stays outside
+            // ✅ ADDED: Volume icon when playing
             if isCurrentlyPlaying && audioPlayer.isPlaying {
                 Image(systemName: "speaker.wave.2.fill")
                     .foregroundColor(.blue)
+                    .font(.body)
             }
         }
         .padding(.horizontal, 16)

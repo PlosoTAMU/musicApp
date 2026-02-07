@@ -215,85 +215,98 @@ struct QueueTrackRow: View {
         downloadManager.getDownload(byID: track.id)
     }
     
+    // In QueueView.txt, replace QueueTrackRow body:
+
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                AsyncThumbnailView(
-                    thumbnailPath: download?.resolvedThumbnailPath,
-                    size: 48,
-                    cornerRadius: 8
-                )
-                .opacity(isPrevious ? 0.6 : 1.0)
-                
-                if isPlaying && audioPlayer.isPlaying {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.black.opacity(0.4))
-                    Image(systemName: "speaker.wave.2.fill")
-                        .foregroundColor(.white)
-                        .font(.system(size: 14))
+            HStack(spacing: 12) {
+                ZStack {
+                    AsyncThumbnailView(
+                        thumbnailPath: download?.resolvedThumbnailPath,
+                        size: 48,
+                        cornerRadius: 8
+                    )
+                    .opacity(isPrevious ? 0.6 : 1.0)
+                    
+                    // ✅ FIXED: Changed from speaker icon to pause icon (matches other views)
+                    if isPlaying && audioPlayer.isPlaying {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.black.opacity(0.4))
+                        Image(systemName: "pause.fill")  // ✅ Changed from speaker.wave.2.fill
+                            .foregroundColor(.white)
+                            .font(.system(size: 14))
+                    }
                 }
-            }
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(track.name)
-                    .font(.body)
-                    .fontWeight(isPlaying ? .bold : .regular)
-                    .italic(isPlaying)
-                    .foregroundColor(isPlaying ? .blue : (isPrevious ? .secondary : .primary))
-                    .lineLimit(1)
+                .frame(width: 48, height: 48)
                 
-                Text(track.folderName)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.name)
+                        .font(.body)
+                        .fontWeight(isPlaying ? .bold : .regular)
+                        .italic(isPlaying)
+                        .foregroundColor(isPlaying ? .blue : (isPrevious ? .secondary : .primary))  // ✅ Already blue
+                        .lineLimit(1)
+                    
+                    Text(track.folderName)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
             }
-            
-            Spacer()
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !isPlaying {
-                if isPrevious {
-                    audioPlayer.play(track)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if !isPlaying {
+                    if isPrevious {
+                        audioPlayer.play(track)
+                    } else {
+                        audioPlayer.playFromQueue(track)
+                    }
                 } else {
-                    audioPlayer.playFromQueue(track)
-                }
-            } else {
-                if audioPlayer.isPlaying {
-                    audioPlayer.pause()
-                } else {
-                    audioPlayer.resume()
-                }
-            }
-        }
-        .contextMenu {  // ✅ ADD THIS
-            if let download = download {
-                Button {
-                    newName = download.name
-                    showRenameAlert = true
-                } label: {
-                    Label("Rename", systemImage: "pencil")
-                }
-                
-                if let videoID = download.videoID, !videoID.isEmpty {
-                    Button {
-                        redownload(download: download)
-                    } label: {
-                        Label("Redownload", systemImage: "arrow.clockwise")
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
+                    } else {
+                        audioPlayer.resume()
                     }
                 }
             }
-        }
-        .alert("Rename Song", isPresented: $showRenameAlert) {  // ✅ ADD THIS
-            TextField("Song name", text: $newName)
-            Button("Cancel", role: .cancel) { }
-            Button("Rename") {
+            .contextMenu {
                 if let download = download {
-                    downloadManager.renameDownload(download, newName: newName)
+                    Button {
+                        newName = download.name
+                        showRenameAlert = true
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                    }
+                    
+                    if let videoID = download.videoID, !videoID.isEmpty {
+                        Button {
+                            redownload(download: download)
+                        } label: {
+                            Label("Redownload", systemImage: "arrow.clockwise")
+                        }
+                    }
                 }
             }
-        } message: {
-            Text("Enter a new name for this song")
+            .alert("Rename Song", isPresented: $showRenameAlert) {
+                TextField("Song name", text: $newName)
+                Button("Cancel", role: .cancel) { }
+                Button("Rename") {
+                    if let download = download {
+                        downloadManager.renameDownload(download, newName: newName)
+                    }
+                }
+            } message: {
+                Text("Enter a new name for this song")
+            }
+            
+            // ✅ ADDED: Volume icon when playing
+            if isPlaying && audioPlayer.isPlaying {
+                Image(systemName: "speaker.wave.2.fill")
+                    .foregroundColor(.blue)
+                    .font(.body)
+            }
         }
     }
     

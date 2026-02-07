@@ -145,6 +145,8 @@ struct DownloadRow: View {
         audioPlayer.currentTrack?.id == download.id
     }
     
+    // In DownloadsView.txt, update DownloadRow body:
+
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
@@ -156,6 +158,7 @@ struct DownloadRow: View {
                         grayscale: download.pendingDeletion
                     )
                     
+                    // ✅ Play/Pause icon overlay (already correct)
                     if isCurrentlyPlaying && audioPlayer.isPlaying {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color.black.opacity(0.4))
@@ -172,7 +175,7 @@ struct DownloadRow: View {
                         .font(.body)
                         .fontWeight(isCurrentlyPlaying ? .bold : .regular)
                         .italic(isCurrentlyPlaying)
-                        .foregroundColor(download.pendingDeletion ? .gray : .primary)
+                        .foregroundColor(download.pendingDeletion ? .gray : (isCurrentlyPlaying ? .blue : .primary))  // ✅ Blue when playing
                         .lineLimit(1)
                     
                     HStack(spacing: 4) {
@@ -205,6 +208,13 @@ struct DownloadRow: View {
                         Label("Redownload", systemImage: "arrow.clockwise")
                     }
                 }
+            }
+            
+            // ✅ ADDED: Volume icon when playing
+            if isCurrentlyPlaying && audioPlayer.isPlaying {
+                Image(systemName: "speaker.wave.2.fill")
+                    .foregroundColor(.blue)
+                    .font(.body)
             }
             
             if !download.pendingDeletion {
