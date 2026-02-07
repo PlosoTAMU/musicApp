@@ -16,23 +16,19 @@ struct CreatePlaylistSheet: View {
                 HStack {
                     TextField("Playlist Name", text: $playlistName, onEditingChanged: { isEditing in
                         if isEditing {
-                            // Select all text when editing begins
                             DispatchQueue.main.async {
                                 let textField = UITextField.appearance()
-                                // This will select all on first tap
                             }
                         }
                     })
                     .textFieldStyle(.roundedBorder)
                     .focused($isTextFieldFocused)
                     .onAppear {
-                        // Focus the text field
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                             isTextFieldFocused = true
                         }
                     }
                     .onTapGesture {
-                        // Select all when tapped
                         if isTextFieldFocused {
                             DispatchQueue.main.async {
                                 UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
@@ -44,7 +40,7 @@ struct CreatePlaylistSheet: View {
                 
                 Divider()
                 
-                // Song selection
+                // ✅ FIXED: Use async thumbnail loading and proper list styling
                 List(downloadManager.sortedDownloads) { download in
                     Button {
                         if selectedDownloadIDs.contains(download.id) {
@@ -53,31 +49,18 @@ struct CreatePlaylistSheet: View {
                             selectedDownloadIDs.insert(download.id)
                         }
                     } label: {
-                        HStack {
-                            // Thumbnail
-                            ZStack {
-                                if let thumbPath = download.thumbnailPath,
-                                   let image = UIImage(contentsOfFile: thumbPath) {
-                                    Image(uiImage: image)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                        .frame(width: 40, height: 40)
-                                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                                } else {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.gray.opacity(0.3))
-                                        .frame(width: 40, height: 40)
-                                        .overlay(
-                                            Image(systemName: "music.note")
-                                                .font(.caption)
-                                                .foregroundColor(.gray)
-                                        )
-                                }
-                            }
+                        HStack(spacing: 12) {
+                            // ✅ FIXED: Use AsyncThumbnailView instead of synchronous loading
+                            AsyncThumbnailView(
+                                thumbnailPath: download.resolvedThumbnailPath,
+                                size: 40,
+                                cornerRadius: 6
+                            )
                             
                             Text(download.name)
                                 .font(.body)
                                 .foregroundColor(.primary)
+                                .lineLimit(1)
                             
                             Spacer()
                             
@@ -90,7 +73,11 @@ struct CreatePlaylistSheet: View {
                             }
                         }
                     }
+                    .buttonStyle(.plain)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color.black)
             }
             .navigationTitle("New Playlist")
             .navigationBarTitleDisplayMode(.inline)
