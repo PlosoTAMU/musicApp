@@ -57,9 +57,14 @@ struct ContentView: View {
             }
         }
         .fullScreenCover(isPresented: $showNowPlaying) {
-            NowPlayingView(audioPlayer: audioPlayer, isPresented: $showNowPlaying)
-                .statusBarHidden(false)
-                .persistentSystemOverlays(.hidden)
+            NowPlayingView(
+                audioPlayer: audioPlayer,
+                downloadManager: downloadManager,
+                playlistManager: playlistManager,
+                isPresented: $showNowPlaying
+            )
+            .statusBarHidden(false)
+            .persistentSystemOverlays(.hidden)
         }
         .sheet(isPresented: $showFolderPicker) {
             FolderPicker(downloadManager: downloadManager)
@@ -367,6 +372,8 @@ struct MiniPlayerBar: View {
 // MARK: - Full Now Playing View
 struct NowPlayingView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
+    @ObservedObject var downloadManager: DownloadManager
+    @ObservedObject var playlistManager: PlaylistManager
     @Binding var isPresented: Bool
     @State private var isSeeking = false
     @State private var seekValue: Double = 0
@@ -692,8 +699,14 @@ struct NowPlayingView: View {
                 }
         )
         .sheet(isPresented: $showPlaylistPicker) {
-            Text("Playlist picker coming soon")
-                .padding()
+            if let track = audioPlayer.currentTrack,
+            let download = downloadManager.getDownload(byID: track.id) {
+                AddToPlaylistSheet(
+                    download: download,
+                    playlistManager: playlistManager,
+                    onDismiss: { showPlaylistPicker = false }
+                )
+            }
         }
     }
     
