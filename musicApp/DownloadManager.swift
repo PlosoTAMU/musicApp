@@ -68,6 +68,53 @@ class DownloadManager: ObservableObject {
         cleaned = cleaned.replacingOccurrences(of: "`", with: "")   // Backticks (code)
         cleaned = cleaned.replacingOccurrences(of: "#", with: "")   // Hashes (headers)
         
+        // Remove Unicode mathematical alphanumeric symbols (used for styled text)
+        // These are often used by YouTube/social media for bold, italic, etc.
+        let unicodeFontRanges: [(UInt32, UInt32)] = [
+            (0x1D400, 0x1D7FF),  // Mathematical Alphanumeric Symbols (bold, italic, script, etc.)
+            (0x1D00, 0x1D7F),    // Phonetic Extensions
+            (0x2100, 0x214F),    // Letterlike Symbols
+        ]
+        
+        var neutralized = ""
+        for scalar in cleaned.unicodeScalars {
+            var shouldKeep = true
+            
+            // Check if character is in a fancy font range
+            for (start, end) in unicodeFontRanges {
+                if scalar.value >= start && scalar.value <= end {
+                    // Try to convert fancy characters to normal ASCII
+                    // Mathematical Bold (0x1D400-0x1D419 for A-Z, 0x1D41A-0x1D433 for a-z)
+                    if scalar.value >= 0x1D400 && scalar.value <= 0x1D419 {
+                        neutralized.append(Character(UnicodeScalar(scalar.value - 0x1D400 + 0x41)!)) // A-Z
+                    } else if scalar.value >= 0x1D41A && scalar.value <= 0x1D433 {
+                        neutralized.append(Character(UnicodeScalar(scalar.value - 0x1D41A + 0x61)!)) // a-z
+                    }
+                    // Mathematical Italic (0x1D434-0x1D467)
+                    else if scalar.value >= 0x1D434 && scalar.value <= 0x1D44D {
+                        neutralized.append(Character(UnicodeScalar(scalar.value - 0x1D434 + 0x41)!)) // A-Z
+                    } else if scalar.value >= 0x1D44E && scalar.value <= 0x1D467 {
+                        neutralized.append(Character(UnicodeScalar(scalar.value - 0x1D44E + 0x61)!)) // a-z
+                    }
+                    // Mathematical Bold Italic (0x1D468-0x1D49B)
+                    else if scalar.value >= 0x1D468 && scalar.value <= 0x1D481 {
+                        neutralized.append(Character(UnicodeScalar(scalar.value - 0x1D468 + 0x41)!)) // A-Z
+                    } else if scalar.value >= 0x1D482 && scalar.value <= 0x1D49B {
+                        neutralized.append(Character(UnicodeScalar(scalar.value - 0x1D482 + 0x61)!)) // a-z
+                    }
+                    // Add more mappings as needed...
+                    shouldKeep = false
+                    break
+                }
+            }
+            
+            if shouldKeep {
+                neutralized.append(Character(scalar))
+            }
+        }
+        
+        cleaned = neutralized
+        
         // Remove multiple consecutive spaces and trim
         cleaned = cleaned.replacingOccurrences(of: "  +", with: " ", options: .regularExpression)
         cleaned = cleaned.trimmingCharacters(in: .whitespaces)
