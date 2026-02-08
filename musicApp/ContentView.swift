@@ -691,7 +691,7 @@ struct NowPlayingView: View {
             }
             
             // Visualizer layer
-            EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailCenter: thumbnailCenter)
+            EdgeVisualizerView(audioPlayer: audioPlayer.visualizerState, thumbnailCenter: thumbnailCenter)
                 .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
                 .allowsHitTesting(false)
                 .ignoresSafeArea()
