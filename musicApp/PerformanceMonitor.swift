@@ -773,7 +773,14 @@ class PerformanceMonitor {
         lock.lock()
         let peakMem = peakMemory
         lock.unlock()
-        let growthMB = Double(currentMem - baselineMemory) / 1_048_576.0
+        
+        // Safe calculation to avoid overflow
+        let growthMB: Double
+        if currentMem >= baselineMemory {
+            growthMB = Double(currentMem - baselineMemory) / 1_048_576.0
+        } else {
+            growthMB = -Double(baselineMemory - currentMem) / 1_048_576.0
+        }
         
         print("\n┌─ 🧠 MEMORY ANALYSIS ──────────────────────────────────")
         print("│  Baseline:     \(String(format: "%.1f MB", Double(baselineMemory) / 1_048_576.0))")
