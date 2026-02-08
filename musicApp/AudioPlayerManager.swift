@@ -91,9 +91,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
         return indices
     }()
     
-    // Throttle visualization updates to ~60fps for smoother animation
+    // Throttle visualization updates to ~30fps (visually smooth, halves main thread load)
     private var lastVisualizationUpdate: CFAbsoluteTime = 0
-    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 60.0  // 60fps
+    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 30.0  // 30fps — plenty for bar visualizer
     
     // FFT setup - use 2048 for better frequency resolution (especially for beat detection)
     private var fftSetup: FFTSetup?
@@ -1513,9 +1513,39 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     /// Advanced FFT-based frequency analysis with beat detection
+    // Pre-computed Hann window (avoids recalculating cos() every frame)
+    private lazy var hannWindow: [Float] = {
+        var window = [Float](repeating: 0, count: fftSize)
+        vDSP_hann_window(&window, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
+        return window
+    }()
+    
+    // Pre-computed log frequency mapping (avoids pow/log10 every frame)
+    private lazy var frequencyBinMapping: [(fftBin: Int, spread: Int)] = {
+        let minFreq: Float = 20.0
+        let maxFreq: Float = 8000.0
+        let logMin = log10(minFreq)
+        let logMax = log10(maxFreq)
+        let sampleRate: Float = 44100.0
+        let binWidth = sampleRate / Float(fftSize)
+        
+        return (0..<100).map { i in
+            let t = Float(i) / 99.0
+            let freq = pow(10, logMin + t * (logMax - logMin))
+            let fftBin = Int(freq / binWidth)
+            let spread = max(1, fftBin / 10)
+            return (fftBin: fftBin, spread: spread)
+        }
+    }()
+    
+    // Reusable buffer for spectral flux diff
+    private var fluxDiffBuffer = [Float](repeating: 0, count: 1024)
+    
     private func processFFTBuffer(_ buffer: AVAudioPCMBuffer) {
-        PerformanceMonitor.shared.start("processFFTBuffer") // ✅ ADDED
-        defer { PerformanceMonitor.shared.end("processFFTBuffer") } // ✅ ADDED
+        // ⚡ THROTTLE: Skip FFT entirely if we won't update the UI
+        let updateNow = CFAbsoluteTimeGetCurrent()
+        guard updateNow - lastVisualizationUpdate >= visualizationUpdateInterval else { return }
+        
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
         guard frameLength > 0 else { return }
@@ -1524,14 +1554,17 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let samplesToProcess = min(frameLength, fftSize)
         
         // ==========================================
-        // STEP 1: Apply Hann window for clean FFT
+        // STEP 1: Apply Hann window using vDSP (vectorized)
         // ==========================================
-        for i in 0..<fftSize {
-            if i < samplesToProcess {
-                let window = 0.5 * (1.0 - cos(2.0 * .pi * Float(i) / Float(samplesToProcess)))
-                fftInputBuffer[i] = samples[i] * window
-            } else {
-                fftInputBuffer[i] = 0
+        if samplesToProcess == fftSize {
+            // Fast path: full buffer, use vectorized multiply
+            vDSP_vmul(samples, 1, hannWindow, 1, &fftInputBuffer, 1, vDSP_Length(fftSize))
+        } else {
+            // Partial buffer: window what we have, zero the rest
+            vDSP_vmul(samples, 1, hannWindow, 1, &fftInputBuffer, 1, vDSP_Length(samplesToProcess))
+            if samplesToProcess < fftSize {
+                var zero: Float = 0
+                vDSP_vfill(&zero, &fftInputBuffer + samplesToProcess, 1, vDSP_Length(fftSize - samplesToProcess))
             }
         }
         
@@ -1556,71 +1589,56 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
         }
         
-        // Convert to magnitude (sqrt of power)
-        for i in 0..<fftSizeHalf {
-            fftMagnitudes[i] = sqrt(fftMagnitudes[i])
-        }
+        // Convert to magnitude using vectorized sqrt
+        var count = Int32(fftSizeHalf)
+        vvsqrtf(&fftMagnitudes, fftMagnitudes, &count)
         
         // ==========================================
-        // STEP 3: Calculate spectral flux (onset detection)
-        // Spectral flux measures how much the spectrum changed
-        // Large positive changes indicate beats/transients
+        // STEP 3: Calculate spectral flux using vDSP (vectorized)
         // ==========================================
+        // diff = magnitudes - previous
+        vDSP_vsub(previousMagnitudes, 1, fftMagnitudes, 1, &fluxDiffBuffer, 1, vDSP_Length(fftSizeHalf))
+        // Zero out negatives (only count onsets)
+        var zero: Float = 0
+        var large: Float = Float.greatestFiniteMagnitude
+        vDSP_vclip(fluxDiffBuffer, 1, &zero, &large, &fluxDiffBuffer, 1, vDSP_Length(fftSizeHalf))
+        // Sum of squares
         var spectralFlux: Float = 0
-        for i in 0..<fftSizeHalf {
-            let diff = fftMagnitudes[i] - previousMagnitudes[i]
-            if diff > 0 {  // Only count increases (onsets, not decays)
-                spectralFlux += diff * diff
-            }
-            previousMagnitudes[i] = fftMagnitudes[i]
-        }
+        vDSP_dotpr(fluxDiffBuffer, 1, fluxDiffBuffer, 1, &spectralFlux, vDSP_Length(fftSizeHalf))
         spectralFlux = sqrt(spectralFlux)
+        // Save current magnitudes for next frame
+        memcpy(&previousMagnitudes, &fftMagnitudes, fftSizeHalf * MemoryLayout<Float>.size)
         
         // ==========================================
-        // STEP 4: Sub-band energy analysis
+        // STEP 4: Sub-band energy analysis (vectorized with vDSP)
         // At 44.1kHz with fftSize 2048: each bin = ~21.5Hz
-        // Sub-bass (kick): 20-60Hz = bins 1-3
-        // Bass: 60-250Hz = bins 3-12
-        // Low-mid: 250-500Hz = bins 12-23
-        // Mid: 500-2000Hz = bins 23-93
-        // High: 2000-8000Hz = bins 93-372
         // ==========================================
         
+        // Sub-bass (kick drum): bins 1-3
         var subBassEnergy: Float = 0
+        vDSP_dotpr(&fftMagnitudes[1], 1, &fftMagnitudes[1], 1, &subBassEnergy, 3)
+        subBassEnergy = sqrt(subBassEnergy / 3.0) * 1.3
+        
+        // Bass: bins 3-11
         var bassEnergy: Float = 0
+        vDSP_dotpr(&fftMagnitudes[3], 1, &fftMagnitudes[3], 1, &bassEnergy, 9)
+        bassEnergy = sqrt(bassEnergy / 9.0) * 1.2
+        
+        // Low-mid: bins 12-22
         var lowMidEnergy: Float = 0
-        var midEnergy: Float = 0
-        var highEnergy: Float = 0
-        
-        // Sub-bass (kick drum) - very narrow, focused on punch
-        for i in 1..<4 {
-            subBassEnergy += fftMagnitudes[i] * fftMagnitudes[i]
-        }
-        subBassEnergy = sqrt(subBassEnergy / 3.0) * 1.3  // Boost sub-bass detection
-        
-        // Bass
-        for i in 3..<12 {
-            bassEnergy += fftMagnitudes[i] * fftMagnitudes[i]
-        }
-        bassEnergy = sqrt(bassEnergy / 9.0) * 1.2  // Boost bass detection
-        
-        // Low-mid (snare body, toms)
-        for i in 12..<23 {
-            lowMidEnergy += fftMagnitudes[i] * fftMagnitudes[i]
-        }
+        vDSP_dotpr(&fftMagnitudes[12], 1, &fftMagnitudes[12], 1, &lowMidEnergy, 11)
         lowMidEnergy = sqrt(lowMidEnergy / 11.0)
         
-        // Mid
-        for i in 23..<93 {
-            midEnergy += fftMagnitudes[i] * fftMagnitudes[i]
-        }
+        // Mid: bins 23-92
+        var midEnergy: Float = 0
+        vDSP_dotpr(&fftMagnitudes[23], 1, &fftMagnitudes[23], 1, &midEnergy, 70)
         midEnergy = sqrt(midEnergy / 70.0)
         
-        // High (hi-hats, cymbals)
-        for i in 93..<min(372, fftSizeHalf) {
-            highEnergy += fftMagnitudes[i] * fftMagnitudes[i]
-        }
-        highEnergy = sqrt(highEnergy / Float(min(279, fftSizeHalf - 93)))
+        // High: bins 93-371
+        let highCount = vDSP_Length(min(279, fftSizeHalf - 93))
+        var highEnergy: Float = 0
+        vDSP_dotpr(&fftMagnitudes[93], 1, &fftMagnitudes[93], 1, &highEnergy, highCount)
+        highEnergy = sqrt(highEnergy / Float(highCount))
         
         // Total energy
         let totalEnergy = subBassEnergy + bassEnergy + lowMidEnergy + midEnergy * 0.5 + highEnergy * 0.3
@@ -1640,39 +1658,30 @@ class AudioPlayerManager: NSObject, ObservableObject {
         subBassHistoryIndex = (subBassHistoryIndex + 1) % subBassHistory.count
         
         // ==========================================
-        // STEP 6: Calculate adaptive thresholds
+        // STEP 6: Calculate adaptive thresholds (vectorized)
         // ==========================================
         
-        // Average and variance of recent energy
+        // Average energy
         var avgEnergyLocal: Float = 0
-        var varianceEnergy: Float = 0
-        for e in energyHistory {
-            avgEnergyLocal += e
-        }
-        avgEnergyLocal /= Float(energyHistory.count)
+        vDSP_meanv(energyHistory, 1, &avgEnergyLocal, vDSP_Length(energyHistory.count))
         
-        for e in energyHistory {
-            let diff = e - avgEnergyLocal
-            varianceEnergy += diff * diff
-        }
+        // Variance of energy
+        var varianceEnergy: Float = 0
+        var negAvg = -avgEnergyLocal
+        var tempBuffer = [Float](repeating: 0, count: energyHistory.count)
+        vDSP_vsadd(energyHistory, 1, &negAvg, &tempBuffer, 1, vDSP_Length(energyHistory.count))
+        vDSP_dotpr(tempBuffer, 1, tempBuffer, 1, &varianceEnergy, vDSP_Length(energyHistory.count))
         varianceEnergy = sqrt(varianceEnergy / Float(energyHistory.count))
         
-        // Average of recent flux
+        // Average flux
         var avgFlux: Float = 0
-        for f in fluxHistory {
-            avgFlux += f
-        }
-        avgFlux /= Float(fluxHistory.count)
+        vDSP_meanv(fluxHistory, 1, &avgFlux, vDSP_Length(fluxHistory.count))
         
-        // Sub-band averages for relative comparison
+        // Sub-band averages
         var avgSubBass: Float = 0
         var avgBass: Float = 0
-        for i in 0..<subBassHistory.count {
-            avgSubBass += subBassHistory[i]
-            avgBass += bassHistory[i]
-        }
-        avgSubBass /= Float(subBassHistory.count)
-        avgBass /= Float(subBassHistory.count)
+        vDSP_meanv(subBassHistory, 1, &avgSubBass, vDSP_Length(subBassHistory.count))
+        vDSP_meanv(bassHistory, 1, &avgBass, vDSP_Length(bassHistory.count))
         
         // ==========================================
         // STEP 7: BEAT DETECTION
@@ -1750,36 +1759,22 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         let normalizer = max(runningMax, runningAvg * 2, 0.001)
         
-        // Create frequency bins with logarithmic mapping
+        // Create frequency bins using pre-computed logarithmic mapping
         var rawBins = [Float](repeating: 0, count: 100)
         
-        // Map 100 bins across useful frequency range (20Hz - 8000Hz)
-        // Using logarithmic scale so bass/mid gets more bins
-        let minFreq: Float = 20.0
-        let maxFreq: Float = 8000.0
-        let logMin = log10(minFreq)
-        let logMax = log10(maxFreq)
-        let sampleRate: Float = 44100.0
-        let binWidth = sampleRate / Float(fftSize)
-        
         for i in 0..<100 {
-            // Logarithmic frequency mapping
-            let t = Float(i) / 99.0
-            let freq = pow(10, logMin + t * (logMax - logMin))
-            let fftBin = Int(freq / binWidth)
+            let mapping = frequencyBinMapping[i]
+            let fftBin = mapping.fftBin
+            let spread = mapping.spread
             
             guard fftBin < fftSizeHalf else { continue }
             
-            // Average a few bins around the target for smoother result
+            // Average bins around target using vDSP
+            let lo = max(0, fftBin - spread)
+            let hi = min(fftSizeHalf - 1, fftBin + spread)
+            let rangeCount = vDSP_Length(hi - lo + 1)
             var mag: Float = 0
-            var count: Float = 0
-            let spread = max(1, fftBin / 10)  // More averaging for higher bins
-            for j in max(0, fftBin - spread)...min(fftSizeHalf - 1, fftBin + spread) {
-                mag += fftMagnitudes[j]
-                count += 1
-            }
-            mag /= count
-            
+            vDSP_meanv(&fftMagnitudes[lo], 1, &mag, rangeCount)
             rawBins[i] = mag
         }
         
@@ -1848,21 +1843,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
         smoothedBass = min(1.0, max(0, smoothedBass))
         
         // ==========================================
-        // STEP 12: Throttled update to SwiftUI
+        // STEP 12: Update SwiftUI (already throttled at top of function)
         // ==========================================
         let finalBins = newBins
         let finalBass = smoothedBass
         
-        let updateNow = CFAbsoluteTimeGetCurrent()
-        if updateNow - lastVisualizationUpdate >= visualizationUpdateInterval {
-            lastVisualizationUpdate = updateNow
+        lastVisualizationUpdate = updateNow
     
-            PerformanceMonitor.shared.start("FFT_to_SwiftUI") // ✅ ADDED
-            DispatchQueue.main.async { [weak self] in
-                self?.visualizerState.frequencyBins = finalBins  // ✅ Changed
-                self?.visualizerState.bassLevel = finalBass      // ✅ Changed
-                PerformanceMonitor.shared.end("FFT_to_SwiftUI")
-            }
+        DispatchQueue.main.async { [weak self] in
+            self?.visualizerState.frequencyBins = finalBins
+            self?.visualizerState.bassLevel = finalBass
         }
     }
 }

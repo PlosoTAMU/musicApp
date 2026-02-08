@@ -822,11 +822,22 @@ struct NowPlayingView: View {
     
     private func getThumbnailImage(for track: Track?) -> UIImage? {
         guard let track = track,
-              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
-              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
+              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url) else {
             return nil
         }
-        return image
+        
+        let pathString = thumbnailPath.path
+        
+        // ⚡ Check memory cache first (avoids disk I/O on every view rebuild)
+        if let cached = ThumbnailCache.shared.get(pathString) {
+            return cached
+        }
+        
+        // Load and cache at 200×200 @2x for NowPlaying
+        guard let image = UIImage(contentsOfFile: pathString) else { return nil }
+        let scaled = image.preparingThumbnail(of: CGSize(width: 400, height: 400)) ?? image
+        ThumbnailCache.shared.set(pathString, image: scaled)
+        return scaled
     }
     
     private func lockOrientation(_ orientation: UIInterfaceOrientationMask) {
@@ -1255,15 +1266,14 @@ struct EdgeVisualizerView: View {
     private let baseBoxSize: CGFloat = 200
     private let cornerRadius: CGFloat = 16
     private let maxBarLength: CGFloat = 60
-    private let minBarLength: CGFloat = 1   // Lower minimum for larger dynamic range
+    private let minBarLength: CGFloat = 1
     private let barsPerSide = 25  // 100 total bars = matches FFT bins
     
-    @State private var dominantColors: [Color] = []
+    // ⚡ Pre-computed HSB values per bar index (updated only on track change)
+    @State private var barHSB: [(h: CGFloat, s: CGFloat, b: CGFloat)] = []
     
     var body: some View {
         Canvas { context, size in
-
-            
             let centerX = thumbnailCenter?.x ?? size.width / 2
             let centerY = thumbnailCenter?.y ?? size.height / 2
             
@@ -1272,7 +1282,6 @@ struct EdgeVisualizerView: View {
             guard bins.count >= 100 else { return }
             
             // Scale box to match thumbnail pulse
-            // Bass level is now 0.05-0.9 range, map to punchier pulse
             let pulseScale = 1.0 + CGFloat(bass) * 0.20
             let boxSize = baseBoxSize * pulseScale
             let halfBox = boxSize / 2
@@ -1280,13 +1289,16 @@ struct EdgeVisualizerView: View {
             let straightEdge = boxSize - 2 * scaledCorner
             let spacing = straightEdge / CGFloat(barsPerSide)
             
+            let hsb = barHSB
+            let hasColors = hsb.count == 100
+            
             var barIndex = 0
             
             // TOP (bins 0-24)
             for i in 0..<barsPerSide {
                 let x = centerX - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
                 let y = centerY - halfBox
-                drawBar(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex], index: barIndex, colors: dominantColors)
+                drawBarFast(context: context, x: x, y: y, dx: 0, dy: -1, value: bins[barIndex], hsb: hasColors ? hsb[barIndex] : nil)
                 barIndex += 1
             }
             
@@ -1294,7 +1306,7 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX + halfBox
                 let y = centerY - halfBox + scaledCorner + spacing * (CGFloat(i) + 0.5)
-                drawBar(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex], index: barIndex, colors: dominantColors)
+                drawBarFast(context: context, x: x, y: y, dx: 1, dy: 0, value: bins[barIndex], hsb: hasColors ? hsb[barIndex] : nil)
                 barIndex += 1
             }
             
@@ -1302,7 +1314,7 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
                 let y = centerY + halfBox
-                drawBar(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex], index: barIndex, colors: dominantColors)
+                drawBarFast(context: context, x: x, y: y, dx: 0, dy: 1, value: bins[barIndex], hsb: hasColors ? hsb[barIndex] : nil)
                 barIndex += 1
             }
             
@@ -1310,22 +1322,24 @@ struct EdgeVisualizerView: View {
             for i in 0..<barsPerSide {
                 let x = centerX - halfBox
                 let y = centerY + halfBox - scaledCorner - spacing * (CGFloat(i) + 0.5)
-                drawBar(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex], index: barIndex, colors: dominantColors)
+                drawBarFast(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex], hsb: hasColors ? hsb[barIndex] : nil)
                 barIndex += 1
             }
         }
         .drawingGroup()
         .onChange(of: audioPlayer.currentTrack) { newTrack in
-            updateColors(for: newTrack)
+            precomputeBarColors(for: newTrack)
         }
         .onAppear {
-            updateColors(for: audioPlayer.currentTrack)
+            precomputeBarColors(for: audioPlayer.currentTrack)
         }
     }
     
-    private func updateColors(for track: Track?) {
+    /// ⚡ Pre-compute HSB base values for all 100 bars once per track change
+    /// Eliminates 100× UIColor creation + HSB extraction per frame
+    private func precomputeBarColors(for track: Track?) {
         guard let track = track else {
-            dominantColors = [Color.white]
+            barHSB = Array(repeating: (h: 0, s: 0, b: 1.0), count: 100) // white
             return
         }
         
@@ -1336,11 +1350,25 @@ struct EdgeVisualizerView: View {
         
         guard FileManager.default.fileExists(atPath: thumbnailPath.path),
               let image = UIImage(contentsOfFile: thumbnailPath.path) else {
-            dominantColors = [Color.white]
+            barHSB = Array(repeating: (h: 0, s: 0, b: 1.0), count: 100)
             return
         }
         
-        dominantColors = extractDominantColors(from: image)
+        let dominantColors = extractDominantColors(from: image)
+        
+        // Pre-extract HSB for each bar position
+        var result = [(h: CGFloat, s: CGFloat, b: CGFloat)]()
+        result.reserveCapacity(100)
+        
+        for i in 0..<100 {
+            let baseColor = dominantColors.isEmpty ? Color.white : dominantColors[i % dominantColors.count]
+            let uiColor = UIColor(baseColor)
+            var h: CGFloat = 0, s: CGFloat = 0, bri: CGFloat = 0, a: CGFloat = 0
+            uiColor.getHue(&h, saturation: &s, brightness: &bri, alpha: &a)
+            result.append((h: h, s: s, b: bri))
+        }
+        
+        barHSB = result
     }
     
     private func extractDominantColors(from image: UIImage) -> [Color] {
@@ -1363,21 +1391,18 @@ struct EdgeVisualizerView: View {
         let bytesPerPixel = 4
         let bytesPerRow = resizedCGImage.bytesPerRow
         
-        // Sample colors from the image
         var colorCounts: [String: (color: Color, count: Int)] = [:]
         
-        for y in 0..<50 {
-            for x in 0..<50 {
+        for y in stride(from: 0, to: 50, by: 2) {  // ⚡ Sample every other pixel
+            for x in stride(from: 0, to: 50, by: 2) {
                 let pixelIndex = (y * bytesPerRow) + (x * bytesPerPixel)
                 let r = CGFloat(data[pixelIndex]) / 255.0
                 let g = CGFloat(data[pixelIndex + 1]) / 255.0
                 let b = CGFloat(data[pixelIndex + 2]) / 255.0
                 
-                // Skip very dark or very light colors
                 let brightness = (r + g + b) / 3.0
                 guard brightness > 0.2 && brightness < 0.9 else { continue }
                 
-                // Quantize to reduce similar colors
                 let qR = Int(r * 4) / 4
                 let qG = Int(g * 4) / 4
                 let qB = Int(b * 4) / 4
@@ -1393,7 +1418,6 @@ struct EdgeVisualizerView: View {
             }
         }
         
-        // Get top 3 most common colors
         let sortedColors = colorCounts.values
             .sorted { $0.count > $1.count }
             .prefix(3)
@@ -1402,60 +1426,36 @@ struct EdgeVisualizerView: View {
         return sortedColors.isEmpty ? [Color.white] : sortedColors
     }
     
+    /// ⚡ Optimized drawBar — uses pre-computed HSB, no UIColor allocation per frame
     @inline(__always)
-    private func drawBar(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float, index: Int, colors: [Color]) {
-        // Values now range 0-1 from AudioPlayerManager
-        // 0 = no activity, line should not be drawn
-        guard value > 0.01 else { return }  // Skip near-zero values
+    private func drawBarFast(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float, hsb: (h: CGFloat, s: CGFloat, b: CGFloat)?) {
+        guard value > 0.01 else { return }
         
         let normalizedValue = CGFloat(value)
-        
-        // Calculate bar length - 0 means invisible, 1 means full length
         let barLength = normalizedValue * maxBarLength
         
-        // Choose color from extracted palette based on position and intensity
-        let baseColor: Color
-        if colors.isEmpty {
-            baseColor = Color.white
+        let finalColor: Color
+        if let hsb = hsb {
+            // Use pre-computed HSB — just apply intensity modulation (no UIColor allocation!)
+            let hueShift = Double(normalizedValue) * 0.05 - 0.025
+            let adjustedHue = (hsb.h + hueShift).truncatingRemainder(dividingBy: 1.0)
+            let adjustedSaturation = min(1.0, max(0.7, hsb.s + Double(normalizedValue) * 0.3))
+            let baseBrightness = max(0.5, hsb.b)
+            let adjustedBrightness = min(1.0, baseBrightness + Double(normalizedValue) * 0.5)
+            let opacity = 0.75 + Double(normalizedValue) * 0.25
+            finalColor = Color(hue: adjustedHue, saturation: adjustedSaturation, brightness: adjustedBrightness, opacity: opacity)
         } else {
-            // Cycle through the dominant colors based on position
-            let colorIndex = index % colors.count
-            baseColor = colors[colorIndex]
+            let opacity = 0.75 + Double(normalizedValue) * 0.25
+            finalColor = Color.white.opacity(opacity)
         }
-        
-        // Extract HSB from base color and modify for visual interest
-        let uiColor = UIColor(baseColor)
-        var hue: CGFloat = 0
-        var saturation: CGFloat = 0
-        var brightness: CGFloat = 0
-        var alpha: CGFloat = 0
-        uiColor.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
-        
-        // Shift hue slightly based on intensity for variation
-        let hueShift = Double(normalizedValue) * 0.05 - 0.025  // ±2.5% hue shift
-        let adjustedHue = (hue + hueShift).truncatingRemainder(dividingBy: 1.0)
-        
-        // Ensure lines are always bright and saturated enough to be visible
-        // Boost saturation significantly
-        let adjustedSaturation = min(1.0, max(0.7, saturation + Double(normalizedValue) * 0.3))
-        
-        // Ensure minimum brightness so lines are always visible (even if thumbnail is dark)
-        let baseBrightness = max(0.5, brightness)  // At least 50% brightness
-        let adjustedBrightness = min(1.0, baseBrightness + Double(normalizedValue) * 0.5)
-        
-        // Higher opacity for better visibility
-        let opacity = 0.75 + Double(normalizedValue) * 0.25
-        
-        let finalColor = Color(hue: adjustedHue, saturation: adjustedSaturation, brightness: adjustedBrightness, opacity: opacity)
         
         var path = Path()
         path.move(to: CGPoint(x: x, y: y))
         path.addLine(to: CGPoint(x: x + dx * barLength, y: y + dy * barLength))
         
-        // Line width pulses with intensity - slightly thicker for visibility
         let lineWidth = 2.5 + CGFloat(normalizedValue) * 1.5
         
-        // Add glow effect for better visibility against dark backgrounds
+        // Glow + main stroke
         context.stroke(path, with: .color(finalColor.opacity(0.3)), style: StrokeStyle(lineWidth: lineWidth + 2, lineCap: .round))
         context.stroke(path, with: .color(finalColor), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
     }

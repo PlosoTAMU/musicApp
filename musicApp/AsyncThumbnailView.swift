@@ -1,4 +1,5 @@
 import SwiftUI
+import ImageIO
 
 /// A thumbnail view that loads images asynchronously and caches them in memory
 /// to prevent blocking the main thread and reduce lag when scrolling lists
@@ -57,22 +58,34 @@ struct AsyncThumbnailView: View {
             return
         }
         
-        // Check cache first
+        // ⚡ Check cache first (fast path, no disk I/O)
         if let cached = ThumbnailCache.shared.get(path) {
             image = cached
             return
         }
-        let startLabel = "Thumbnail_Load_\(path.split(separator: "/").last ?? "unknown")"
+        
+        // ⚡ Capture size locally to avoid referencing self in detached task
+        let targetSize = size
         
         loadTask = Task.detached(priority: .utility) {
-            PerformanceMonitor.shared.start(startLabel) // ✅ ADDED
-            defer { PerformanceMonitor.shared.end(startLabel) } // ✅ ADDED
-            guard let loadedImage = UIImage(contentsOfFile: path) else {
+            // ⚡ Use ImageIO for much faster thumbnail generation
+            // Instead of loading full image then downscaling, tell the decoder to only decode at target size
+            let url = URL(fileURLWithPath: path)
+            let maxPixelSize = Int(targetSize * 2)  // @2x for retina
+            
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+            
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
                 return
             }
             
-            // Downscale to target size for better memory/performance
-            let scaledImage = loadedImage.preparingThumbnail(of: CGSize(width: size * 2, height: size * 2)) ?? loadedImage
+            let scaledImage = UIImage(cgImage: cgImage)
             
             // Cache it
             ThumbnailCache.shared.set(path, image: scaledImage)
