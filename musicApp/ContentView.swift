@@ -509,7 +509,7 @@ struct NowPlayingView: View {
                 
                 Spacer(minLength: 30)
                 
-                // Single container - extra large to prevent any clipping
+                // Single container - sized to fit thumbnail + visualizer bars
                 ZStack {
                     // Main thumbnail with bass pulse (bottom layer)
                     Group {
@@ -517,7 +517,7 @@ struct NowPlayingView: View {
                             Image(uiImage: thumbnailImage)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
-                                .frame(width: 220, height: 220)
+                                .frame(width: 200, height: 200)
                                 .clipShape(RoundedRectangle(cornerRadius: 16))
                                 .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                         } else {
@@ -527,7 +527,7 @@ struct NowPlayingView: View {
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ))
-                                .frame(width: 220, height: 220)
+                                .frame(width: 200, height: 200)
                                 .overlay(
                                     Image(systemName: "music.note")
                                         .font(.system(size: 60))
@@ -541,11 +541,11 @@ struct NowPlayingView: View {
                     
                     // Visualizer overlay (top layer - always visible)
                     EdgeVisualizerView(audioPlayer: audioPlayer)
-                        .frame(width: 400, height: 400)  // Even larger frame for full bar extension
+                        .frame(width: 340, height: 340)  // Large enough for 200px thumbnail + 60px bars on each side + pulse
                         .allowsHitTesting(false)
                         .zIndex(2)  // Visualizer on top
                 }
-                .frame(width: 400, height: 400)  // Fixed large frame to guarantee space for bars
+                .frame(width: 340, height: 340)  // Fixed frame: 200 thumbnail + 60*2 bars + 20 margin for pulse
                 .compositingGroup()  // Group for better rendering
                 .onTapGesture {
                     if audioPlayer.isPlaying {
@@ -1186,7 +1186,7 @@ struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     
     // Geometry - matches thumbnail with subtle pulse
-    private let baseBoxSize: CGFloat = 220
+    private let baseBoxSize: CGFloat = 200
     private let cornerRadius: CGFloat = 16
     private let maxBarLength: CGFloat = 60
     private let minBarLength: CGFloat = 1   // Lower minimum for larger dynamic range
