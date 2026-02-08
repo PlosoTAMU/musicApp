@@ -306,6 +306,9 @@ class PerformanceMonitor {
         let memoryMB = Double(memory.used) / (1024 * 1024)
         let thermal = ProcessInfo.processInfo.thermalState
         
+        // ✅ Track peak memory
+        recordMemorySnapshot()
+        
         var threadMap: [String: Double] = [:]
         let sorted = threads.sorted { $0.cpuUsage > $1.cpuUsage }
         for t in sorted.prefix(8) where t.cpuUsage > 1.0 {

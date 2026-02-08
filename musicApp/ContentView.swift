@@ -46,6 +46,9 @@ struct ContentView: View {
             }
             .onAppear {
                 startFPSTracking()
+                #if DEBUG
+                MainThreadWatchdog.shared.start()
+                #endif
             }
             
             VStack(spacing: 0) {
