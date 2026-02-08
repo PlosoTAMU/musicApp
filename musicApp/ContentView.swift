@@ -256,45 +256,46 @@ struct MiniPlayerBar: View {
                 .frame(height: 65)
             
             HStack(spacing: 12) {
-                Button {
-                    showNowPlaying = true
-                } label: {
-                    HStack(spacing: 12) {
-                        ZStack {
-                            if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
-                                Image(uiImage: thumbnailPath)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 48, height: 48)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                            } else {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.gray.opacity(0.3))
-                                    .frame(width: 48, height: 48)
-                                    .overlay(
-                                        Image(systemName: "music.note")
-                                            .foregroundColor(.gray)
-                                    )
-                            }
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(audioPlayer.currentTrack?.name ?? "Unknown")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .lineLimit(1)
-                                .foregroundColor(.white)
-                                .shadow(color: .black.opacity(0.3), radius: 2)
-                            
-                            Text(audioPlayer.currentTrack?.folderName ?? "")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.8))
-                                .lineLimit(1)
-                                .shadow(color: .black.opacity(0.3), radius: 2)
+                // Left side - thumbnail and text (fully tappable)
+                HStack(spacing: 12) {
+                    ZStack {
+                        if let thumbnailPath = getThumbnailImage(for: audioPlayer.currentTrack) {
+                            Image(uiImage: thumbnailPath)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 48, height: 48)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        } else {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.gray.opacity(0.3))
+                                .frame(width: 48, height: 48)
+                                .overlay(
+                                    Image(systemName: "music.note")
+                                        .foregroundColor(.gray)
+                                )
                         }
                     }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.3), radius: 2)
+                        
+                        Text(audioPlayer.currentTrack?.folderName ?? "")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.8))
+                            .lineLimit(1)
+                            .shadow(color: .black.opacity(0.3), radius: 2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    showNowPlaying = true
+                }
                 
                 Spacer()
                 
