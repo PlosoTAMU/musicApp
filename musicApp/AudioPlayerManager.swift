@@ -1118,7 +1118,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         audioQueue.async {
             guard let eq = self.eqNode else { return }
             
-            let boost = self.bassBoost  // -12 to +12 dB from user
+            let boost = self.bassBoost  // -10 to +20 dB from user
             
             // ── 5-band surgical bass shaping ──
             // Instead of a single shelf that makes everything muddy, we:
@@ -1137,21 +1137,27 @@ class AudioPlayerManager: NSObject, ObservableObject {
             // Band 2: Mud scoop — always cut proportionally when boosting bass
             // When cutting bass (negative), don't add mud
             if boost > 0 {
-                eq.bands[2].gain = Float(-boost * 0.35)  // Scoop mud at 35% of boost
+                // At extreme boosts (>12dB), be more aggressive with mud cut
+                let mudCutRatio = boost > 12 ? 0.4 : 0.35
+                eq.bands[2].gain = Float(-boost * mudCutRatio)
             } else {
                 eq.bands[2].gain = 0
             }
             
             // Band 3: Presence compensation — keeps vocals/snares from drowning
             if boost > 0 {
-                eq.bands[3].gain = Float(boost * 0.15)  // Gentle 15% presence lift
+                // Increase presence more at extreme bass levels
+                let presenceRatio = boost > 12 ? 0.2 : 0.15
+                eq.bands[3].gain = Float(boost * presenceRatio)
             } else {
                 eq.bands[3].gain = 0
             }
             
             // Band 4: Air — subtle sparkle to offset bass darkness
             if boost > 0 {
-                eq.bands[4].gain = Float(boost * 0.1)
+                // More air at extreme bass to maintain clarity
+                let airRatio = boost > 12 ? 0.12 : 0.1
+                eq.bands[4].gain = Float(boost * airRatio)
             } else {
                 eq.bands[4].gain = 0
             }

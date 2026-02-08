@@ -1093,11 +1093,11 @@ struct AudioSettingsSheet: View {
                             .foregroundColor(.secondary)
                     }
                     
-                    Slider(value: $audioPlayer.bassBoost, in: -12...12)
+                    Slider(value: $audioPlayer.bassBoost, in: -10...20)
                         .tint(.orange)
                     
                     HStack {
-                        Text("-12")
+                        Text("-10")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                         Spacer()
@@ -1107,7 +1107,7 @@ struct AudioSettingsSheet: View {
                         .font(.caption)
                         .foregroundColor(.orange)
                         Spacer()
-                        Text("+12")
+                        Text("+20")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -1115,10 +1115,22 @@ struct AudioSettingsSheet: View {
                 
                 Spacer()
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 24)
+            .padding(.horizontal, 36)
+            .padding(.top, 32)
+            .padding(.bottom, 24)
             .navigationTitle("Audio Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Reset All") {
+                        audioPlayer.playbackSpeed = 1.0
+                        audioPlayer.pitchShift = 0
+                        audioPlayer.reverbAmount = 0
+                        audioPlayer.bassBoost = 0
+                    }
+                    .font(.subheadline)
+                }
+            }
         }
     }
 }
