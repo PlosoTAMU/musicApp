@@ -41,6 +41,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     var savedPlaybackSpeed: Double = 1.0
     private var currentPlaybackSessionID = UUID()
+    private var hasTriggeredNext = false  // ✅ NEW: Prevent double-next from both updateTime and completion callback
     
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
@@ -496,6 +497,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         defer { PerformanceMonitor.shared.end("AudioPlayer_Play") } // ✅ ADDED
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
+        hasTriggeredNext = false  // ✅ RESET: New track, allow next() to be triggered again
     
         // ✅ FIX: Reset visualization IMMEDIATELY and SYNCHRONOUSLY
         // This ensures UI shows zero before any async work happens
@@ -566,10 +568,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     DispatchQueue.main.async {
                         if self.currentPlaybackSessionID == sessionID &&
                            !self.isHandlingRouteChange &&
-                           self.isPlaying {
+                           self.isPlaying &&
+                           !self.hasTriggeredNext {
+                            self.hasTriggeredNext = true
                             self.next()
                         } else {
-                            print("⚠️ Completion handler ignored (sessionID: \(sessionID == self.currentPlaybackSessionID), routeChange: \(self.isHandlingRouteChange), playing: \(self.isPlaying))")
+                            print("⚠️ Completion handler ignored (sessionID: \(sessionID == self.currentPlaybackSessionID), routeChange: \(self.isHandlingRouteChange), playing: \(self.isPlaying), alreadyTriggered: \(self.hasTriggeredNext))")
                         }
                     }
                 }
@@ -686,6 +690,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             self.currentPlaybackSessionID = UUID()
             let sessionID = self.currentPlaybackSessionID
+            self.hasTriggeredNext = false  // ✅ RESET: Resuming playback, allow next() to be triggered again
             
             let resumeTime = self.needsReschedule ? self.savedCurrentTime : self.currentTime
             let sampleRate = file.fileFormat.sampleRate
@@ -704,7 +709,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     DispatchQueue.main.async {
                         if self.currentPlaybackSessionID == sessionID &&
                            !self.isHandlingRouteChange &&
-                           self.isPlaying {
+                           self.isPlaying &&
+                           !self.hasTriggeredNext {
+                            self.hasTriggeredNext = true
                             self.next()
                         }
                     }
@@ -721,7 +728,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     DispatchQueue.main.async {
                         if self.currentPlaybackSessionID == sessionID &&
                            !self.isHandlingRouteChange &&
-                           self.isPlaying {
+                           self.isPlaying &&
+                           !self.hasTriggeredNext {
+                            self.hasTriggeredNext = true
                             self.next()
                         }
                     }
@@ -780,6 +789,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
+        hasTriggeredNext = false  // ✅ RESET: Seeking means we're not at the end anymore
         
         DispatchQueue.main.async {
             self.stopTimeUpdates()
@@ -817,7 +827,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                         DispatchQueue.main.async {
                             if self.currentPlaybackSessionID == sessionID &&
                                !self.isHandlingRouteChange &&
-                               self.isPlaying {
+                               self.isPlaying &&
+                               !self.hasTriggeredNext {
+                                self.hasTriggeredNext = true
                                 self.next()
                             }
                         }
@@ -1072,6 +1084,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let newTime = seekOffset + currentSegmentTime
         
         currentTime = min(newTime, duration)
+        
+        // ✅ FIX: Trigger next track when we actually reach the end according to the progress bar
+        // This prevents songs from ending 1-2 seconds early due to AVAudioPlayerNode callback timing
+        if currentTime >= duration - 0.05 && isPlaying && !isLoopEnabled && !hasTriggeredNext {
+            hasTriggeredNext = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.next()
+            }
+        }
         
         if Int(currentTime) % 5 == 0 {
             updateNowPlayingInfo()
