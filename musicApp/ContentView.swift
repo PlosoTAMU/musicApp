@@ -721,7 +721,7 @@ struct NowPlayingView: View {
         }
         .sheet(isPresented: $showAudioSettings) {
             AudioSettingsSheet(audioPlayer: audioPlayer)
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .alert("Rename Song", isPresented: $showRenameAlert) {
@@ -940,9 +940,10 @@ struct VolumeSlider: UIViewRepresentable {
     }
 }
 
-// MARK: - Audio Settings Sheet
+// MARK: - Audio Settings Sheet (DJ Menu)
 struct AudioSettingsSheet: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
+    @Environment(\.dismiss) private var dismiss
     
     private var speedBinding: Binding<Double> {
         Binding(
@@ -958,168 +959,368 @@ struct AudioSettingsSheet: View {
         Binding(
             get: { audioPlayer.pitchShift },
             set: { newValue in
-                let rounded = (newValue * 2).rounded() / 2  // Snap to nearest 0.5 semitone
+                let rounded = (newValue * 2).rounded() / 2
                 audioPlayer.pitchShift = rounded
             }
         )
     }
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 28) {
-                // Speed
-                VStack(spacing: 8) {
+        ZStack {
+            // Deep dark background
+            Color.black.ignoresSafeArea()
+            
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    // Header
                     HStack {
-                        Image(systemName: "gauge.with.needle")
-                            .foregroundColor(.blue)
-                            .frame(width: 24)
-                        Text("Speed")
-                            .font(.headline)
-                        Spacer()
-                        Text(String(format: "%.1fx", audioPlayer.playbackSpeed))
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                    }
-                    
-                    Slider(value: speedBinding, in: 0.5...2.0)
-                        .tint(.blue)
-                    
-                    HStack {
-                        Text("0.5x")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button("Reset") {
-                            audioPlayer.playbackSpeed = 1.0
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("DJ MIXER")
+                                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.4))
+                                .tracking(4)
+                            
+                            Text(audioPlayer.currentTrack?.name ?? "No Track")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.7))
+                                .lineLimit(1)
                         }
-                        .font(.caption)
-                        .foregroundColor(.blue)
+                        
                         Spacer()
-                        Text("2.0x")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+                        
+                        // Reset All
+                        Button {
+                            withAnimation(.spring(response: 0.3)) {
+                                audioPlayer.playbackSpeed = 1.0
+                                audioPlayer.pitchShift = 0
+                                audioPlayer.reverbAmount = 0
+                                audioPlayer.bassBoost = 0
+                            }
+                        } label: {
+                            Text("RESET ALL")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.5))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color.white.opacity(0.08))
+                                )
+                        }
                     }
+                    .padding(.horizontal, 28)
+                    .padding(.top, 28)
+                    .padding(.bottom, 24)
+                    
+                    // Divider line
+                    Rectangle()
+                        .fill(Color.white.opacity(0.06))
+                        .frame(height: 1)
+                        .padding(.horizontal, 28)
+                    
+                    // Controls
+                    VStack(spacing: 32) {
+                        // SPEED
+                        DJKnobRow(
+                            label: "SPEED",
+                            icon: "metronome.fill",
+                            value: audioPlayer.playbackSpeed,
+                            displayText: String(format: "%.1f×", audioPlayer.playbackSpeed),
+                            accentColor: Color(red: 0.35, green: 0.65, blue: 1.0),
+                            isDefault: audioPlayer.playbackSpeed == 1.0
+                        ) {
+                            DJSlider(
+                                value: speedBinding,
+                                range: 0.5...2.0,
+                                accentColor: Color(red: 0.35, green: 0.65, blue: 1.0),
+                                centerNotch: 1.0,
+                                showCenter: true
+                            )
+                        } onReset: {
+                            withAnimation(.spring(response: 0.3)) {
+                                audioPlayer.playbackSpeed = 1.0
+                            }
+                        }
+                        
+                        // PITCH
+                        DJKnobRow(
+                            label: "PITCH",
+                            icon: "waveform.and.magnifyingglass",
+                            value: audioPlayer.pitchShift,
+                            displayText: (audioPlayer.pitchShift == 0 ? "0" : String(format: "%+.1f", audioPlayer.pitchShift)) + " st",
+                            accentColor: Color(red: 0.7, green: 0.4, blue: 1.0),
+                            isDefault: audioPlayer.pitchShift == 0
+                        ) {
+                            DJSlider(
+                                value: pitchBinding,
+                                range: -12...12,
+                                accentColor: Color(red: 0.7, green: 0.4, blue: 1.0),
+                                centerNotch: 0,
+                                showCenter: true
+                            )
+                        } onReset: {
+                            withAnimation(.spring(response: 0.3)) {
+                                audioPlayer.pitchShift = 0
+                            }
+                        }
+                        
+                        // BASS BOOST
+                        DJKnobRow(
+                            label: "BASS",
+                            icon: "speaker.wave.3.fill",
+                            value: audioPlayer.bassBoost,
+                            displayText: (audioPlayer.bassBoost == 0 ? "0" : String(format: "%+.0f", audioPlayer.bassBoost)) + " dB",
+                            accentColor: Color(red: 1.0, green: 0.55, blue: 0.2),
+                            isDefault: audioPlayer.bassBoost == 0
+                        ) {
+                            DJSlider(
+                                value: $audioPlayer.bassBoost,
+                                range: -12...12,
+                                accentColor: Color(red: 1.0, green: 0.55, blue: 0.2),
+                                centerNotch: 0,
+                                showCenter: true
+                            )
+                        } onReset: {
+                            withAnimation(.spring(response: 0.3)) {
+                                audioPlayer.bassBoost = 0
+                            }
+                        }
+                        
+                        // REVERB
+                        DJKnobRow(
+                            label: "REVERB",
+                            icon: "waveform.path",
+                            value: audioPlayer.reverbAmount,
+                            displayText: "\(Int(audioPlayer.reverbAmount))%",
+                            accentColor: Color(red: 0.2, green: 0.85, blue: 0.85),
+                            isDefault: audioPlayer.reverbAmount == 0
+                        ) {
+                            DJSlider(
+                                value: $audioPlayer.reverbAmount,
+                                range: 0...100,
+                                accentColor: Color(red: 0.2, green: 0.85, blue: 0.85),
+                                centerNotch: nil,
+                                showCenter: false
+                            )
+                        } onReset: {
+                            withAnimation(.spring(response: 0.3)) {
+                                audioPlayer.reverbAmount = 0
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.top, 28)
+                    .padding(.bottom, 40)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
+// MARK: - DJ Knob Row
+struct DJKnobRow<SliderContent: View>: View {
+    let label: String
+    let icon: String
+    let value: Double
+    let displayText: String
+    let accentColor: Color
+    let isDefault: Bool
+    @ViewBuilder let sliderContent: () -> SliderContent
+    let onReset: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 12) {
+                // Icon with glow
+                ZStack {
+                    Circle()
+                        .fill(accentColor.opacity(isDefault ? 0.08 : 0.2))
+                        .frame(width: 36, height: 36)
+                    
+                    if !isDefault {
+                        Circle()
+                            .fill(accentColor.opacity(0.1))
+                            .frame(width: 36, height: 36)
+                            .blur(radius: 8)
+                    }
+                    
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(isDefault ? accentColor.opacity(0.5) : accentColor)
                 }
                 
-                // Pitch
-                VStack(spacing: 8) {
-                    HStack {
-                        Image(systemName: "music.note")
-                            .foregroundColor(.purple)
-                            .frame(width: 24)
-                        Text("Pitch")
-                            .font(.headline)
-                        Spacer()
-                        Text(audioPlayer.pitchShift == 0 ? "0" : String(format: "%+.1f", audioPlayer.pitchShift))
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                        Text("st")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Slider(value: pitchBinding, in: -12...12)
-                        .tint(.purple)
-                    
-                    HStack {
-                        Text("-12")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button("Reset") {
-                            audioPlayer.pitchShift = 0
-                        }
-                        .font(.caption)
-                        .foregroundColor(.purple)
-                        Spacer()
-                        Text("+12")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                // Reverb
-                VStack(spacing: 8) {
-                    HStack {
-                        Image(systemName: "waveform.path")
-                            .foregroundColor(.cyan)
-                            .frame(width: 24)
-                        Text("Reverb")
-                            .font(.headline)
-                        Spacer()
-                        Text("\(Int(audioPlayer.reverbAmount))%")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                    }
-                    
-                    Slider(value: $audioPlayer.reverbAmount, in: 0...100)
-                        .tint(.cyan)
-                    
-                    HStack {
-                        Text("0%")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button("Reset") {
-                            audioPlayer.reverbAmount = 0
-                        }
-                        .font(.caption)
-                        .foregroundColor(.cyan)
-                        Spacer()
-                        Text("100%")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                // Bass Boost
-                VStack(spacing: 8) {
-                    HStack {
-                        Image(systemName: "speaker.wave.3.fill")
-                            .foregroundColor(.orange)
-                            .frame(width: 24)
-                        Text("Bass Boost")
-                            .font(.headline)
-                        Spacer()
-                        Text(audioPlayer.bassBoost == 0 ? "0" : String(format: "%+.0f", audioPlayer.bassBoost))
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                        Text("dB")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Slider(value: $audioPlayer.bassBoost, in: -12...12)
-                        .tint(.orange)
-                    
-                    HStack {
-                        Text("-12")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button("Reset") {
-                            audioPlayer.bassBoost = 0
-                        }
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                        Spacer()
-                        Text("+12")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
+                Text(label)
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.5))
+                    .tracking(2)
                 
                 Spacer()
+                
+                // Value display
+                Text(displayText)
+                    .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                    .foregroundColor(isDefault ? .white.opacity(0.3) : .white.opacity(0.9))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(.spring(response: 0.3), value: displayText)
+                
+                // Reset tap target
+                if !isDefault {
+                    Button(action: onReset) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(accentColor.opacity(0.6))
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(accentColor.opacity(0.1))
+                            )
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .navigationTitle("Audio Settings")
-            .navigationBarTitleDisplayMode(.inline)
+            
+            // Slider
+            sliderContent()
         }
+        .padding(.vertical, 16)
+        .padding(.horizontal, 18)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white.opacity(0.03))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            isDefault ? Color.white.opacity(0.04) : accentColor.opacity(0.12),
+                            lineWidth: 1
+                        )
+                )
+        )
+    }
+}
+
+// MARK: - DJ Slider (Custom Track)
+struct DJSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let accentColor: Color
+    let centerNotch: Double?
+    let showCenter: Bool
+    
+    @State private var isDragging = false
+    
+    private var normalizedValue: Double {
+        (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+    }
+    
+    private var normalizedCenter: Double? {
+        guard let center = centerNotch else { return nil }
+        return (center - range.lowerBound) / (range.upperBound - range.lowerBound)
+    }
+    
+    var body: some View {
+        GeometryReader { geo in
+            let trackWidth = geo.size.width
+            let thumbX = normalizedValue * trackWidth
+            
+            ZStack(alignment: .leading) {
+                // Track background
+                Capsule()
+                    .fill(Color.white.opacity(0.08))
+                    .frame(height: 6)
+                
+                // Center notch mark
+                if let nc = normalizedCenter {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.15))
+                        .frame(width: 2, height: 14)
+                        .position(x: nc * trackWidth, y: geo.size.height / 2)
+                }
+                
+                // Filled portion
+                if let nc = normalizedCenter {
+                    let centerX = nc * trackWidth
+                    let fillStart = min(centerX, thumbX)
+                    let fillWidth = abs(thumbX - centerX)
+                    
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [accentColor.opacity(0.6), accentColor],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(fillWidth, 0), height: 6)
+                        .offset(x: fillStart)
+                } else {
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [accentColor.opacity(0.6), accentColor],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(thumbX, 0), height: 6)
+                }
+                
+                // Glow under filled portion
+                if let nc = normalizedCenter {
+                    let centerX = nc * trackWidth
+                    let fillStart = min(centerX, thumbX)
+                    let fillWidth = abs(thumbX - centerX)
+                    
+                    Capsule()
+                        .fill(accentColor.opacity(0.3))
+                        .frame(width: max(fillWidth, 0), height: 6)
+                        .offset(x: fillStart)
+                        .blur(radius: 6)
+                } else {
+                    Capsule()
+                        .fill(accentColor.opacity(0.3))
+                        .frame(width: max(thumbX, 0), height: 6)
+                        .blur(radius: 6)
+                }
+                
+                // Thumb
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: isDragging ? 22 : 18, height: isDragging ? 22 : 18)
+                    .shadow(color: accentColor.opacity(isDragging ? 0.6 : 0.3), radius: isDragging ? 12 : 6)
+                    .shadow(color: Color.black.opacity(0.5), radius: 4, y: 2)
+                    .position(x: thumbX, y: geo.size.height / 2)
+                    .animation(.spring(response: 0.2), value: isDragging)
+            }
+            .frame(height: geo.size.height)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        isDragging = true
+                        let fraction = gesture.location.x / trackWidth
+                        let clamped = max(0, min(1, fraction))
+                        let newValue = range.lowerBound + clamped * (range.upperBound - range.lowerBound)
+                        value = newValue
+                        
+                        // Haptic snap at center
+                        if let center = centerNotch {
+                            let dist = abs(newValue - center)
+                            let threshold = (range.upperBound - range.lowerBound) * 0.02
+                            if dist < threshold {
+                                value = center
+                                let impact = UIImpactFeedbackGenerator(style: .light)
+                                impact.impactOccurred()
+                            }
+                        }
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                    }
+            )
+        }
+        .frame(height: 28)
     }
 }
 
