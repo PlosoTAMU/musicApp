@@ -556,7 +556,7 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                Spacer(minLength: 6)
+                Spacer(minLength: 20)
                 
                 VStack(spacing: 2) {
                     // ✅ NEW: Auto-scrolling title with continuous loop
@@ -600,7 +600,7 @@ struct NowPlayingView: View {
                     .padding(.horizontal, 28)
                 }
                 
-                Spacer(minLength: 2)
+                Spacer(minLength: 12)
                 
                 VStack(spacing: 2) {
                     HStack {
@@ -639,7 +639,7 @@ struct NowPlayingView: View {
                     seekValue = audioPlayer.currentTime
                 }
                 
-                Spacer(minLength: 4)
+                Spacer(minLength: 16)
                 
                 HStack(spacing: 16) {
                     Button { audioPlayer.previous() } label: {
@@ -675,7 +675,7 @@ struct NowPlayingView: View {
                 .padding(.horizontal, 28)
                 .padding(.top, 2)
                 
-                Spacer(minLength: 36)
+                Spacer(minLength: 22)
                 
                 HStack(spacing: 12) {
                     Image(systemName: "speaker.fill")
