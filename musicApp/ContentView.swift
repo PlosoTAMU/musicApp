@@ -892,59 +892,87 @@ struct FastForwardButton: View {
 }
 
 struct VolumeSlider: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView {
-        let volumeView = MPVolumeView(frame: .zero)
-        volumeView.showsVolumeSlider = true
-        volumeView.showsRouteButton = false  // ✅ ADDED: Explicitly hide route button
-        
-        // Hide the route button by iterating subviews
-        for subview in volumeView.subviews {
-            if subview is UIButton {
-                subview.isHidden = true
-            }
-        }
     
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
-                // ✅ FIXED: Always use white with smaller thumb
-                slider.minimumTrackTintColor = .white
-                slider.maximumTrackTintColor = .white.withAlphaComponent(0.3)
-                slider.isContinuous = true
-                
-                // ✅ FIXED: Consistent smaller thumb size
-                let thumbSize: CGFloat = 12  // Changed from 14 to 12
-                let thumbImage = UIGraphicsImageRenderer(size: CGSize(width: thumbSize, height: thumbSize)).image { context in
-                    UIColor.white.setFill()
-                    context.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize))
-                }
-                slider.setThumbImage(thumbImage, for: .normal)
-                slider.setThumbImage(thumbImage, for: .highlighted)
-                
-                // ✅ ADDED: Force refresh to apply styling
-                slider.setNeedsLayout()
-                slider.layoutIfNeeded()
-            }
-        }
-        
-        return volumeView
+    func makeUIView(context: Context) -> VolumeContainerView {
+        VolumeContainerView()
     }
     
-    func updateUIView(_ uiView: MPVolumeView, context: Context) {
-        // ✅ ADDED: Re-apply styling on every update
-        DispatchQueue.main.async {
-            if let slider = uiView.subviews.first(where: { $0 is UISlider }) as? UISlider {
-                slider.minimumTrackTintColor = .white
-                slider.maximumTrackTintColor = .white.withAlphaComponent(0.3)
-                
-                let thumbSize: CGFloat = 12
-                let thumbImage = UIGraphicsImageRenderer(size: CGSize(width: thumbSize, height: thumbSize)).image { context in
-                    UIColor.white.setFill()
-                    context.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize))
-                }
-                slider.setThumbImage(thumbImage, for: .normal)
-                slider.setThumbImage(thumbImage, for: .highlighted)
-            }
+    func updateUIView(_ uiView: VolumeContainerView, context: Context) {
+        uiView.refreshStyling()
+    }
+}
+
+class VolumeContainerView: UIView {
+    private let volumeView = MPVolumeView()
+    private var observer: NSKeyValueObservation?
+    
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setup()
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+    
+    private func setup() {
+        volumeView.showsVolumeSlider = true
+        volumeView.showsRouteButton = false
+        volumeView.translatesAutoresizingMaskIntoConstraints = false
+        
+        addSubview(volumeView)
+        NSLayoutConstraint.activate([
+            volumeView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            volumeView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            volumeView.topAnchor.constraint(equalTo: topAnchor),
+            volumeView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        
+        // Observe subview changes
+        observer = volumeView.observe(\.subviews, options: [.new]) { [weak self] _, _ in
+            self?.refreshStyling()
         }
+        
+        // Initial + delayed styling
+        refreshStyling()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.refreshStyling() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.refreshStyling() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.refreshStyling() }
+    }
+    
+    func refreshStyling() {
+        // Hide buttons
+        volumeView.subviews
+            .compactMap { $0 as? UIButton }
+            .forEach { $0.isHidden = true; $0.alpha = 0 }
+        
+        // Style slider
+        guard let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider else {
+            return
+        }
+        
+        slider.minimumTrackTintColor = .white
+        slider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.3)
+        slider.thumbTintColor = nil
+        
+        let thumb = makeThumb(size: 12)
+        UIView.performWithoutAnimation {
+            slider.setThumbImage(thumb, for: .normal)
+            slider.setThumbImage(thumb, for: .highlighted)
+        }
+    }
+    
+    private func makeThumb(size: CGFloat) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+            UIColor.white.setFill()
+            ctx.cgContext.fillEllipse(in: CGRect(origin: .zero, size: CGSize(width: size, height: size)))
+        }
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        refreshStyling()  // Re-apply on layout changes
     }
 }
 
