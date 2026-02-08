@@ -184,6 +184,21 @@ class DownloadManager: ObservableObject {
             try FileManager.default.moveItem(at: oldURL, to: finalURL)
             print("✅ [DownloadManager] File renamed from '\(oldURL.lastPathComponent)' to '\(finalURL.lastPathComponent)'")
             
+            // Rename the thumbnail file if it exists
+            let thumbnailsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Thumbnails", isDirectory: true)
+            let oldThumbnailPath = thumbnailsDir.appendingPathComponent("\(oldURL.lastPathComponent).jpg")
+            let newThumbnailPath = thumbnailsDir.appendingPathComponent("\(finalURL.lastPathComponent).jpg")
+            
+            if FileManager.default.fileExists(atPath: oldThumbnailPath.path) {
+                do {
+                    try FileManager.default.moveItem(at: oldThumbnailPath, to: newThumbnailPath)
+                    print("✅ [DownloadManager] Thumbnail renamed from '\(oldThumbnailPath.lastPathComponent)' to '\(newThumbnailPath.lastPathComponent)'")
+                } catch {
+                    print("⚠️ [DownloadManager] Failed to rename thumbnail: \(error.localizedDescription)")
+                }
+            }
+            
             // Update the download with new name and URL
             downloads[index] = Download(
                 id: download.id,
