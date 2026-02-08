@@ -410,6 +410,7 @@ struct NowPlayingView: View {
     @State private var backgroundImage: UIImage?
     @State private var showRenameAlert = false
     @State private var newTrackName: String = ""
+    @State private var showAudioSettings = false
     // ✅ REMOVED: thumbnailPulse state - now using audioPlayer.pulse directly
 
     
@@ -421,15 +422,6 @@ struct NowPlayingView: View {
                 if !isSeeking {
                     audioPlayer.seek(to: newValue)
                 }
-            }
-        )
-    }
-    private var speedBinding: Binding<Double> {
-        Binding(
-            get: { audioPlayer.playbackSpeed },
-            set: { newValue in
-                let rounded = (newValue * 10).rounded() / 10
-                audioPlayer.playbackSpeed = rounded
             }
         )
     }
@@ -489,11 +481,16 @@ struct NowPlayingView: View {
                             .rotationEffect(.degrees(audioPlayer.isLoopEnabled ? 360 : 0))
                     }
                     
+                    Button {
+                        showAudioSettings = true
+                    } label: {
+                        Image(systemName: "slider.vertical.3")
+                            .font(.title3)
+                            .foregroundColor(.white)
+                            .frame(width: 44, height: 44)
+                    }
+                    
                     Menu {
-                        // ✅ REMOVED: Loop button (now outside)
-                        
-                        Divider()
-                        
                         Button(action: { showPlaylistPicker = true }) {
                             Label("Add to Playlist", systemImage: "plus")
                         }
@@ -599,11 +596,6 @@ struct NowPlayingView: View {
                     }
                     .frame(height: 40)
                     .padding(.horizontal, 28)
-                    
-                    Text(audioPlayer.currentTrack?.folderName ?? "Unknown Album")
-                        .font(.title3)
-                        .foregroundColor(.white.opacity(0.7))
-                        .lineLimit(1)
                 }
                 
                 
@@ -678,36 +670,6 @@ struct NowPlayingView: View {
                 .padding(.horizontal, 28)
                 .padding(.top, 2)
                 
-                VStack(spacing: 10) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "gauge")
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.7))
-                            .frame(width: 20)
-                        Slider(value: speedBinding, in: 0.5...2.0)
-                            .accentColor(.white)
-                        Text(String(format: "%.1fx", audioPlayer.playbackSpeed))
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.9))
-                            .frame(width: 40)
-                    }
-                    
-                    HStack(spacing: 10) {
-                        Image(systemName: "waveform.path")
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.7))
-                            .frame(width: 20)
-                        Slider(value: $audioPlayer.reverbAmount, in: 0...100)
-                            .accentColor(.white)
-                        Text("\(Int(audioPlayer.reverbAmount))%")
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.9))
-                            .frame(width: 40)
-                    }
-                }
-                .padding(.horizontal, 32)
-                .padding(.top, 16)
-                
                 HStack(spacing: 12) {
                     Image(systemName: "speaker.fill")
                         .foregroundColor(.white.opacity(0.7))
@@ -719,8 +681,8 @@ struct NowPlayingView: View {
                         .font(.caption)
                 }
                 .padding(.horizontal, 36)
-                .padding(.top, 16)
-                .padding(.bottom, 28)
+                .padding(.top, 20)
+                .padding(.bottom, 40)
                 
                 Spacer()
             }
@@ -752,6 +714,11 @@ struct NowPlayingView: View {
                     onDismiss: { showPlaylistPicker = false }
                 )
             }
+        }
+        .sheet(isPresented: $showAudioSettings) {
+            AudioSettingsSheet(audioPlayer: audioPlayer)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
         }
         .alert("Rename Song", isPresented: $showRenameAlert) {
             TextField("Song name", text: $newTrackName)
@@ -965,6 +932,151 @@ struct VolumeSlider: UIViewRepresentable {
                 slider.setThumbImage(thumbImage, for: .normal)
                 slider.setThumbImage(thumbImage, for: .highlighted)
             }
+        }
+    }
+}
+
+// MARK: - Audio Settings Sheet
+struct AudioSettingsSheet: View {
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    
+    private var speedBinding: Binding<Double> {
+        Binding(
+            get: { audioPlayer.playbackSpeed },
+            set: { newValue in
+                let rounded = (newValue * 10).rounded() / 10
+                audioPlayer.playbackSpeed = rounded
+            }
+        )
+    }
+    
+    private var pitchBinding: Binding<Double> {
+        Binding(
+            get: { audioPlayer.pitchShift },
+            set: { newValue in
+                let rounded = (newValue * 2).rounded() / 2  // Snap to nearest 0.5 semitone
+                audioPlayer.pitchShift = rounded
+            }
+        )
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 28) {
+                // Speed
+                VStack(spacing: 8) {
+                    HStack {
+                        Image(systemName: "gauge.with.needle")
+                            .foregroundColor(.blue)
+                            .frame(width: 24)
+                        Text("Speed")
+                            .font(.headline)
+                        Spacer()
+                        Text(String(format: "%.1fx", audioPlayer.playbackSpeed))
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                    }
+                    
+                    Slider(value: speedBinding, in: 0.5...2.0)
+                        .tint(.blue)
+                    
+                    HStack {
+                        Text("0.5x")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("Reset") {
+                            audioPlayer.playbackSpeed = 1.0
+                        }
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                        Spacer()
+                        Text("2.0x")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                // Pitch
+                VStack(spacing: 8) {
+                    HStack {
+                        Image(systemName: "music.note")
+                            .foregroundColor(.purple)
+                            .frame(width: 24)
+                        Text("Pitch")
+                            .font(.headline)
+                        Spacer()
+                        Text(audioPlayer.pitchShift == 0 ? "0" : String(format: "%+.1f", audioPlayer.pitchShift))
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                        Text("st")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Slider(value: pitchBinding, in: -12...12)
+                        .tint(.purple)
+                    
+                    HStack {
+                        Text("-12")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("Reset") {
+                            audioPlayer.pitchShift = 0
+                        }
+                        .font(.caption)
+                        .foregroundColor(.purple)
+                        Spacer()
+                        Text("+12")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                // Reverb
+                VStack(spacing: 8) {
+                    HStack {
+                        Image(systemName: "waveform.path")
+                            .foregroundColor(.cyan)
+                            .frame(width: 24)
+                        Text("Reverb")
+                            .font(.headline)
+                        Spacer()
+                        Text("\(Int(audioPlayer.reverbAmount))%")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                    }
+                    
+                    Slider(value: $audioPlayer.reverbAmount, in: 0...100)
+                        .tint(.cyan)
+                    
+                    HStack {
+                        Text("0%")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("Reset") {
+                            audioPlayer.reverbAmount = 0
+                        }
+                        .font(.caption)
+                        .foregroundColor(.cyan)
+                        Spacer()
+                        Text("100%")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 16)
+            .navigationTitle("Audio Settings")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

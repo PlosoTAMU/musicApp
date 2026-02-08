@@ -26,6 +26,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
             saveCurrentTrackSettings() // ✅ SAVE when changed
         }
     }
+    @Published var pitchShift: Double = 0 {
+        didSet {
+            applyPitch()
+            saveCurrentTrackSettings()
+        }
+    }
     
     // ✅ NEW: Store settings per track
     private var trackSettings: [UUID: TrackSettings] = [:]
@@ -162,6 +168,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private struct TrackSettings: Codable {
         var playbackSpeed: Double
         var reverbAmount: Double
+        var pitchShift: Double?
     }
     
     // ✅ NEW: Load saved settings
@@ -186,7 +193,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         trackSettings[trackID] = TrackSettings(
             playbackSpeed: playbackSpeed,
-            reverbAmount: reverbAmount
+            reverbAmount: reverbAmount,
+            pitchShift: pitchShift
         )
         
         // Save to disk (debounced to avoid excessive writes)
@@ -208,14 +216,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func applyTrackSettings(for track: Track) {
         if let settings = trackSettings[track.id] {
             // Restore saved settings
-            print("📼 [AudioPlayer] Restoring settings: \(settings.playbackSpeed)x speed, \(settings.reverbAmount)% reverb")
+            print("📼 [AudioPlayer] Restoring settings: \(settings.playbackSpeed)x speed, \(settings.reverbAmount)% reverb, \(settings.pitchShift ?? 0) pitch")
             playbackSpeed = settings.playbackSpeed
             reverbAmount = settings.reverbAmount
+            pitchShift = settings.pitchShift ?? 0
         } else {
             // Use defaults for new track
-            print("📼 [AudioPlayer] Using default settings: 1.0x speed, 0% reverb")
+            print("📼 [AudioPlayer] Using default settings: 1.0x speed, 0% reverb, 0 pitch")
             playbackSpeed = 1.0
             reverbAmount = 0.0
+            pitchShift = 0
         }
     }
 
@@ -932,15 +942,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             let speed = Float(self.playbackSpeed)
             
-            if self.playbackSpeed < 1.0 {
-                timePitch.rate = speed
-                timePitch.pitch = 0
-                timePitch.overlap = 8.0
-            } else {
-                timePitch.rate = speed
-                timePitch.pitch = 0
-                timePitch.overlap = 8.0
-            }
+            timePitch.rate = speed
+            timePitch.pitch = Float(self.pitchShift * 100) // pitchShift is in semitones, AVAudioUnitTimePitch uses cents
+            timePitch.overlap = 8.0
             
             if self.playbackSpeed != 2.0 {
                 self.savedPlaybackSpeed = self.playbackSpeed
@@ -961,6 +965,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
             
             print("⚡ Playback speed set to: \(self.playbackSpeed)x")
+        }
+    }
+    
+    private func applyPitch() {
+        audioQueue.async {
+            guard let timePitch = self.timePitchNode else { return }
+            timePitch.pitch = Float(self.pitchShift * 100) // semitones to cents
+            print("🎵 Pitch set to: \(self.pitchShift) semitones")
         }
     }
     
