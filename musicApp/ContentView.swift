@@ -411,6 +411,7 @@ struct NowPlayingView: View {
     @State private var showRenameAlert = false
     @State private var newTrackName: String = ""
     @State private var showAudioSettings = false
+    @State private var thumbnailCenter: CGPoint = .zero
     // ✅ REMOVED: thumbnailPulse state - now using audioPlayer.pulse directly
 
     
@@ -509,44 +510,44 @@ struct NowPlayingView: View {
                 
                 Spacer(minLength: 10)
                 
-                // Single container - sized to fit thumbnail + visualizer bars
-                ZStack {
-                    // Main thumbnail with bass pulse (bottom layer)
-                    Group {
-                        if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                            Image(uiImage: thumbnailImage)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 200, height: 200)
-                                .clipShape(RoundedRectangle(cornerRadius: 16))
-                                .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
-                        } else {
-                            RoundedRectangle(cornerRadius: 16)
-                                .fill(LinearGradient(
-                                    colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ))
-                                .frame(width: 200, height: 200)
-                                .overlay(
-                                    Image(systemName: "music.note")
-                                        .font(.system(size: 60))
-                                        .foregroundColor(.white.opacity(0.5))
-                                )
-                                .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
-                        }
+                // Thumbnail only
+                Group {
+                    if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
+                        Image(uiImage: thumbnailImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 200, height: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
+                    } else {
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(LinearGradient(
+                                colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                            .frame(width: 200, height: 200)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 60))
+                                    .foregroundColor(.white.opacity(0.5))
+                            )
+                            .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                     }
-                    .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.20)  // Punchier pulse
-                    .zIndex(1)  // Thumbnail in middle
-                    
-                    // Visualizer overlay (top layer - always visible)
-                    EdgeVisualizerView(audioPlayer: audioPlayer)
-                        .frame(width: 340, height: 340)  // Large enough for 200px thumbnail + 60px bars on each side + pulse
-                        .allowsHitTesting(false)
-                        .zIndex(2)  // Visualizer on top
                 }
-                .frame(width: 340, height: 340)  // Fixed frame: 200 thumbnail + 60*2 bars + 20 margin for pulse
-                .compositingGroup()  // Group for better rendering
+                .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.20)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear {
+                                let frame = geo.frame(in: .global)
+                                thumbnailCenter = CGPoint(x: frame.midX, y: frame.midY)
+                            }
+                            .onChange(of: geo.frame(in: .global)) { newFrame in
+                                thumbnailCenter = CGPoint(x: newFrame.midX, y: newFrame.midY)
+                            }
+                    }
+                )
                 .onTapGesture {
                     if audioPlayer.isPlaying {
                         audioPlayer.pause()
@@ -690,6 +691,12 @@ struct NowPlayingView: View {
                 .padding(.bottom, 50)
                 
             }
+            
+            // Visualizer layer - sits on top of everything, ignores all layout constraints
+            EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailCenter: thumbnailCenter)
+                .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+                .allowsHitTesting(false)
+                .ignoresSafeArea()
         }
         .onAppear {
             updateBackgroundImage()
@@ -1184,6 +1191,7 @@ struct DownloadBanner: View {
 // MARK: - Edge Visualizer (Beat-synced with dynamic range)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
+    var thumbnailCenter: CGPoint? = nil  // If provided, draw around this point instead of view center
     
     // Geometry - matches thumbnail with subtle pulse
     private let baseBoxSize: CGFloat = 200
@@ -1198,8 +1206,8 @@ struct EdgeVisualizerView: View {
         Canvas { context, size in
 
             
-            let centerX = size.width / 2
-            let centerY = size.height / 2
+            let centerX = thumbnailCenter?.x ?? size.width / 2
+            let centerY = thumbnailCenter?.y ?? size.height / 2
             
             let bins = audioPlayer.frequencyBins
             let bass = audioPlayer.bassLevel
