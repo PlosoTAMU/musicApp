@@ -969,7 +969,7 @@ class VolumeContainerView: UIView {
         scheduleStylingUpdate()
     }
     
-    private func scheduleStylingUpdate() {
+    func scheduleStylingUpdate() {
         guard !isStylingScheduled else { return }
         isStylingScheduled = true
         
