@@ -721,7 +721,7 @@ struct NowPlayingView: View {
         }
         .sheet(isPresented: $showAudioSettings) {
             AudioSettingsSheet(audioPlayer: audioPlayer)
-                .presentationDetents([.medium])
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
         .alert("Rename Song", isPresented: $showRenameAlert) {
@@ -958,177 +958,186 @@ struct AudioSettingsSheet: View {
         Binding(
             get: { audioPlayer.pitchShift },
             set: { newValue in
-                let rounded = (newValue * 2).rounded() / 2  // Snap to nearest 0.5 semitone
+                let rounded = (newValue * 2).rounded() / 2
                 audioPlayer.pitchShift = rounded
             }
         )
     }
     
+    private var hasAnyChanges: Bool {
+        audioPlayer.playbackSpeed != 1.0 ||
+        audioPlayer.pitchShift != 0 ||
+        audioPlayer.reverbAmount != 0 ||
+        audioPlayer.bassBoost != 0
+    }
+    
     var body: some View {
         NavigationView {
-            VStack(spacing: 28) {
-                // Speed
-                VStack(spacing: 8) {
-                    HStack {
-                        Image(systemName: "gauge.with.needle")
+            ScrollView {
+                VStack(spacing: 36) {
+                    // Speed
+                    VStack(spacing: 10) {
+                        HStack {
+                            Image(systemName: "gauge.with.needle")
+                                .foregroundColor(.blue)
+                                .frame(width: 24)
+                            Text("Speed")
+                                .font(.headline)
+                            Spacer()
+                            Text(String(format: "%.1fx", audioPlayer.playbackSpeed))
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                        
+                        Slider(value: speedBinding, in: 0.5...2.0)
+                            .tint(.blue)
+                        
+                        HStack {
+                            Text("0.5x")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button("Reset") {
+                                audioPlayer.playbackSpeed = 1.0
+                            }
+                            .font(.caption)
                             .foregroundColor(.blue)
-                            .frame(width: 24)
-                        Text("Speed")
-                            .font(.headline)
-                        Spacer()
-                        Text(String(format: "%.1fx", audioPlayer.playbackSpeed))
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                    }
-                    
-                    Slider(value: speedBinding, in: 0.5...2.0)
-                        .tint(.blue)
-                    
-                    HStack {
-                        Text("0.5x")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button("Reset") {
-                            audioPlayer.playbackSpeed = 1.0
+                            Spacer()
+                            Text("2.0x")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                        Spacer()
-                        Text("2.0x")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
                     }
-                }
-                
-                // Pitch
-                VStack(spacing: 8) {
-                    HStack {
-                        Image(systemName: "music.note")
+                    
+                    // Pitch
+                    VStack(spacing: 10) {
+                        HStack {
+                            Image(systemName: "music.note")
+                                .foregroundColor(.purple)
+                                .frame(width: 24)
+                            Text("Pitch")
+                                .font(.headline)
+                            Spacer()
+                            Text(audioPlayer.pitchShift == 0 ? "0" : String(format: "%+.1f", audioPlayer.pitchShift))
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                            Text("st")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Slider(value: pitchBinding, in: -12...12)
+                            .tint(.purple)
+                        
+                        HStack {
+                            Text("-12")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button("Reset") {
+                                audioPlayer.pitchShift = 0
+                            }
+                            .font(.caption)
                             .foregroundColor(.purple)
-                            .frame(width: 24)
-                        Text("Pitch")
-                            .font(.headline)
-                        Spacer()
-                        Text(audioPlayer.pitchShift == 0 ? "0" : String(format: "%+.1f", audioPlayer.pitchShift))
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                        Text("st")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Slider(value: pitchBinding, in: -12...12)
-                        .tint(.purple)
-                    
-                    HStack {
-                        Text("-12")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button("Reset") {
-                            audioPlayer.pitchShift = 0
+                            Spacer()
+                            Text("+12")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
-                        .font(.caption)
-                        .foregroundColor(.purple)
-                        Spacer()
-                        Text("+12")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
                     }
-                }
-                
-                // Reverb
-                VStack(spacing: 8) {
-                    HStack {
-                        Image(systemName: "waveform.path")
+                    
+                    // Reverb
+                    VStack(spacing: 10) {
+                        HStack {
+                            Image(systemName: "waveform.path")
+                                .foregroundColor(.cyan)
+                                .frame(width: 24)
+                            Text("Reverb")
+                                .font(.headline)
+                            Spacer()
+                            Text("\(Int(audioPlayer.reverbAmount))%")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                        
+                        Slider(value: $audioPlayer.reverbAmount, in: 0...100)
+                            .tint(.cyan)
+                        
+                        HStack {
+                            Text("0%")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button("Reset") {
+                                audioPlayer.reverbAmount = 0
+                            }
+                            .font(.caption)
                             .foregroundColor(.cyan)
-                            .frame(width: 24)
-                        Text("Reverb")
-                            .font(.headline)
-                        Spacer()
-                        Text("\(Int(audioPlayer.reverbAmount))%")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                    }
-                    
-                    Slider(value: $audioPlayer.reverbAmount, in: 0...100)
-                        .tint(.cyan)
-                    
-                    HStack {
-                        Text("0%")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button("Reset") {
-                            audioPlayer.reverbAmount = 0
+                            Spacer()
+                            Text("100%")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
-                        .font(.caption)
-                        .foregroundColor(.cyan)
-                        Spacer()
-                        Text("100%")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
                     }
-                }
-                
-                // Bass Boost
-                VStack(spacing: 8) {
-                    HStack {
-                        Image(systemName: "speaker.wave.3.fill")
-                            .foregroundColor(.orange)
-                            .frame(width: 24)
-                        Text("Bass Boost")
-                            .font(.headline)
-                        Spacer()
-                        Text(audioPlayer.bassBoost == 0 ? "0" : String(format: "%+.0f", audioPlayer.bassBoost))
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                        Text("dB")
+                    
+                    // Bass Boost
+                    VStack(spacing: 10) {
+                        HStack {
+                            Image(systemName: "speaker.wave.3.fill")
+                                .foregroundColor(.orange)
+                                .frame(width: 24)
+                            Text("Bass Boost")
+                                .font(.headline)
+                            Spacer()
+                            Text(audioPlayer.bassBoost == 0 ? "0" : String(format: "%+.0f", audioPlayer.bassBoost))
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                            Text("dB")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Slider(value: $audioPlayer.bassBoost, in: -10...20)
+                            .tint(.orange)
+                        
+                        HStack {
+                            Text("-10")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button("Reset") {
+                                audioPlayer.bassBoost = 0
+                            }
                             .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Slider(value: $audioPlayer.bassBoost, in: -10...20)
-                        .tint(.orange)
-                    
-                    HStack {
-                        Text("-10")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button("Reset") {
-                            audioPlayer.bassBoost = 0
+                            .foregroundColor(.orange)
+                            Spacer()
+                            Text("+20")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                        Spacer()
-                        Text("+20")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
                     }
                 }
-                
-                Spacer()
+                .padding(.horizontal, 28)
+                .padding(.top, 20)
+                .padding(.bottom, 40)
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 32)
-            .padding(.bottom, 24)
             .navigationTitle("Audio Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Reset All") {
-                        audioPlayer.playbackSpeed = 1.0
-                        audioPlayer.pitchShift = 0
-                        audioPlayer.reverbAmount = 0
-                        audioPlayer.bassBoost = 0
+                    if hasAnyChanges {
+                        Button("Reset All") {
+                            audioPlayer.playbackSpeed = 1.0
+                            audioPlayer.pitchShift = 0
+                            audioPlayer.reverbAmount = 0
+                            audioPlayer.bassBoost = 0
+                        }
+                        .font(.subheadline)
                     }
-                    .font(.subheadline)
                 }
             }
         }

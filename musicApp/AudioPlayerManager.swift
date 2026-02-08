@@ -314,12 +314,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         air.gain = 0
         air.bypass = false
         
-        // ── Reverb 1: early reflections (small room feel) ──
-        reverb1.loadFactoryPreset(.smallRoom)
+        // ── Reverb 1: medium hall for natural musical reverb ──
+        reverb1.loadFactoryPreset(.mediumHall)
         reverb1.wetDryMix = 0
         
-        // ── Reverb 2: tail (cathedral depth) ──
-        reverb2.loadFactoryPreset(.cathedral)
+        // ── Reverb 2: plate for silky tail (less harsh than cathedral) ──
+        reverb2.loadFactoryPreset(.plate)
         reverb2.wetDryMix = 0
         
         print("✅ Premium audio engine configured (5-band EQ, dual-reverb, high-overlap pitch)")
@@ -1021,31 +1021,35 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             let amount = self.reverbAmount  // 0-100
             
-            // ── Dual-stage reverb for depth ──
-            // Stage 1 (small room): provides early reflections — the "intimacy" layer.
-            //   Ramps up first (0-30% of user slider) then holds, so even low reverb
-            //   values sound natural rather than empty.
-            // Stage 2 (cathedral): provides the long tail — the "space" layer.
-            //   Ramps in after stage 1 to add depth without washing out at low values.
+            // ── Dual-stage reverb ──
+            // Stage 1 (medium hall): natural room sound — the main reverb body.
+            //   Gentle curve so low values give a subtle "space" without sounding wet.
+            // Stage 2 (plate): silky shimmering tail.
+            //   Only blends in at higher values for lush depth.
+            //
+            // The key to sounding premium: keep wet/dry LOW. Real studio reverb
+            // rarely exceeds 25-30% wet. We scale so 50% on the slider ≈ 15% wet
+            // (studio-quality territory) and 100% ≈ 40% wet (lush but not washy).
             
             if amount <= 0 {
                 reverb1.wetDryMix = 0
                 reverb2.wetDryMix = 0
             } else {
-                // Early reflections: quick ramp to 35% wet, then gently rise to 50%
-                let normalizedEarly = min(amount / 30.0, 1.0)
-                let additionalEarly = max(0, (amount - 30) / 70.0)
-                let earlyMix = Float(normalizedEarly * 35 + additionalEarly * 15)
-                reverb1.wetDryMix = earlyMix
+                // Main hall reverb: sqrt curve so it ramps gently
+                // 10% slider → ~5% wet, 50% slider → ~16% wet, 100% slider → ~32% wet
+                let normalized = amount / 100.0
+                let hallMix = Float(sqrt(normalized) * 32)
+                reverb1.wetDryMix = hallMix
                 
-                // Tail: starts at 15% of slider, ramps up to full
-                let tailStart = max(0, amount - 15)
-                let tailAmount = tailStart / 85.0  // normalized 0-1 over range 15-100
-                let tailMix = Float(tailAmount * tailAmount * 45)  // Quadratic curve, max 45% wet
-                reverb2.wetDryMix = tailMix
+                // Plate tail: only fades in above 25% on the slider
+                // Adds shimmer/depth on top of the hall, but stays subtle
+                // 25% slider → 0%, 50% slider → ~4% wet, 100% slider → ~18% wet
+                let tailNormalized = max(0, (amount - 25) / 75.0)
+                let plateMix = Float(tailNormalized * tailNormalized * 18)
+                reverb2.wetDryMix = plateMix
             }
             
-            print("🌊 Reverb: early=\(reverb1.wetDryMix)%, tail=\(reverb2.wetDryMix)% (user: \(amount)%)")
+            print("🌊 Reverb: hall=\(reverb1.wetDryMix)%, plate=\(reverb2.wetDryMix)% (user: \(amount)%)")
         }
     }
     
