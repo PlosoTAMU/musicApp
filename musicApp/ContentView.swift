@@ -639,56 +639,56 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                // ✅ ADJUSTED: Increased space before controls, then grouped them tightly.
-                Spacer() 
+                Spacer(minLength: 16)
                 
-                // Controls Group (Play/Fast/Rewind)
-                HStack(spacing: 16) {
-                    Button { audioPlayer.previous() } label: {
-                        Image(systemName: "backward.fill")
-                            .font(.system(size: 32))
-                            .foregroundColor(.white)
-                            .frame(width: 50, height: 50)
-                    }
-                    
-                    RewindButton(audioPlayer: audioPlayer)
-                    
-                    Button {
-                        if audioPlayer.isPlaying {
-                            audioPlayer.pause()
-                        } else {
-                            audioPlayer.resume()
+                // ✅ COMBINED: Play controls with volume in one cohesive section
+                VStack(spacing: 12) {
+                    HStack(spacing: 16) {
+                        Button { audioPlayer.previous() } label: {
+                            Image(systemName: "backward.fill")
+                                .font(.system(size: 32))
+                                .foregroundColor(.white)
+                                .frame(width: 50, height: 50)
                         }
-                    } label: {
-                        Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 76))
-                            .foregroundColor(.white)
+                        
+                        RewindButton(audioPlayer: audioPlayer)
+                        
+                        Button {
+                            if audioPlayer.isPlaying {
+                                audioPlayer.pause()
+                            } else {
+                                audioPlayer.resume()
+                            }
+                        } label: {
+                            Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                .font(.system(size: 76))
+                                .foregroundColor(.white)
+                        }
+                        
+                        FastForwardButton(audioPlayer: audioPlayer)
+                        
+                        Button { audioPlayer.next() } label: {
+                            Image(systemName: "forward.fill")
+                                .font(.system(size: 32))
+                                .foregroundColor(.white)
+                                .frame(width: 50, height: 50)
+                        }
                     }
+                    .padding(.horizontal, 28)
                     
-                    FastForwardButton(audioPlayer: audioPlayer)
-                    
-                    Button { audioPlayer.next() } label: {
-                        Image(systemName: "forward.fill")
-                            .font(.system(size: 32))
-                            .foregroundColor(.white)
-                            .frame(width: 50, height: 50)
+                    HStack(spacing: 12) {
+                        Image(systemName: "speaker.fill")
+                            .foregroundColor(.white.opacity(0.7))
+                            .font(.caption)
+                        VolumeSlider()
+                            .frame(height: 20)
+                        Image(systemName: "speaker.wave.3.fill")
+                            .foregroundColor(.white.opacity(0.7))
+                            .font(.caption)
                     }
+                    .padding(.horizontal, 36)
                 }
-                .padding(.horizontal, 28)
-                
-                // Volume Slider (Tucked right under play controls)
-                HStack(spacing: 12) {
-                    Image(systemName: "speaker.fill")
-                        .foregroundColor(.white.opacity(0.7))
-                        .font(.caption)
-                    VolumeSlider()
-                        .frame(height: 20)
-                    Image(systemName: "speaker.wave.3.fill")
-                        .foregroundColor(.white.opacity(0.7))
-                        .font(.caption)
-                }
-                .padding(.horizontal, 36)
-                .padding(.bottom, 50) // Main bottom padding
+                .padding(.bottom, 50)
             }
             
             // Visualizer layer - sits on top of everything, ignores all layout constraints
