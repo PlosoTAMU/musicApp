@@ -19,6 +19,9 @@ class VisualizerState: ObservableObject {
 class AudioPlayerManager: NSObject, ObservableObject {
     @Published var isPlaying = false
     @Published var currentTrack: Track?
+    
+    // ✅ Visualization lifecycle — tap is only active when visualizer is on-screen
+    var isVisualizerVisible = false
     @Published var currentPlaylist: [Track] = []
     @Published var queue: [Track] = []
     @Published var previousQueue: [Track] = []
@@ -710,8 +713,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
 
                 // ✅ FIX: Move visualizer setup OFF critical path
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                    self?.resetBeatDetectionState()
-                    self?.installVisualizationTap()
+                    guard let self = self, self.isVisualizerVisible else { return }
+                    self.resetBeatDetectionState()
+                    self.installVisualizationTap()
                 }
                 
                 // ✅ Calculate duration from file.length (playback will now exceed this slightly)
@@ -901,8 +905,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
             player.play()
             
             // ✅ FIX: Reinstall visualization tap after resume (player.stop() removes it)
-            self.resetBeatDetectionState()
-            self.installVisualizationTap()
+            if self.isVisualizerVisible {
+                self.resetBeatDetectionState()
+                self.installVisualizationTap()
+            }
             
             DispatchQueue.main.async {
                 self.needsReschedule = false
@@ -1116,7 +1122,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             let crossedThreshold = (previousSpeed < 1.0 && self.playbackSpeed >= 1.0) ||
                                    (previousSpeed >= 1.0 && self.playbackSpeed < 1.0)
             
-            if crossedThreshold && self.isPlaying {
+            if crossedThreshold && self.isPlaying && self.isVisualizerVisible {
                 print("⚡ Playback speed crossed 1.0x threshold, reinstalling visualizer tap")
                 self.removeVisualizationTap()
                 self.installVisualizationTap()
@@ -1421,6 +1427,31 @@ class AudioPlayerManager: NSObject, ObservableObject {
         NotificationCenter.default.removeObserver(self)
     }
 
+    // MARK: - Visualization Lifecycle
+    
+    /// Call when the visualizer view appears on screen
+    func startVisualization() {
+        isVisualizerVisible = true
+        // Only install tap if we're actually playing
+        if isPlaying {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.installVisualizationTap()
+            }
+            print("▶️ [Visualizer] Started — tap installed (playing)")
+        } else {
+            print("▶️ [Visualizer] Started — waiting for playback")
+        }
+    }
+    
+    /// Call when the visualizer view disappears from screen
+    func stopVisualization() {
+        isVisualizerVisible = false
+        removeVisualizationTap()
+        // Zero out the state so it doesn't show stale data next time
+        visualizerState.update(bins: [Float](repeating: 0, count: 100), bass: 0)
+        print("⏹️ [Visualizer] Stopped — tap removed, CPU freed")
+    }
+
     // MARK: - FFT-Based Visualization with Beat Detection
 
     
@@ -1547,6 +1578,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }()
     
     private func processFFTBuffer(_ buffer: AVAudioPCMBuffer) {
+        // ✅ Early exit: skip all FFT work when visualizer isn't visible
+        guard isVisualizerVisible else { return }
+        
         PerformanceMonitor.shared.recordVisualizationCallback()
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)

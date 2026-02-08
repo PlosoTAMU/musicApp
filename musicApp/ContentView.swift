@@ -461,9 +461,11 @@ struct NowPlayingView: View {
         .onAppear {
             updateBackgroundImage()
             lockOrientation(.portrait)
+            audioPlayer.startVisualization()
         }
         .onDisappear {
             unlockOrientation()
+            audioPlayer.stopVisualization()
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             updateBackgroundImage()
