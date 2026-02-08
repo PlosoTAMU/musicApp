@@ -1844,26 +1844,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         // ==========================================
         // STEP 11: Bass level for thumbnail pulse
-        // Combine beat intensity with low frequency energy
+        // Derive DIRECTLY from the smoothed bass bars so pulse is perfectly in sync
         // ==========================================
         
-        // Weighted combination of sub-bass, bass, and beat intensity
-        let combinedBass = (subBassEnergy * 1.2 + bassEnergy * 0.6) / normalizer  // More bass weight
-        let normalizedBass = pow(min(1.0, combinedBass), 0.5)  // Even more sensitive power curve
-        
-        // Mix frequency content with beat detection for the pulse
-        // 75% beat intensity, 25% frequency content - heavily favor beat detection for punch
-        let targetBass = beatIntensity * 0.75 + normalizedBass * 0.25
-        
-        // Smooth the bass level with VERY PUNCHY envelope - won't stay static
-        if targetBass > smoothedBass {
-            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.92  // Near-instant attack
-        } else {
-            smoothedBass = smoothedBass + (targetBass - smoothedBass) * 0.35  // Much faster decay
+        // Average the first 15 orderedBins (bass frequencies) — these are the same
+        // values that drive the visible bass bars, already smoothed in Step 10
+        var bassBarSum: Float = 0
+        for i in 0..<15 {
+            bassBarSum += orderedBins[i]
         }
+        let avgBassBars = bassBarSum / 15.0
         
-        // NO artificial floor - 0 means no pulse, thumbnail stays static
-        smoothedBass = min(1.0, max(0, smoothedBass))
+        // Apply a slight power curve for punchier feel, then clamp
+        smoothedBass = min(1.0, max(0, pow(avgBassBars, 0.8)))
         
         // ==========================================
         // STEP 12: Throttled update to SwiftUI
