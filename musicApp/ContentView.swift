@@ -456,6 +456,7 @@ struct NowPlayingView: View {
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
+                // Top bar
                 HStack {
                     Button {
                         isPresented = false
@@ -468,7 +469,6 @@ struct NowPlayingView: View {
                     
                     Spacer()
                     
-                    // ✅ NEW: Loop button outside the menu
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
                             audioPlayer.isLoopEnabled.toggle()
@@ -510,7 +510,7 @@ struct NowPlayingView: View {
                 
                 Spacer(minLength: 10)
                 
-                // Thumbnail only
+                // Thumbnail
                 Group {
                     if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                         Image(uiImage: thumbnailImage)
@@ -556,10 +556,11 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                Spacer(minLength: 32)
+                Spacer(minLength: 20)
                 
+                // ✅ FIXED: Everything below thumbnail grouped with FIXED spacing — no more Spacer
                 VStack(spacing: 0) {
-                    // ✅ NEW: Auto-scrolling title with continuous loop
+                    // Title
                     GeometryReader { geometry in
                         let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
                         let textWidth = titleText.widthOfString(usingFont: UIFont.boldSystemFont(ofSize: 28))
@@ -589,7 +590,6 @@ struct NowPlayingView: View {
                             }
                         }
                         .onLongPressGesture {
-                            // Long press to rename the track
                             if let track = audioPlayer.currentTrack {
                                 newTrackName = track.name
                                 showRenameAlert = true
@@ -599,7 +599,7 @@ struct NowPlayingView: View {
                     .frame(height: 40)
                     .padding(.horizontal, 28)
                     
-                    // ✅ TIGHTENED: Progress bar section
+                    // Progress bar
                     VStack(spacing: 4) {
                         HStack {
                             Spacer()
@@ -637,12 +637,8 @@ struct NowPlayingView: View {
                     .onAppear {
                         seekValue = audioPlayer.currentTime
                     }
-                }
-                
-                Spacer(minLength: 8)
-                
-                // ✅ COMBINED: Play controls with volume in one cohesive section
-                VStack(spacing: 16) {
+                    
+                    // ✅ Play controls — FIXED distance from progress bar
                     HStack(spacing: 16) {
                         Button { audioPlayer.previous() } label: {
                             Image(systemName: "backward.fill")
@@ -675,7 +671,9 @@ struct NowPlayingView: View {
                         }
                     }
                     .padding(.horizontal, 28)
+                    .padding(.top, 24)
                     
+                    // ✅ Volume — FIXED distance from controls
                     HStack(spacing: 12) {
                         Image(systemName: "speaker.fill")
                             .foregroundColor(.white.opacity(0.7))
@@ -687,11 +685,12 @@ struct NowPlayingView: View {
                             .font(.caption)
                     }
                     .padding(.horizontal, 36)
+                    .padding(.top, 20)
                 }
-                .padding(.bottom, 24)
+                .padding(.bottom, 50)
             }
             
-            // Visualizer layer - sits on top of everything, ignores all layout constraints
+            // Visualizer layer
             EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailCenter: thumbnailCenter)
                 .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
                 .allowsHitTesting(false)
@@ -711,10 +710,8 @@ struct NowPlayingView: View {
             DragGesture()
                 .onEnded { value in
                     if value.translation.height > 100 {
-                        // Swipe down - dismiss
                         isPresented = false
                     } else if value.translation.height < -100 {
-                        // Swipe up - open DJ menu
                         showAudioSettings = true
                     }
                 }
@@ -739,7 +736,7 @@ struct NowPlayingView: View {
             Button("Cancel", role: .cancel) { }
             Button("Rename") {
                 if let track = audioPlayer.currentTrack,
-                   let download = downloadManager.downloads.first(where: { $0.url == track.url }) {
+                let download = downloadManager.downloads.first(where: { $0.url == track.url }) {
                     downloadManager.renameDownload(download, newName: newTrackName)
                 }
             }
