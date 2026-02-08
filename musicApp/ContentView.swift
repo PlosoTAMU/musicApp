@@ -435,263 +435,25 @@ struct NowPlayingView: View {
     
     var body: some View {
         ZStack {
-            if let bgImage = backgroundImage {
-                Image(uiImage: bgImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-                    .blur(radius: 50)
-                    .scaleEffect(1.3)
-                    .ignoresSafeArea()
-            } else {
-                LinearGradient(
-                    colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
-            }
+            backgroundLayer
             
             Color.black.opacity(0.4)
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // Top bar
-                HStack {
-                    Button {
-                        isPresented = false
-                    } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.title3)
-                            .foregroundColor(.white)
-                            .frame(width: 44, height: 44)
-                    }
-                    
-                    Spacer()
-                    
-                    Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                            audioPlayer.isLoopEnabled.toggle()
-                        }
-                    } label: {
-                        Image(systemName: "repeat")
-                            .font(.title3)
-                            .foregroundColor(audioPlayer.isLoopEnabled ? .blue : .white)
-                            .frame(width: 44, height: 44)
-                            .scaleEffect(audioPlayer.isLoopEnabled ? 1.1 : 1.0)
-                            .rotationEffect(.degrees(audioPlayer.isLoopEnabled ? 360 : 0))
-                    }
-                    
-                    Button {
-                        audioPlayer.effectsBypass.toggle()
-                    } label: {
-                        Image(systemName: "slider.vertical.3")
-                            .font(.title3)
-                            .foregroundColor(audioPlayer.effectsBypass ? .white : .blue)
-                            .frame(width: 44, height: 44)
-                    }
-                    
-                    Menu {
-                        Button(action: { showPlaylistPicker = true }) {
-                            Label("Add to Playlist", systemImage: "plus")
-                        }
-                        Button(action: {}) {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.title3)
-                            .foregroundColor(.white)
-                            .frame(width: 44, height: 44)
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 40)
+                topBar
                 
                 Spacer(minLength: 5)
                 
-                // Thumbnail
-                Group {
-                    if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                        Image(uiImage: thumbnailImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 200, height: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                            .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
-                    } else {
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(LinearGradient(
-                                colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ))
-                            .frame(width: 200, height: 200)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .font(.system(size: 60))
-                                    .foregroundColor(.white.opacity(0.5))
-                            )
-                            .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
-                    }
-                }
-                .scaleEffect(1.0 + CGFloat(audioPlayer.visualizerState.bassLevel) * 0.20)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear {
-                                let frame = geo.frame(in: .global)
-                                thumbnailCenter = CGPoint(x: frame.midX, y: frame.midY)
-                            }
-                            .onChange(of: geo.frame(in: .global)) { newFrame in
-                                thumbnailCenter = CGPoint(x: newFrame.midX, y: newFrame.midY)
-                            }
-                    }
-                )
-                .onTapGesture {
-                    if audioPlayer.isPlaying {
-                        audioPlayer.pause()
-                    } else {
-                        audioPlayer.resume()
-                    }
-                }
+                thumbnailView
                 
                 Spacer(minLength: 15)
                 
-                // ✅ FIXED: Everything below thumbnail grouped with FIXED spacing — no more Spacer
-                VStack(spacing: 0) {
-                    // Title
-                    GeometryReader { geometry in
-                        let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
-                        let textWidth = titleText.widthOfString(usingFont: UIFont.boldSystemFont(ofSize: 28))
-                        let needsScroll = textWidth > geometry.size.width
-                        
-                        ZStack {
-                            if needsScroll {
-                                ScrollingTextView(
-                                    text: titleText,
-                                    font: .title,
-                                    width: geometry.size.width
-                                )
-                            } else {
-                                Text(titleText)
-                                    .font(.title)
-                                    .fontWeight(.bold)
-                                    .italic()
-                                    .foregroundColor(.white)
-                                    .frame(width: geometry.size.width, alignment: .center)
-                            }
-                        }
-                        .onTapGesture {
-                            if audioPlayer.isPlaying {
-                                audioPlayer.pause()
-                            } else {
-                                audioPlayer.resume()
-                            }
-                        }
-                        .onLongPressGesture {
-                            if let track = audioPlayer.currentTrack {
-                                newTrackName = track.name
-                                showRenameAlert = true
-                            }
-                        }
-                    }
-                    .frame(height: 40)
-                    .padding(.horizontal, 28)
-                    
-                    // Progress bar
-                    VStack(spacing: 4) {
-                        HStack {
-                            Spacer()
-                            
-                            Text("-" + formatTime((audioPlayer.duration - (isSeeking ? localSeekPosition : audioPlayer.currentTime)) / audioPlayer.playbackSpeed))
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                        
-                        Slider(value: sliderBinding, in: 0...max(audioPlayer.duration, 1)) { editing in
-                            isSeeking = editing
-                            if editing {
-                                localSeekPosition = audioPlayer.currentTime
-                            } else {
-                                audioPlayer.seek(to: localSeekPosition)
-                            }
-                        }
-                        .accentColor(.white)
-                        .disabled(audioPlayer.duration == 0)
-                        
-                        HStack {
-                            Text(formatTime(isSeeking ? localSeekPosition : audioPlayer.currentTime))
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.7))
-                            
-                            Spacer()
-                            
-                            Text(formatTime(audioPlayer.duration))
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                    }
-                    .padding(.horizontal, 32)
-                    .padding(.top, 12)
-                    .onAppear {
-                        seekValue = audioPlayer.currentTime
-                    }
-                    
-                    // ✅ Play controls — FIXED distance from progress bar
-                    HStack(spacing: 16) {
-                        Button { audioPlayer.previous() } label: {
-                            Image(systemName: "backward.fill")
-                                .font(.system(size: 32))
-                                .foregroundColor(.white)
-                                .frame(width: 50, height: 50)
-                        }
-                        
-                        RewindButton(audioPlayer: audioPlayer)
-                        
-                        Button {
-                            if audioPlayer.isPlaying {
-                                audioPlayer.pause()
-                            } else {
-                                audioPlayer.resume()
-                            }
-                        } label: {
-                            Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 76))
-                                .foregroundColor(.white)
-                        }
-                        
-                        FastForwardButton(audioPlayer: audioPlayer)
-                        
-                        Button { audioPlayer.next() } label: {
-                            Image(systemName: "forward.fill")
-                                .font(.system(size: 32))
-                                .foregroundColor(.white)
-                                .frame(width: 50, height: 50)
-                        }
-                    }
-                    .padding(.horizontal, 28)
-                    .padding(.top, 24)
-                    
-                    // ✅ Volume — FIXED distance from controls
-                    HStack(spacing: 12) {
-                        Image(systemName: "speaker.fill")
-                            .foregroundColor(.white.opacity(0.7))
-                            .font(.caption)
-                        VolumeSlider()
-                            .frame(height: 20)
-                        Image(systemName: "speaker.wave.3.fill")
-                            .foregroundColor(.white.opacity(0.7))
-                            .font(.caption)
-                    }
-                    .padding(.horizontal, 36)
-                    .padding(.top, 25)
-                }
-                .padding(.bottom, 65)
+                controlsSection
             }
             
             // Visualizer layer
-            EdgeVisualizerView(audioPlayer: audioPlayer.visualizerState, thumbnailCenter: thumbnailCenter)
+            EdgeVisualizerView(audioPlayer: audioPlayer, visualizerState: audioPlayer.visualizerState, thumbnailCenter: thumbnailCenter)
                 .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
                 .allowsHitTesting(false)
                 .ignoresSafeArea()
@@ -741,6 +503,276 @@ struct NowPlayingView: View {
                 }
             }
         }
+    }
+    
+    // MARK: - Extracted Subviews
+    
+    @ViewBuilder
+    private var backgroundLayer: some View {
+        if let bgImage = backgroundImage {
+            Image(uiImage: bgImage)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+                .blur(radius: 50)
+                .scaleEffect(1.3)
+                .ignoresSafeArea()
+        } else {
+            LinearGradient(
+                colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+        }
+    }
+    
+    @ViewBuilder
+    private var topBar: some View {
+        HStack {
+            Button {
+                isPresented = false
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .frame(width: 44, height: 44)
+            }
+            
+            Spacer()
+            
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                    audioPlayer.isLoopEnabled.toggle()
+                }
+            } label: {
+                Image(systemName: "repeat")
+                    .font(.title3)
+                    .foregroundColor(audioPlayer.isLoopEnabled ? .blue : .white)
+                    .frame(width: 44, height: 44)
+                    .scaleEffect(audioPlayer.isLoopEnabled ? 1.1 : 1.0)
+                    .rotationEffect(.degrees(audioPlayer.isLoopEnabled ? 360 : 0))
+            }
+            
+            Button {
+                audioPlayer.effectsBypass.toggle()
+            } label: {
+                Image(systemName: "slider.vertical.3")
+                    .font(.title3)
+                    .foregroundColor(audioPlayer.effectsBypass ? .white : .blue)
+                    .frame(width: 44, height: 44)
+            }
+            
+            Menu {
+                Button(action: { showPlaylistPicker = true }) {
+                    Label("Add to Playlist", systemImage: "plus")
+                }
+                Button(action: {}) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .frame(width: 44, height: 44)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 40)
+    }
+    
+    @ViewBuilder
+    private var thumbnailView: some View {
+        Group {
+            if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
+                Image(uiImage: thumbnailImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 200, height: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
+            } else {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(LinearGradient(
+                        colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 200, height: 200)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .font(.system(size: 60))
+                            .foregroundColor(.white.opacity(0.5))
+                    )
+                    .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
+            }
+        }
+        .scaleEffect(1.0 + CGFloat(audioPlayer.visualizerState.bassLevel) * 0.20)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear {
+                        let frame = geo.frame(in: .global)
+                        thumbnailCenter = CGPoint(x: frame.midX, y: frame.midY)
+                    }
+                    .onChange(of: geo.frame(in: .global)) { newFrame in
+                        thumbnailCenter = CGPoint(x: newFrame.midX, y: newFrame.midY)
+                    }
+            }
+        )
+        .onTapGesture {
+            if audioPlayer.isPlaying {
+                audioPlayer.pause()
+            } else {
+                audioPlayer.resume()
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var controlsSection: some View {
+        VStack(spacing: 0) {
+            titleView
+            progressBar
+            playbackControls
+            volumeBar
+        }
+        .padding(.bottom, 65)
+    }
+    
+    @ViewBuilder
+    private var titleView: some View {
+        GeometryReader { geometry in
+            let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
+            let textWidth = titleText.widthOfString(usingFont: UIFont.boldSystemFont(ofSize: 28))
+            let needsScroll = textWidth > geometry.size.width
+            
+            ZStack {
+                if needsScroll {
+                    ScrollingTextView(
+                        text: titleText,
+                        font: .title,
+                        width: geometry.size.width
+                    )
+                } else {
+                    Text(titleText)
+                        .font(.title)
+                        .fontWeight(.bold)
+                        .italic()
+                        .foregroundColor(.white)
+                        .frame(width: geometry.size.width, alignment: .center)
+                }
+            }
+            .onTapGesture {
+                if audioPlayer.isPlaying {
+                    audioPlayer.pause()
+                } else {
+                    audioPlayer.resume()
+                }
+            }
+            .onLongPressGesture {
+                if let track = audioPlayer.currentTrack {
+                    newTrackName = track.name
+                    showRenameAlert = true
+                }
+            }
+        }
+        .frame(height: 40)
+        .padding(.horizontal, 28)
+    }
+    
+    @ViewBuilder
+    private var progressBar: some View {
+        VStack(spacing: 4) {
+            HStack {
+                Spacer()
+                
+                Text("-" + formatTime((audioPlayer.duration - (isSeeking ? localSeekPosition : audioPlayer.currentTime)) / audioPlayer.playbackSpeed))
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            
+            Slider(value: sliderBinding, in: 0...max(audioPlayer.duration, 1)) { editing in
+                isSeeking = editing
+                if editing {
+                    localSeekPosition = audioPlayer.currentTime
+                } else {
+                    audioPlayer.seek(to: localSeekPosition)
+                }
+            }
+            .accentColor(.white)
+            .disabled(audioPlayer.duration == 0)
+            
+            HStack {
+                Text(formatTime(isSeeking ? localSeekPosition : audioPlayer.currentTime))
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.7))
+                
+                Spacer()
+                
+                Text(formatTime(audioPlayer.duration))
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.7))
+            }
+        }
+        .padding(.horizontal, 32)
+        .padding(.top, 12)
+        .onAppear {
+            seekValue = audioPlayer.currentTime
+        }
+    }
+    
+    @ViewBuilder
+    private var playbackControls: some View {
+        HStack(spacing: 16) {
+            Button { audioPlayer.previous() } label: {
+                Image(systemName: "backward.fill")
+                    .font(.system(size: 32))
+                    .foregroundColor(.white)
+                    .frame(width: 50, height: 50)
+            }
+            
+            RewindButton(audioPlayer: audioPlayer)
+            
+            Button {
+                if audioPlayer.isPlaying {
+                    audioPlayer.pause()
+                } else {
+                    audioPlayer.resume()
+                }
+            } label: {
+                Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 76))
+                    .foregroundColor(.white)
+            }
+            
+            FastForwardButton(audioPlayer: audioPlayer)
+            
+            Button { audioPlayer.next() } label: {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 32))
+                    .foregroundColor(.white)
+                    .frame(width: 50, height: 50)
+            }
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 24)
+    }
+    
+    @ViewBuilder
+    private var volumeBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "speaker.fill")
+                .foregroundColor(.white.opacity(0.7))
+                .font(.caption)
+            VolumeSlider()
+                .frame(height: 20)
+            Image(systemName: "speaker.wave.3.fill")
+                .foregroundColor(.white.opacity(0.7))
+                .font(.caption)
+        }
+        .padding(.horizontal, 36)
+        .padding(.top, 25)
     }
     
     
