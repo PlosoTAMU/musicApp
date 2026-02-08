@@ -599,6 +599,7 @@ struct NowPlayingView: View {
                     .frame(height: 40)
                     .padding(.horizontal, 28)
                 }
+                .padding(.top, 10)
                 
                 Spacer(minLength: 0)
                 
@@ -688,7 +689,7 @@ struct NowPlayingView: View {
                         .font(.caption)
                 }
                 .padding(.horizontal, 36)
-                .padding(.bottom, 30)
+                .padding(.bottom, 16)
                 
             }
             
