@@ -701,7 +701,11 @@ struct NowPlayingView: View {
             DragGesture()
                 .onEnded { value in
                     if value.translation.height > 100 {
+                        // Swipe down - dismiss
                         isPresented = false
+                    } else if value.translation.height < -100 {
+                        // Swipe up - open DJ menu
+                        showAudioSettings = true
                     }
                 }
         )

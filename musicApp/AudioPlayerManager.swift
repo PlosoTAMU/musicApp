@@ -699,7 +699,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
             guard let engine = self.audioEngine,
                   let player = self.playerNode,
                   let reverb = self.reverbNode,
-                  let timePitch = self.timePitchNode else {
+                  let timePitch = self.timePitchNode,
+                  let eq = self.eqNode else {
                 print("❌ Audio components not available")
                 return
             }
