@@ -639,10 +639,10 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                Spacer(minLength: 16)
+                Spacer(minLength: 8)
                 
                 // ✅ COMBINED: Play controls with volume in one cohesive section
-                VStack(spacing: 12) {
+                VStack(spacing: 16) {
                     HStack(spacing: 16) {
                         Button { audioPlayer.previous() } label: {
                             Image(systemName: "backward.fill")
@@ -688,7 +688,7 @@ struct NowPlayingView: View {
                     }
                     .padding(.horizontal, 36)
                 }
-                .padding(.bottom, 50)
+                .padding(.bottom, 24)
             }
             
             // Visualizer layer - sits on top of everything, ignores all layout constraints
