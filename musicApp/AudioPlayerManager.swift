@@ -562,13 +562,23 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     try engine.start()
                 }
                 
-                // ✅ FIX: Use scheduleSegment with explicit frameCount instead of scheduleFile
-                // This forces playback of the ENTIRE file including any padding/silence
-                // so the audio duration matches file.length exactly
+                // ✅ FIX: Schedule the entire file + add 0.5s silence buffer to ensure we reach the full duration
+                let sampleRate = file.fileFormat.sampleRate
+                let paddingFrames = AVAudioFrameCount(0.5 * sampleRate) // 0.5 seconds of silence
+                
+                // Schedule the actual file content
                 player.scheduleSegment(file,
                                       startingFrame: 0,
                                       frameCount: AVAudioFrameCount(file.length),
-                                      at: nil) { [weak self] in
+                                      at: nil)
+                
+                // Schedule silence padding after the file
+                let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                                     frameCapacity: paddingFrames)!
+                silenceBuffer.frameLength = paddingFrames
+                // Buffer is already zeroed (silence)
+                
+                player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
                     guard let self = self else { return }
                     
                     DispatchQueue.main.async {
@@ -590,9 +600,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     self?.installVisualizationTap()
                 }
                 
-                // ✅ Calculate duration from file.length (this will now match actual playback)
+                // ✅ Calculate duration from file.length (playback will now exceed this slightly)
                 let frameCount = Double(file.length)
-                let sampleRate = file.fileFormat.sampleRate
                 let calculatedDuration = frameCount / sampleRate
                 
                 DispatchQueue.main.async {
@@ -705,11 +714,21 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             if startFrame < file.length && startFrame >= 0 {
                 let remainingFrames = AVAudioFrameCount(file.length - startFrame)
+                let sampleRate = file.fileFormat.sampleRate
+                let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
                 
+                // Schedule remaining audio
                 player.scheduleSegment(file,
                                       startingFrame: startFrame,
                                       frameCount: remainingFrames,
-                                      at: nil) { [weak self] in
+                                      at: nil)
+                
+                // Schedule silence padding after
+                let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                                     frameCapacity: paddingFrames)!
+                silenceBuffer.frameLength = paddingFrames
+                
+                player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
                     guard let self = self else { return }
                     DispatchQueue.main.async {
                         if self.currentPlaybackSessionID == sessionID &&
@@ -728,11 +747,20 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     self.currentTime = resumeTime
                 }
             } else {
-                // ✅ FIX: Use scheduleSegment with explicit frameCount instead of scheduleFile
+                // ✅ FIX: Schedule entire file + silence padding
+                let sampleRate = file.fileFormat.sampleRate
+                let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
+                
                 player.scheduleSegment(file,
                                       startingFrame: 0,
                                       frameCount: AVAudioFrameCount(file.length),
-                                      at: nil) { [weak self] in
+                                      at: nil)
+                
+                let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                                     frameCapacity: paddingFrames)!
+                silenceBuffer.frameLength = paddingFrames
+                
+                player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
                     guard let self = self else { return }
                     DispatchQueue.main.async {
                         if self.currentPlaybackSessionID == sessionID &&
@@ -828,10 +856,20 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 let remainingFrames = AVAudioFrameCount(file.length - startFrame)
                 
                 if remainingFrames > 0 {
+                    let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
+                    
+                    // Schedule remaining audio
                     player.scheduleSegment(file,
                                           startingFrame: startFrame,
                                           frameCount: remainingFrames,
-                                          at: nil) { [weak self] in
+                                          at: nil)
+                    
+                    // Schedule silence padding after
+                    let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                                         frameCapacity: paddingFrames)!
+                    silenceBuffer.frameLength = paddingFrames
+                    
+                    player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
                         guard let self = self else { return }
                         DispatchQueue.main.async {
                             if self.currentPlaybackSessionID == sessionID &&
