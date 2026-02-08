@@ -923,13 +923,19 @@ struct VolumeSlider: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: VolumeContainerView, context: Context) {
-        uiView.refreshStyling()
+        uiView.scheduleStylingUpdate()
     }
 }
 
 class VolumeContainerView: UIView {
     private let volumeView = MPVolumeView()
     private var observer: NSKeyValueObservation?
+    private var isStylingScheduled = false
+    
+    deinit {
+        observer?.invalidate()
+        observer = nil
+    }
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -954,16 +960,23 @@ class VolumeContainerView: UIView {
             volumeView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
         
-        // Observe subview changes
+        // Observe subview changes (debounced via isStylingScheduled flag)
         observer = volumeView.observe(\.subviews, options: [.new]) { [weak self] _, _ in
-            self?.refreshStyling()
+            self?.scheduleStylingUpdate()
         }
         
         // Initial + delayed styling
-        refreshStyling()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.refreshStyling() }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.refreshStyling() }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.refreshStyling() }
+        scheduleStylingUpdate()
+    }
+    
+    private func scheduleStylingUpdate() {
+        guard !isStylingScheduled else { return }
+        isStylingScheduled = true
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshStyling()
+            self?.isStylingScheduled = false
+        }
     }
     
     func refreshStyling() {
@@ -997,7 +1010,7 @@ class VolumeContainerView: UIView {
     
     override func layoutSubviews() {
         super.layoutSubviews()
-        refreshStyling()  // Re-apply on layout changes
+        scheduleStylingUpdate()  // Debounced refresh on layout changes
     }
 }
 
