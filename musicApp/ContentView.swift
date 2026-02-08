@@ -412,8 +412,6 @@ struct NowPlayingView: View {
     @State private var newTrackName: String = ""
     @State private var showAudioSettings = false
     @State private var thumbnailCenter: CGPoint = .zero
-    // ✅ REMOVED: thumbnailPulse state - now using audioPlayer.pulse directly
-
     
     private var sliderBinding: Binding<Double> {
         Binding(
@@ -427,7 +425,6 @@ struct NowPlayingView: View {
         )
     }
     
-    // ✅ NEW: Calculate current progress for waveform highlighting
     private var playbackProgress: CGFloat {
         guard audioPlayer.duration > 0 else { return 0 }
         return CGFloat(audioPlayer.currentTime / audioPlayer.duration)
@@ -455,7 +452,7 @@ struct NowPlayingView: View {
             Color.black.opacity(0.4)
                 .ignoresSafeArea()
             
-            VStack(spacing: 0) {
+            VStack(spacing: 16) { // ✅ Unified spacing for entire stack
                 HStack {
                     Button {
                         isPresented = false
@@ -468,7 +465,6 @@ struct NowPlayingView: View {
                     
                     Spacer()
                     
-                    // ✅ NEW: Loop button outside the menu
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
                             audioPlayer.isLoopEnabled.toggle()
@@ -508,9 +504,7 @@ struct NowPlayingView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 40)
                 
-                Spacer(minLength: 10)
-                
-                // Thumbnail only
+                // Thumbnail only - untouched
                 Group {
                     if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                         Image(uiImage: thumbnailImage)
@@ -556,10 +550,8 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                Spacer(minLength: 48)
-                
-                VStack(spacing: 2) {
-                    // ✅ NEW: Auto-scrolling title with continuous loop
+                // ✅ Compact Title Section
+                VStack(spacing: 4) {
                     GeometryReader { geometry in
                         let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
                         let textWidth = titleText.widthOfString(usingFont: UIFont.boldSystemFont(ofSize: 28))
@@ -589,7 +581,6 @@ struct NowPlayingView: View {
                             }
                         }
                         .onLongPressGesture {
-                            // Long press to rename the track
                             if let track = audioPlayer.currentTrack {
                                 newTrackName = track.name
                                 showRenameAlert = true
@@ -597,16 +588,13 @@ struct NowPlayingView: View {
                         }
                     }
                     .frame(height: 40)
-                    .padding(.horizontal, 28)
                 }
-                .padding(.top, 10)
+                .padding(.horizontal, 28)
                 
-                Spacer(minLength: 0)
-                
-                VStack(spacing: 2) {
+                // ✅ Compact Progress Section
+                VStack(spacing: 4) {
                     HStack {
                         Spacer()
-                        
                         Text("-" + formatTime((audioPlayer.duration - (isSeeking ? localSeekPosition : audioPlayer.currentTime)) / audioPlayer.playbackSpeed))
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
@@ -636,13 +624,9 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 32)
-                .onAppear {
-                    seekValue = audioPlayer.currentTime
-                }
                 
-                Spacer(minLength: 0)
-                
-                HStack(spacing: 16) {
+                // ✅ Compact Playback Controls
+                HStack(spacing: 20) {
                     Button { audioPlayer.previous() } label: {
                         Image(systemName: "backward.fill")
                             .font(.system(size: 32))
@@ -674,9 +658,9 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 28)
-                .padding(.top, 2)
                 
-                HStack(spacing: 12) {
+                // ✅ Compact Volume Controls
+                HStack(spacing: 8) {
                     Image(systemName: "speaker.fill")
                         .foregroundColor(.white.opacity(0.7))
                         .font(.caption)
@@ -687,11 +671,12 @@ struct NowPlayingView: View {
                         .font(.caption)
                 }
                 .padding(.horizontal, 36)
-                .padding(.bottom, 50)
+                .padding(.bottom, 30) // Reduced from 50
                 
             }
+            .padding(.top, 8) // Small top padding for the stack
             
-            // Visualizer layer - sits on top of everything, ignores all layout constraints
+            // Visualizer layer
             EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailCenter: thumbnailCenter)
                 .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
                 .allowsHitTesting(false)
@@ -711,10 +696,8 @@ struct NowPlayingView: View {
             DragGesture()
                 .onEnded { value in
                     if value.translation.height > 100 {
-                        // Swipe down - dismiss
                         isPresented = false
                     } else if value.translation.height < -100 {
-                        // Swipe up - open DJ menu
                         showAudioSettings = true
                     }
                 }
@@ -745,7 +728,6 @@ struct NowPlayingView: View {
             }
         }
     }
-    
     
     private func updateBackgroundImage() {
         guard let track = audioPlayer.currentTrack else {
