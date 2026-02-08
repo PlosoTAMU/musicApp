@@ -1547,6 +1547,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }()
     
     private func processFFTBuffer(_ buffer: AVAudioPCMBuffer) {
+        PerformanceMonitor.shared.recordVisualizationCallback()
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
         guard frameLength > 0 else { return }
@@ -1828,9 +1829,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             value = min(1.0, max(0, value))
             
-            // Smooth with different attack/decay for PUNCHY feel
-            let smoothUp: Float = 0.90    // Near-instant attack
-            let smoothDown: Float = 0.35  // Even faster decay - won't stay static
+            // Smooth with different attack/decay for punchy but smooth feel
+            let smoothUp: Float = 0.80    // Fast attack — bars rise quickly
+            let smoothDown: Float = 0.22  // Moderate decay — smooth falloff, no flickering
             
             if value > smoothedBins[i] {
                 smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothUp
