@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import os.signpost
 
 /// Lightweight performance profiler for identifying bottlenecks
 class PerformanceMonitor {
@@ -23,6 +24,15 @@ class PerformanceMonitor {
         }
     }
     
+    // System metrics tracking
+    private struct SystemMetrics {
+        var cpuUsage: Double = 0
+        var memoryUsed: UInt64 = 0
+        var memoryTotal: UInt64 = 0
+        var thermalState: ProcessInfo.ThermalState = .nominal
+        var timestamp: Date = Date()
+    }
+    
     private var metrics: [String: Metric] = [:]
     private var timers: [String: CFAbsoluteTime] = [:]
     private let lock = NSLock()
@@ -31,13 +41,167 @@ class PerformanceMonitor {
     private var frameTimestamps: [CFAbsoluteTime] = []
     private var lastFPSReport: CFAbsoluteTime = 0
     
+    // System metrics tracking
+    private var systemMetricsHistory: [SystemMetrics] = []
+    private var lastSystemMetricsUpdate: CFAbsoluteTime = 0
+    
     private init() {
         #if DEBUG
         // Auto-export stats every 30 seconds
         Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             self?.exportStats()
         }
+        
+        // Update system metrics every 2 seconds
+        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.updateSystemMetrics()
+        }
         #endif
+    }
+    
+    // MARK: - System Metrics
+    
+    private func updateSystemMetrics() {
+        let cpu = getCPUUsage()
+        let memory = getMemoryUsage()
+        let thermal = ProcessInfo.processInfo.thermalState
+        
+        let metrics = SystemMetrics(
+            cpuUsage: cpu,
+            memoryUsed: memory.used,
+            memoryTotal: memory.total,
+            thermalState: thermal,
+            timestamp: Date()
+        )
+        
+        lock.lock()
+        systemMetricsHistory.append(metrics)
+        // Keep last 30 samples (1 minute of data at 2 second intervals)
+        if systemMetricsHistory.count > 30 {
+            systemMetricsHistory.removeFirst()
+        }
+        lock.unlock()
+        
+        // Alert on high resource usage
+        if cpu > 80 {
+            print("⚠️ [System] High CPU usage: \(String(format: "%.1f", cpu))%")
+        }
+        
+        let memoryUsagePercent = Double(memory.used) / Double(memory.total) * 100
+        if memoryUsagePercent > 80 {
+            print("⚠️ [System] High memory usage: \(String(format: "%.1f", memoryUsagePercent))% (\(formatBytes(memory.used)) / \(formatBytes(memory.total)))")
+        }
+        
+        if thermal == .serious || thermal == .critical {
+            print("🔥 [System] High thermal state: \(thermalStateString(thermal))")
+        }
+    }
+    
+    private func getCPUUsage() -> Double {
+        var totalUsageOfCPU: Double = 0.0
+        var threadsList: thread_act_array_t?
+        var threadsCount = mach_msg_type_number_t(0)
+        let threadsResult = task_threads(mach_task_self_, &threadsList, &threadsCount)
+        
+        if threadsResult == KERN_SUCCESS, let threadsList = threadsList {
+            for index in 0..<threadsCount {
+                var threadInfo = thread_basic_info()
+                var threadInfoCount = mach_msg_type_number_t(THREAD_INFO_MAX)
+                let infoResult = withUnsafeMutablePointer(to: &threadInfo) {
+                    $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+                        thread_info(threadsList[Int(index)], thread_flavor_t(THREAD_BASIC_INFO), $0, &threadInfoCount)
+                    }
+                }
+                
+                guard infoResult == KERN_SUCCESS else {
+                    continue
+                }
+                
+                let threadBasicInfo = threadInfo as thread_basic_info
+                if threadBasicInfo.flags & TH_FLAGS_IDLE == 0 {
+                    totalUsageOfCPU += (Double(threadBasicInfo.cpu_usage) / Double(TH_USAGE_SCALE)) * 100.0
+                }
+            }
+            
+            vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: threadsList)), vm_size_t(Int(threadsCount) * MemoryLayout<thread_t>.stride))
+        }
+        
+        return totalUsageOfCPU
+    }
+    
+    private func getMemoryUsage() -> (used: UInt64, total: UInt64) {
+        var taskInfo = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info>.size) / 4
+        let result: kern_return_t = withUnsafeMutablePointer(to: &taskInfo) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        
+        var used: UInt64 = 0
+        if result == KERN_SUCCESS {
+            used = UInt64(taskInfo.phys_footprint)
+        }
+        
+        // Get total device memory
+        let total = ProcessInfo.processInfo.physicalMemory
+        
+        return (used, total)
+    }
+    
+    private func getEnergyImpact() -> String {
+        // Energy impact is estimated based on CPU, memory, and thermal state
+        let avgCPU = systemMetricsHistory.isEmpty ? 0 : systemMetricsHistory.map { $0.cpuUsage }.reduce(0, +) / Double(systemMetricsHistory.count)
+        let avgMemory = systemMetricsHistory.isEmpty ? 0 : Double(systemMetricsHistory.map { $0.memoryUsed }.reduce(0, +)) / Double(systemMetricsHistory.count)
+        let memoryTotal = ProcessInfo.processInfo.physicalMemory
+        let avgMemoryPercent = (avgMemory / Double(memoryTotal)) * 100
+        
+        let thermalState = systemMetricsHistory.last?.thermalState ?? .nominal
+        
+        // Calculate energy score (0-100)
+        var energyScore = avgCPU * 0.6  // CPU is 60% of energy impact
+        energyScore += avgMemoryPercent * 0.2  // Memory is 20%
+        
+        switch thermalState {
+        case .nominal:
+            energyScore += 0
+        case .fair:
+            energyScore += 10
+        case .serious:
+            energyScore += 20
+        case .critical:
+            energyScore += 30
+        @unknown default:
+            energyScore += 0
+        }
+        
+        // Classify energy impact
+        if energyScore < 20 {
+            return "Low"
+        } else if energyScore < 50 {
+            return "Medium"
+        } else if energyScore < 80 {
+            return "High"
+        } else {
+            return "Very High"
+        }
+    }
+    
+    private func thermalStateString(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: return "Nominal"
+        case .fair: return "Fair"
+        case .serious: return "Serious"
+        case .critical: return "Critical"
+        @unknown default: return "Unknown"
+        }
+    }
+    
+    private func formatBytes(_ bytes: UInt64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useGB]
+        formatter.countStyle = .memory
+        return formatter.string(fromByteCount: Int64(bytes))
     }
     
     func start(_ label: String) {
@@ -114,13 +278,36 @@ class PerformanceMonitor {
     func exportStats() {
         lock.lock()
         let snapshot = metrics
+        let systemSnapshot = systemMetricsHistory
         lock.unlock()
-        
-        guard !snapshot.isEmpty else { return }
         
         print("\n" + String(repeating: "=", count: 80))
         print("📊 PERFORMANCE REPORT")
         print(String(repeating: "=", count: 80))
+        
+        // System metrics
+        if let latest = systemSnapshot.last {
+            print("💻 SYSTEM METRICS:")
+            let memoryPercent = Double(latest.memoryUsed) / Double(latest.memoryTotal) * 100
+            print("   CPU Usage:        \(String(format: "%.1f", latest.cpuUsage))%")
+            print("   Memory:           \(formatBytes(latest.memoryUsed)) / \(formatBytes(latest.memoryTotal)) (\(String(format: "%.1f", memoryPercent))%)")
+            print("   Thermal State:    \(thermalStateString(latest.thermalState))")
+            print("   Energy Impact:    \(getEnergyImpact())")
+            
+            // Average CPU over last minute
+            if systemSnapshot.count > 1 {
+                let avgCPU = systemSnapshot.map { $0.cpuUsage }.reduce(0, +) / Double(systemSnapshot.count)
+                let maxCPU = systemSnapshot.map { $0.cpuUsage }.max() ?? 0
+                print("   Avg CPU (1 min):  \(String(format: "%.1f", avgCPU))% (peak: \(String(format: "%.1f", maxCPU))%)")
+            }
+            print("")
+        }
+        
+        guard !snapshot.isEmpty else {
+            print("No performance metrics recorded yet.")
+            print(String(repeating: "=", count: 80) + "\n")
+            return
+        }
         
         // Calculate FPS
         var currentFPS: Double = 0
@@ -180,8 +367,20 @@ class PerformanceMonitor {
         lock.lock()
         metrics.removeAll()
         frameTimestamps.removeAll()
+        systemMetricsHistory.removeAll()
         lastFPSReport = CFAbsoluteTimeGetCurrent()
+        lastSystemMetricsUpdate = CFAbsoluteTimeGetCurrent()
         lock.unlock()
         print("🔄 [PerformanceMonitor] Metrics reset")
+    }
+    
+    // Get current system metrics on-demand
+    func getCurrentSystemMetrics() -> (cpu: Double, memory: String, thermal: String, energy: String) {
+        let cpu = getCPUUsage()
+        let memory = getMemoryUsage()
+        let memoryStr = "\(formatBytes(memory.used)) / \(formatBytes(memory.total))"
+        let thermal = thermalStateString(ProcessInfo.processInfo.thermalState)
+        let energy = getEnergyImpact()
+        return (cpu, memoryStr, thermal, energy)
     }
 }
