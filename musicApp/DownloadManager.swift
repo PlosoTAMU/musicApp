@@ -204,10 +204,10 @@ class DownloadManager: ObservableObject {
                currentTrack.url == oldURL {
                 // Create updated track with new URL and name
                 let updatedTrack = Track(
+                    id: currentTrack.id,
                     name: trimmedName,
                     url: finalURL,
-                    thumbnailPath: currentTrack.thumbnailPath,
-                    artist: currentTrack.artist
+                    folderName: currentTrack.folderName
                 )
                 audioPlayer.currentTrack = updatedTrack
                 
