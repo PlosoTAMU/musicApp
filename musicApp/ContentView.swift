@@ -510,9 +510,10 @@ struct NowPlayingView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 40)
                 
-                // 2. Top Spacer: Flexible but constrained (Pulls thumbnail UP)
+                // 2. Top Spacer: This is the ONLY flexible spring now.
+                // It absorbs all extra screen height, pushing Thumbnail down,
+                // but keeps the controls anchored to the bottom (via the lack of bottom spacer).
                 Spacer()
-                    .frame(maxHeight: 60)
                 
                 // 3. Thumbnail
                 Group {
@@ -520,7 +521,7 @@ struct NowPlayingView: View {
                         Image(uiImage: thumbnailImage)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                            .frame(width: 220, height: 220) // Slightly larger since we have room now
+                            .frame(width: 220, height: 220)
                             .clipShape(RoundedRectangle(cornerRadius: 16))
                             .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                     } else {
@@ -560,11 +561,12 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                // 4. Middle Spacer: FIXED height (Tightens gap between thumb and title)
+                // 4. Middle Spacer: INCREASED GAP
+                // Changed from 25 to 60. This explicitly pushes the Title away from the artwork.
                 Spacer()
-                    .frame(height: 40)
+                    .frame(height: 60)
                 
-                // 5. Controls Group: Increased internal spacing for "more space" feel
+                // 5. Controls Group
                 VStack(spacing: 20) {
                     
                     // Title
@@ -686,11 +688,9 @@ struct NowPlayingView: View {
                     .padding(.horizontal, 36)
                 }
                 
-                // 6. Bottom Spacer: This pushes everything else UP
-                Spacer()
-                
-                // Minimal bottom padding
-                Color.clear.frame(height: 8)
+                // 6. Bottom Padding: REMOVED the Spacer() that was here.
+                // We just use padding now. This lets the Volume sit closer to the bottom.
+                .padding(.bottom, 30)
             }
             
             // Visualizer (Overlay)
