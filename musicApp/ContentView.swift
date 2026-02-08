@@ -508,7 +508,8 @@ struct NowPlayingView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 40)
                 
-                Spacer(minLength: 10)
+                Spacer(minLength: 0)
+                    .frame(maxHeight: 40)
                 
                 // Thumbnail
                 Group {
@@ -556,7 +557,8 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                Spacer(minLength: 20)
+                Spacer(minLength: 0)
+                    .frame(maxHeight: 24)
                 
                 // ✅ FIXED: Everything below thumbnail grouped with FIXED spacing — no more Spacer
                 VStack(spacing: 0) {
