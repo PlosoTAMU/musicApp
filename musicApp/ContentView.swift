@@ -562,7 +562,7 @@ struct NowPlayingView: View {
                 
                 // 4. Middle Spacer: FIXED height (Tightens gap between thumb and title)
                 Spacer()
-                    .frame(height: 25)
+                    .frame(height: 40)
                 
                 // 5. Controls Group: Increased internal spacing for "more space" feel
                 VStack(spacing: 20) {
@@ -690,7 +690,7 @@ struct NowPlayingView: View {
                 Spacer()
                 
                 // Minimal bottom padding
-                Color.clear.frame(height: 20)
+                Color.clear.frame(height: 8)
             }
             
             // Visualizer (Overlay)
