@@ -4,8 +4,15 @@ import MediaPlayer
 import Accelerate
 
 class VisualizerState: ObservableObject {
-    @Published var bassLevel: Float = 0
-    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 100)
+    var bassLevel: Float = 0
+    var frequencyBins: [Float] = Array(repeating: 0, count: 100)
+    
+    /// Single batched update — fires objectWillChange exactly ONCE per frame
+    func update(bins: [Float], bass: Float) {
+        objectWillChange.send()
+        frequencyBins = bins
+        bassLevel = bass
+    }
 }
 
 
@@ -91,9 +98,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         return indices
     }()
     
-    // Throttle visualization updates to ~30fps (visually smooth, halves main thread load)
     private var lastVisualizationUpdate: CFAbsoluteTime = 0
-    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 60.0  // 30fps — plenty for bar visualizer
+    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 60.0  // KEEP THIS -- 60fps is NEEDED.
     
     // FFT setup - use 2048 for better frequency resolution (especially for beat detection)
     private var fftSetup: FFTSetup?
@@ -113,6 +119,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // Smoothed values for display
     private var smoothedBins = [Float](repeating: 0, count: 100)
     private var smoothedBass: Float = 0
+    
+    // Pre-allocated work buffers (avoid per-frame heap allocation)
+    private var rawBins = [Float](repeating: 0, count: 100)
+    private var orderedBins = [Float](repeating: 0, count: 100)
+    private var newBins = [Float](repeating: 0, count: 100)
     
     // ==========================================
     // ADVANCED BEAT DETECTION SYSTEM
@@ -600,12 +611,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // ✅ FIX: Reset visualization IMMEDIATELY and SYNCHRONOUSLY
         // This ensures UI shows zero before any async work happens
         if Thread.isMainThread {
-            self.visualizerState.frequencyBins = [Float](repeating: 0, count: 100)
-            self.visualizerState.bassLevel = 0
+            self.visualizerState.update(bins: [Float](repeating: 0, count: 100), bass: 0)
         } else {
             DispatchQueue.main.sync {
-                self.visualizerState.frequencyBins = [Float](repeating: 0, count: 100)
-                self.visualizerState.bassLevel = 0
+                self.visualizerState.update(bins: [Float](repeating: 0, count: 100), bass: 0)
             }
         }
         
@@ -1485,8 +1494,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // ✅ CHANGED: Use async dispatch to avoid blocking
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.visualizerState.frequencyBins = [Float](repeating: 0, count: 100)
-            self.visualizerState.bassLevel = 0
+            self.visualizerState.update(bins: [Float](repeating: 0, count: 100), bass: 0)
         }
     }
 
@@ -1778,7 +1786,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let normalizer = max(runningMax, runningAvg * 2, 0.001)
         
         // Create frequency bins using pre-computed logarithmic mapping
-        var rawBins = [Float](repeating: 0, count: 100)
+        // Re-use pre-allocated buffer
+        for i in 0..<100 { rawBins[i] = 0 }
         
         for i in 0..<100 {
             let mapping = frequencyBinMapping[i]
@@ -1804,8 +1813,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // ==========================================
         // STEP 10: Normalize and apply beat modulation
         // ==========================================
-        
-        var orderedBins = [Float](repeating: 0, count: 100)
         
         for i in 0..<100 {
             // Normalize
@@ -1836,8 +1843,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             orderedBins[i] = min(1.0, max(0, smoothedBins[i]))
         }
         
-        // Shuffle for visual distribution
-        var newBins = [Float](repeating: 0, count: 100)
+        // Shuffle for visual distribution (re-use pre-allocated buffer)
         for i in 0..<100 {
             newBins[shuffledIndices[i]] = orderedBins[i]
         }
@@ -1869,8 +1875,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             lastVisualizationUpdate = updateNow
     
             DispatchQueue.main.async { [weak self] in
-                self?.visualizerState.frequencyBins = finalBins
-                self?.visualizerState.bassLevel = finalBass
+                self?.visualizerState.update(bins: finalBins, bass: finalBass)
             }
         }
     }

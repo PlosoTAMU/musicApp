@@ -1263,11 +1263,9 @@ struct PulsingThumbnailView: View {
             GeometryReader { geo in
                 Color.clear
                     .onAppear {
+                        // Report center ONCE on layout — scaleEffect doesn't move the center
                         let frame = geo.frame(in: .global)
                         onThumbnailCenterChanged?(CGPoint(x: frame.midX, y: frame.midY))
-                    }
-                    .onChange(of: geo.frame(in: .global)) { newFrame in
-                        onThumbnailCenterChanged?(CGPoint(x: newFrame.midX, y: newFrame.midY))
                     }
             }
         )
@@ -1451,7 +1449,7 @@ struct EdgeVisualizerView: View {
     /// ⚡ Optimized drawBar — uses pre-computed HSB, no UIColor allocation per frame
     @inline(__always)
     private func drawBarFast(context: GraphicsContext, x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat, value: Float, hsb: (h: CGFloat, s: CGFloat, b: CGFloat)?) {
-        guard value > 0.01 else { return }
+        guard value > 0.02 else { return }
         
         let normalizedValue = CGFloat(value)
         let barLength = normalizedValue * maxBarLength
@@ -1477,8 +1475,10 @@ struct EdgeVisualizerView: View {
         
         let lineWidth = 2.5 + CGFloat(normalizedValue) * 1.5
         
-        // Glow + main stroke
-        context.stroke(path, with: .color(finalColor.opacity(0.3)), style: StrokeStyle(lineWidth: lineWidth + 2, lineCap: .round))
+        // Only draw glow on strong bars — saves ~60-70% of glow strokes
+        if value > 0.35 {
+            context.stroke(path, with: .color(finalColor.opacity(0.3)), style: StrokeStyle(lineWidth: lineWidth + 2, lineCap: .round))
+        }
         context.stroke(path, with: .color(finalColor), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
     }
 }
