@@ -93,7 +93,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     // Throttle visualization updates to ~30fps (visually smooth, halves main thread load)
     private var lastVisualizationUpdate: CFAbsoluteTime = 0
-    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 30.0  // 30fps — plenty for bar visualizer
+    private let visualizationUpdateInterval: CFAbsoluteTime = 1.0 / 60.0  // 30fps — plenty for bar visualizer
     
     // FFT setup - use 2048 for better frequency resolution (especially for beat detection)
     private var fftSetup: FFTSetup?
@@ -1542,10 +1542,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var fluxDiffBuffer = [Float](repeating: 0, count: 1024)
     
     private func processFFTBuffer(_ buffer: AVAudioPCMBuffer) {
-        // ⚡ THROTTLE: Skip FFT entirely if we won't update the UI
-        let updateNow = CFAbsoluteTimeGetCurrent()
-        guard updateNow - lastVisualizationUpdate >= visualizationUpdateInterval else { return }
-        
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
         guard frameLength > 0 else { return }
@@ -1843,16 +1839,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
         smoothedBass = min(1.0, max(0, smoothedBass))
         
         // ==========================================
-        // STEP 12: Update SwiftUI (already throttled at top of function)
+        // STEP 12: Throttled update to SwiftUI
         // ==========================================
         let finalBins = newBins
         let finalBass = smoothedBass
         
-        lastVisualizationUpdate = updateNow
+        let updateNow = CFAbsoluteTimeGetCurrent()
+        if updateNow - lastVisualizationUpdate >= visualizationUpdateInterval {
+            lastVisualizationUpdate = updateNow
     
-        DispatchQueue.main.async { [weak self] in
-            self?.visualizerState.frequencyBins = finalBins
-            self?.visualizerState.bassLevel = finalBass
+            DispatchQueue.main.async { [weak self] in
+                self?.visualizerState.frequencyBins = finalBins
+                self?.visualizerState.bassLevel = finalBass
+            }
         }
     }
 }

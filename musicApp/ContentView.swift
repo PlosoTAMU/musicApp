@@ -828,16 +828,16 @@ struct NowPlayingView: View {
         
         let pathString = thumbnailPath.path
         
-        // ⚡ Check memory cache first (avoids disk I/O on every view rebuild)
-        if let cached = ThumbnailCache.shared.get(pathString) {
+        // ⚡ Use a size-specific cache key so list thumbnails (48px) don't conflict with NowPlaying (200px)
+        let cacheKey = pathString + "_nowplaying"
+        if let cached = ThumbnailCache.shared.get(cacheKey) {
             return cached
         }
         
-        // Load and cache at 200×200 @2x for NowPlaying
+        // Load full resolution for NowPlaying (200pt = 600px @3x retina)
         guard let image = UIImage(contentsOfFile: pathString) else { return nil }
-        let scaled = image.preparingThumbnail(of: CGSize(width: 400, height: 400)) ?? image
-        ThumbnailCache.shared.set(pathString, image: scaled)
-        return scaled
+        ThumbnailCache.shared.set(cacheKey, image: image)
+        return image
     }
     
     private func lockOrientation(_ orientation: UIInterfaceOrientationMask) {
