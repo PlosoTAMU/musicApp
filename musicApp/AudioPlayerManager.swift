@@ -1033,11 +1033,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 reverb2.wetDryMix = 0
             } else {
                 // Early reflections: quick ramp to 35% wet, then gently rise to 50%
-                let earlyMix = Float(min(amount / 30.0, 1.0) * 35 + max(0, (amount - 30) / 70.0) * 15)
+                let normalizedEarly = min(amount / 30.0, 1.0)
+                let additionalEarly = max(0, (amount - 30) / 70.0)
+                let earlyMix = Float(normalizedEarly * 35 + additionalEarly * 15)
                 reverb1.wetDryMix = earlyMix
                 
                 // Tail: starts at 15% of slider, ramps up to full
-                let tailAmount = max(0, amount - 15) / 85.0  // normalized 0-1 over range 15-100
+                let tailStart = max(0, amount - 15)
+                let tailAmount = tailStart / 85.0  // normalized 0-1 over range 15-100
                 let tailMix = Float(tailAmount * tailAmount * 45)  // Quadratic curve, max 45% wet
                 reverb2.wetDryMix = tailMix
             }
