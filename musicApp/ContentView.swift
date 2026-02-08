@@ -240,7 +240,7 @@ struct MiniPlayerBar: View {
                 Image(uiImage: bgImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(height: 65)
+                    .frame(height: 72)
                     .blur(radius: 30)
                     .clipped()
             } else {
@@ -249,14 +249,14 @@ struct MiniPlayerBar: View {
                     startPoint: .leading,
                     endPoint: .trailing
                 )
-                .frame(height: 65)
+                .frame(height: 72)
             }
             
             // Darkening overlay for readability
             Color.black.opacity(0.3)
-                .frame(height: 65)
+                .frame(height: 72)
             
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
                 // Left side - thumbnail and text (fully tappable)
                 HStack(spacing: 12) {
                     ZStack {
@@ -264,12 +264,12 @@ struct MiniPlayerBar: View {
                             Image(uiImage: thumbnailPath)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
-                                .frame(width: 48, height: 48)
+                                .frame(width: 52, height: 52)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                         } else {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(Color.gray.opacity(0.3))
-                                .frame(width: 48, height: 48)
+                                .frame(width: 52, height: 52)
                                 .overlay(
                                     Image(systemName: "music.note")
                                         .foregroundColor(.gray)
@@ -277,17 +277,17 @@ struct MiniPlayerBar: View {
                         }
                     }
                     
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 3) {
                         Text(audioPlayer.currentTrack?.name ?? "Unknown")
                             .font(.subheadline)
-                            .fontWeight(.medium)
+                            .fontWeight(.semibold)
                             .lineLimit(1)
                             .foregroundColor(.white)
                             .shadow(color: .black.opacity(0.3), radius: 2)
                         
                         Text(audioPlayer.currentTrack?.folderName ?? "")
                             .font(.caption)
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundColor(.white.opacity(0.75))
                             .lineLimit(1)
                             .shadow(color: .black.opacity(0.3), radius: 2)
                     }
@@ -325,7 +325,7 @@ struct MiniPlayerBar: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
         }
         .overlay(
             Rectangle()
@@ -505,10 +505,10 @@ struct NowPlayingView: View {
                             .frame(width: 44, height: 44)
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 40)
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
                 
-                Spacer(minLength: 10)
+                Spacer(minLength: 40)
                 
                 // Thumbnail only
                 Group {
@@ -516,23 +516,23 @@ struct NowPlayingView: View {
                         Image(uiImage: thumbnailImage)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                            .frame(width: 200, height: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                            .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
+                            .frame(width: 280, height: 280)
+                            .clipShape(RoundedRectangle(cornerRadius: 20))
+                            .shadow(color: .black.opacity(0.5), radius: 30, y: 10)
                     } else {
-                        RoundedRectangle(cornerRadius: 16)
+                        RoundedRectangle(cornerRadius: 20)
                             .fill(LinearGradient(
                                 colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ))
-                            .frame(width: 200, height: 200)
+                            .frame(width: 280, height: 280)
                             .overlay(
                                 Image(systemName: "music.note")
-                                    .font(.system(size: 60))
+                                    .font(.system(size: 70))
                                     .foregroundColor(.white.opacity(0.5))
                             )
-                            .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
+                            .shadow(color: .black.opacity(0.5), radius: 30, y: 10)
                     }
                 }
                 .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.20)
@@ -556,9 +556,9 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                Spacer(minLength: 20)
+                Spacer(minLength: 36)
                 
-                VStack(spacing: 2) {
+                VStack(spacing: 4) {
                     // ✅ NEW: Auto-scrolling title with continuous loop
                     GeometryReader { geometry in
                         let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
@@ -597,12 +597,12 @@ struct NowPlayingView: View {
                         }
                     }
                     .frame(height: 40)
-                    .padding(.horizontal, 28)
+                    .padding(.horizontal, 32)
                 }
                 
-                Spacer(minLength: 12)
+                Spacer(minLength: 28)
                 
-                VStack(spacing: 2) {
+                VStack(spacing: 6) {
                     HStack {
                         Spacer()
                         
@@ -639,14 +639,14 @@ struct NowPlayingView: View {
                     seekValue = audioPlayer.currentTime
                 }
                 
-                Spacer(minLength: 16)
+                Spacer(minLength: 24)
                 
-                HStack(spacing: 16) {
+                HStack(spacing: 24) {
                     Button { audioPlayer.previous() } label: {
                         Image(systemName: "backward.fill")
-                            .font(.system(size: 32))
+                            .font(.system(size: 36))
                             .foregroundColor(.white)
-                            .frame(width: 50, height: 50)
+                            .frame(width: 56, height: 56)
                     }
                     
                     RewindButton(audioPlayer: audioPlayer)
@@ -659,7 +659,7 @@ struct NowPlayingView: View {
                         }
                     } label: {
                         Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 76))
+                            .font(.system(size: 80))
                             .foregroundColor(.white)
                     }
                     
@@ -667,17 +667,16 @@ struct NowPlayingView: View {
                     
                     Button { audioPlayer.next() } label: {
                         Image(systemName: "forward.fill")
-                            .font(.system(size: 32))
+                            .font(.system(size: 36))
                             .foregroundColor(.white)
-                            .frame(width: 50, height: 50)
+                            .frame(width: 56, height: 56)
                     }
                 }
-                .padding(.horizontal, 28)
-                .padding(.top, 2)
+                .padding(.horizontal, 24)
                 
-                Spacer(minLength: 22)
+                Spacer(minLength: 32)
                 
-                HStack(spacing: 12) {
+                HStack(spacing: 16) {
                     Image(systemName: "speaker.fill")
                         .foregroundColor(.white.opacity(0.7))
                         .font(.caption)
@@ -687,8 +686,8 @@ struct NowPlayingView: View {
                         .foregroundColor(.white.opacity(0.7))
                         .font(.caption)
                 }
-                .padding(.horizontal, 36)
-                .padding(.bottom, 50)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 44)
                 
             }
             
