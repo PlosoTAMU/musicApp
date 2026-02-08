@@ -454,7 +454,7 @@ struct NowPlayingView: View {
             Color.black.opacity(0.4)
                 .ignoresSafeArea()
             
-            VStack(spacing: 6) {
+            VStack(spacing: 0) {
                 HStack {
                     Button {
                         isPresented = false
@@ -505,9 +505,9 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, 40)
+                .padding(.top, 60)
                 
-                Spacer()
+                Spacer(minLength: 30)
                 
                 // Single container - extra large to prevent any clipping
                 ZStack {
@@ -554,7 +554,8 @@ struct NowPlayingView: View {
                         audioPlayer.resume()
                     }
                 }
-                .padding(.bottom, 20)
+                
+                Spacer(minLength: 16)
                 
                 VStack(spacing: 6) {
                     // ✅ NEW: Auto-scrolling title with continuous loop
@@ -597,7 +598,8 @@ struct NowPlayingView: View {
                     .frame(height: 40)
                     .padding(.horizontal, 28)
                 }
-                .padding(.bottom, 24)
+                
+                Spacer(minLength: 20)
                 
                 VStack(spacing: 2) {
                     HStack {
@@ -636,6 +638,8 @@ struct NowPlayingView: View {
                     seekValue = audioPlayer.currentTime
                 }
                 
+                Spacer(minLength: 24)
+                
                 HStack(spacing: 16) {
                     Button { audioPlayer.previous() } label: {
                         Image(systemName: "backward.fill")
@@ -670,6 +674,8 @@ struct NowPlayingView: View {
                 .padding(.horizontal, 28)
                 .padding(.top, 2)
                 
+                Spacer(minLength: 28)
+                
                 HStack(spacing: 12) {
                     Image(systemName: "speaker.fill")
                         .foregroundColor(.white.opacity(0.7))
@@ -681,10 +687,8 @@ struct NowPlayingView: View {
                         .font(.caption)
                 }
                 .padding(.horizontal, 36)
-                .padding(.top, 20)
-                .padding(.bottom, 40)
+                .padding(.bottom, 50)
                 
-                Spacer()
             }
         }
         .onAppear {
