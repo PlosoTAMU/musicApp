@@ -77,6 +77,9 @@ struct ContentView: View {
         }
         // FIXED: Close now playing when playback ends
         .onAppear {
+            // Set up the reference so DownloadManager can update playing tracks
+            downloadManager.audioPlayer = audioPlayer
+            
             processIncomingShares()
             
             // FIXED: Close now playing when playback ends
@@ -403,6 +406,8 @@ struct NowPlayingView: View {
     @State private var localSeekPosition: Double = 0
     @State private var showPlaylistPicker = false
     @State private var backgroundImage: UIImage?
+    @State private var showRenameAlert = false
+    @State private var newTrackName: String = ""
     // ✅ REMOVED: thumbnailPulse state - now using audioPlayer.pulse directly
 
     
@@ -582,6 +587,13 @@ struct NowPlayingView: View {
                                 audioPlayer.resume()
                             }
                         }
+                        .onLongPressGesture {
+                            // Long press to rename the track
+                            if let track = audioPlayer.currentTrack {
+                                newTrackName = track.name
+                                showRenameAlert = true
+                            }
+                        }
                     }
                     .frame(height: 40)
                     .padding(.horizontal, 28)
@@ -737,6 +749,16 @@ struct NowPlayingView: View {
                     playlistManager: playlistManager,
                     onDismiss: { showPlaylistPicker = false }
                 )
+            }
+        }
+        .alert("Rename Song", isPresented: $showRenameAlert) {
+            TextField("Song name", text: $newTrackName)
+            Button("Cancel", role: .cancel) { }
+            Button("Rename") {
+                if let track = audioPlayer.currentTrack,
+                   let download = downloadManager.downloads.first(where: { $0.url == track.url }) {
+                    downloadManager.renameDownload(download, newName: newTrackName)
+                }
             }
         }
     }

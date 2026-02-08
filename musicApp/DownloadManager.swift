@@ -14,6 +14,9 @@ class DownloadManager: ObservableObject {
     private let timerLock = NSLock()
     private var updateDebounceTimer: Timer?
     
+    // Reference to AudioPlayerManager to update playing tracks
+    weak var audioPlayer: AudioPlayerManager?
+    
     // ✅ PERFORMANCE: Cached sorted downloads
     private var _sortedDownloadsCache: [Download]?
     var sortedDownloads: [Download] {
@@ -161,20 +164,69 @@ class DownloadManager: ObservableObject {
         let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
         
-        // Update the download with new name
-        downloads[index] = Download(
-            id: download.id,
-            name: trimmedName,
-            url: download.url,
-            thumbnailPath: download.thumbnailPath,
-            videoID: download.videoID,
-            source: download.source,
-            originalURL: download.originalURL
-        )
+        // Rename the actual file on disk
+        let oldURL = download.url
+        let fileExtension = oldURL.pathExtension
+        let newFileName = "\(trimmedName).\(fileExtension)"
+        let newURL = oldURL.deletingLastPathComponent().appendingPathComponent(newFileName)
         
-        saveDownloads()
-        notifyChange()
-        print("✅ [DownloadManager] Renamed to: \(trimmedName)")
+        // Try to rename the file
+        do {
+            // If file exists at new location, generate unique name
+            var finalURL = newURL
+            var counter = 1
+            while FileManager.default.fileExists(atPath: finalURL.path) {
+                let nameWithoutExt = trimmedName
+                finalURL = oldURL.deletingLastPathComponent().appendingPathComponent("\(nameWithoutExt) (\(counter)).\(fileExtension)")
+                counter += 1
+            }
+            
+            try FileManager.default.moveItem(at: oldURL, to: finalURL)
+            print("✅ [DownloadManager] File renamed from '\(oldURL.lastPathComponent)' to '\(finalURL.lastPathComponent)'")
+            
+            // Update the download with new name and URL
+            downloads[index] = Download(
+                id: download.id,
+                name: trimmedName,
+                url: finalURL,
+                thumbnailPath: download.thumbnailPath,
+                videoID: download.videoID,
+                source: download.source,
+                originalURL: download.originalURL
+            )
+            
+            saveDownloads()
+            notifyChange()
+            
+            // If this track is currently playing, update the AudioPlayerManager
+            if let audioPlayer = self.audioPlayer,
+               let currentTrack = audioPlayer.currentTrack,
+               currentTrack.url == oldURL {
+                // Create updated track with new URL and name
+                let updatedTrack = Track(
+                    name: trimmedName,
+                    url: finalURL,
+                    thumbnailPath: currentTrack.thumbnailPath,
+                    artist: currentTrack.artist
+                )
+                audioPlayer.currentTrack = updatedTrack
+                
+                // Update the track in the current playlist
+                if let playlistIndex = audioPlayer.currentPlaylist.firstIndex(where: { $0.url == oldURL }) {
+                    audioPlayer.currentPlaylist[playlistIndex] = updatedTrack
+                }
+                
+                // Update the track in the queue
+                if let queueIndex = audioPlayer.queue.firstIndex(where: { $0.url == oldURL }) {
+                    audioPlayer.queue[queueIndex] = updatedTrack
+                }
+                
+                print("✅ [DownloadManager] Updated currently playing track")
+            }
+            
+        } catch {
+            print("❌ [DownloadManager] Failed to rename file: \(error.localizedDescription)")
+        }
     }
 
     // ✅ ADD: Helper method to convert Spotify to YouTube
