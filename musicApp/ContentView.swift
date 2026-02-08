@@ -535,7 +535,7 @@ struct NowPlayingView: View {
                             .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                     }
                 }
-                .scaleEffect(1.0 + CGFloat(audioPlayer.bassLevel) * 0.20)
+                .scaleEffect(1.0 + CGFloat(audioPlayer.visualizerState.bassLevel) * 0.20)
                 .background(
                     GeometryReader { geo in
                         Color.clear
@@ -1216,6 +1216,7 @@ struct DownloadBanner: View {
 // MARK: - Edge Visualizer (Beat-synced with dynamic range)
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
+    @ObservedObject var visualizerState: VisualizerState
     var thumbnailCenter: CGPoint? = nil  // If provided, draw around this point instead of view center
     
     // Geometry - matches thumbnail with subtle pulse
@@ -1234,8 +1235,8 @@ struct EdgeVisualizerView: View {
             let centerX = thumbnailCenter?.x ?? size.width / 2
             let centerY = thumbnailCenter?.y ?? size.height / 2
             
-            let bins = audioPlayer.frequencyBins
-            let bass = audioPlayer.bassLevel
+            let bins = visualizerState.frequencyBins
+            let bass = visualizerState.bassLevel
             guard bins.count >= 100 else { return }
             
             // Scale box to match thumbnail pulse

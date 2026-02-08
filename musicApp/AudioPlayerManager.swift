@@ -3,6 +3,12 @@ import AVFoundation
 import MediaPlayer
 import Accelerate
 
+class VisualizerState: ObservableObject {
+    @Published var bassLevel: Float = 0
+    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 100)
+}
+
+
 class AudioPlayerManager: NSObject, ObservableObject {
     @Published var isPlaying = false
     @Published var currentTrack: Track?
@@ -76,9 +82,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private var timeUpdateTimer: Timer?
     
-    // ✅ Visualization data - @Published with throttling to limit SwiftUI updates
-    @Published var bassLevel: Float = 0
-    @Published var frequencyBins: [Float] = Array(repeating: 0, count: 100)
+    let visualizerState = VisualizerState()
     
     // Shuffled indices for randomized bar order (so frequencies are spread out)
     private lazy var shuffledIndices: [Int] = {
@@ -1855,9 +1859,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
             PerformanceMonitor.shared.start("FFT_to_SwiftUI") // ✅ ADDED
             DispatchQueue.main.async { [weak self] in
-                self?.frequencyBins = finalBins
-                self?.bassLevel = finalBass
-                PerformanceMonitor.shared.end("FFT_to_SwiftUI") // ✅ ADDED
+                self?.visualizerState.frequencyBins = finalBins  // ✅ Changed
+                self?.visualizerState.bassLevel = finalBass      // ✅ Changed
+                PerformanceMonitor.shared.end("FFT_to_SwiftUI")
             }
         }
     }
