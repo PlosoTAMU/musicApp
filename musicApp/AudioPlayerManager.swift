@@ -562,7 +562,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     try engine.start()
                 }
                 
-                player.scheduleFile(file, at: nil) { [weak self] in
+                // ✅ FIX: Use scheduleSegment with explicit frameCount instead of scheduleFile
+                // This forces playback of the ENTIRE file including any padding/silence
+                // so the audio duration matches file.length exactly
+                player.scheduleSegment(file,
+                                      startingFrame: 0,
+                                      frameCount: AVAudioFrameCount(file.length),
+                                      at: nil) { [weak self] in
                     guard let self = self else { return }
                     
                     DispatchQueue.main.async {
@@ -584,16 +590,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     self?.installVisualizationTap()
                 }
                 
-                // ✅ FIX: Get ACTUAL playback duration from AVAsset, not from file.length
-                // file.length includes padding/metadata, but AVAsset.duration is the real playback time
-                let asset = AVAsset(url: trackURL)
-                let actualDuration = asset.duration.seconds
+                // ✅ Calculate duration from file.length (this will now match actual playback)
+                let frameCount = Double(file.length)
+                let sampleRate = file.fileFormat.sampleRate
+                let calculatedDuration = frameCount / sampleRate
                 
                 DispatchQueue.main.async {
                     self.isPlaying = true
                     self.currentTrack = track
                     self.savedCurrentTime = 0
-                    self.duration = actualDuration  // ✅ Use actual playback duration
+                    self.duration = calculatedDuration
                     
                     if let index = self.currentPlaylist.firstIndex(where: { $0.id == track.id }) {
                         self.currentIndex = index
@@ -722,7 +728,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     self.currentTime = resumeTime
                 }
             } else {
-                player.scheduleFile(file, at: nil) { [weak self] in
+                // ✅ FIX: Use scheduleSegment with explicit frameCount instead of scheduleFile
+                player.scheduleSegment(file,
+                                      startingFrame: 0,
+                                      frameCount: AVAudioFrameCount(file.length),
+                                      at: nil) { [weak self] in
                     guard let self = self else { return }
                     DispatchQueue.main.async {
                         if self.currentPlaybackSessionID == sessionID &&
