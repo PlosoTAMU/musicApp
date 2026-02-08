@@ -600,12 +600,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // ✅ FIX: Reset visualization IMMEDIATELY and SYNCHRONOUSLY
         // This ensures UI shows zero before any async work happens
         if Thread.isMainThread {
-            self.frequencyBins = [Float](repeating: 0, count: 100)
-            self.bassLevel = 0
+            self.visualizerState.frequencyBins = [Float](repeating: 0, count: 100)
+            self.visualizerState.bassLevel = 0
         } else {
             DispatchQueue.main.sync {
-                self.frequencyBins = [Float](repeating: 0, count: 100)
-                self.bassLevel = 0
+                self.visualizerState.frequencyBins = [Float](repeating: 0, count: 100)
+                self.visualizerState.bassLevel = 0
             }
         }
         
@@ -1485,8 +1485,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // ✅ CHANGED: Use async dispatch to avoid blocking
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.frequencyBins = [Float](repeating: 0, count: 100)
-            self.bassLevel = 0
+            self.visualizerState.frequencyBins = [Float](repeating: 0, count: 100)
+            self.visualizerState.bassLevel = 0
         }
     }
 
