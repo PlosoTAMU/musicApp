@@ -72,6 +72,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private let fftSizeHalf = 1024
     private let visualizationBufferSize: AVAudioFrameCount = 2048
     private var visualizationTapInstalled = false
+    private var visualizationTapOnMixer = false  // ✅ NEW: Track which node has the tap
     
     // Pre-allocated FFT buffers
     private var fftInputBuffer = [Float](repeating: 0, count: 2048)
@@ -1149,12 +1150,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func installVisualizationTap() {
         guard let engine = audioEngine, let player = playerNode else { return }
         
-        // Remove existing tap if present from both possible locations
+        // Remove existing tap if present
         if visualizationTapInstalled {
-            // Try removing from both locations (one will fail silently)
-            engine.mainMixerNode.removeTap(onBus: 0)
-            player.removeTap(onBus: 0)
-            visualizationTapInstalled = false
+            removeVisualizationTap()
         }
         
         if fftSetup == nil {
@@ -1173,12 +1171,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
             engine.mainMixerNode.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
                 self?.processFFTBuffer(buffer)
             }
+            visualizationTapOnMixer = true
             print("✅ [AudioPlayer] Visualizer installed on mixer output (slow playback mode)")
         } else {
             let format = player.outputFormat(forBus: 0)
             player.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
                 self?.processFFTBuffer(buffer)
             }
+            visualizationTapOnMixer = false
             print("✅ [AudioPlayer] Visualizer installed on player output (normal/fast playback mode)")
         }
         
@@ -1218,12 +1218,17 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func removeVisualizationTap() {
         guard visualizationTapInstalled, let engine = audioEngine, let player = playerNode else { return }
         
-        // Remove from both possible locations (one will fail silently, that's ok)
-        engine.mainMixerNode.removeTap(onBus: 0)
-        player.removeTap(onBus: 0)
+        // Only remove from the node that actually has the tap
+        if visualizationTapOnMixer {
+            engine.mainMixerNode.removeTap(onBus: 0)
+            print("✅ [AudioPlayer] Visualization tap removed from mixer")
+        } else {
+            player.removeTap(onBus: 0)
+            print("✅ [AudioPlayer] Visualization tap removed from player")
+        }
         
         visualizationTapInstalled = false
-        print("✅ [AudioPlayer] Visualization tap removed")
+        visualizationTapOnMixer = false
     }
 
     /// Advanced FFT-based frequency analysis with beat detection
