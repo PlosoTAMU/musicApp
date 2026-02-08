@@ -583,50 +583,20 @@ struct NowPlayingView: View {
     
     @ViewBuilder
     private var thumbnailView: some View {
-        Group {
-            if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
-                Image(uiImage: thumbnailImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 200, height: 200)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
-            } else {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(LinearGradient(
-                        colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ))
-                    .frame(width: 200, height: 200)
-                    .overlay(
-                        Image(systemName: "music.note")
-                            .font(.system(size: 60))
-                            .foregroundColor(.white.opacity(0.5))
-                    )
-                    .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
-            }
-        }
-        .scaleEffect(1.0 + CGFloat(audioPlayer.visualizerState.bassLevel) * 0.20)
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear {
-                        let frame = geo.frame(in: .global)
-                        thumbnailCenter = CGPoint(x: frame.midX, y: frame.midY)
-                    }
-                    .onChange(of: geo.frame(in: .global)) { newFrame in
-                        thumbnailCenter = CGPoint(x: newFrame.midX, y: newFrame.midY)
-                    }
+        PulsingThumbnailView(
+            visualizerState: audioPlayer.visualizerState,
+            thumbnailImage: getThumbnailImage(for: audioPlayer.currentTrack),
+            onThumbnailCenterChanged: { newCenter in
+                thumbnailCenter = newCenter
+            },
+            onTap: {
+                if audioPlayer.isPlaying {
+                    audioPlayer.pause()
+                } else {
+                    audioPlayer.resume()
+                }
             }
         )
-        .onTapGesture {
-            if audioPlayer.isPlaying {
-                audioPlayer.pause()
-            } else {
-                audioPlayer.resume()
-            }
-        }
     }
     
     @ViewBuilder
@@ -1251,6 +1221,58 @@ struct DownloadBanner: View {
                 }
             }
             .padding(.horizontal, 16)
+        }
+    }
+}
+
+
+// MARK: - Pulsing Thumbnail (directly observes VisualizerState for 60fps sync)
+struct PulsingThumbnailView: View {
+    @ObservedObject var visualizerState: VisualizerState
+    let thumbnailImage: UIImage?
+    var onThumbnailCenterChanged: ((CGPoint) -> Void)?
+    var onTap: (() -> Void)?
+    
+    var body: some View {
+        Group {
+            if let thumbnailImage = thumbnailImage {
+                Image(uiImage: thumbnailImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 200, height: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
+            } else {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(LinearGradient(
+                        colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 200, height: 200)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .font(.system(size: 60))
+                            .foregroundColor(.white.opacity(0.5))
+                    )
+                    .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
+            }
+        }
+        .scaleEffect(1.0 + CGFloat(visualizerState.bassLevel) * 0.20)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear {
+                        let frame = geo.frame(in: .global)
+                        onThumbnailCenterChanged?(CGPoint(x: frame.midX, y: frame.midY))
+                    }
+                    .onChange(of: geo.frame(in: .global)) { newFrame in
+                        onThumbnailCenterChanged?(CGPoint(x: newFrame.midX, y: newFrame.midY))
+                    }
+            }
+        )
+        .onTapGesture {
+            onTap?()
         }
     }
 }
