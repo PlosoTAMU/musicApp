@@ -639,10 +639,10 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                Spacer(minLength: 16)
+                Spacer(minLength: 4)
                 
                 // ✅ COMBINED: Play controls with volume in one cohesive section
-                VStack(spacing: 12) {
+                VStack(spacing: 8) {
                     HStack(spacing: 16) {
                         Button { audioPlayer.previous() } label: {
                             Image(systemName: "backward.fill")
