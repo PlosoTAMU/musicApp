@@ -61,6 +61,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var reverbNode: AVAudioUnitReverb?
     private var timePitchNode: AVAudioUnitTimePitch?
     private var eqNode: AVAudioUnitEQ?
+    // Premium audio: secondary reverb for depth
+    private var reverbNode2: AVAudioUnitReverb?
     
     private var timeUpdateTimer: Timer?
     
@@ -244,34 +246,83 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func setupAudioEngine() {
         audioEngine = AVAudioEngine()
         playerNode = AVAudioPlayerNode()
-        reverbNode = AVAudioUnitReverb()
         timePitchNode = AVAudioUnitTimePitch()
-        eqNode = AVAudioUnitEQ(numberOfBands: 1)
+        
+        // ── Premium EQ: 5-band parametric for surgical bass shaping ──
+        // Band 0: Sub-bass shelf   (40Hz)  — the chest-thump frequencies
+        // Band 1: Mid-bass bell    (120Hz) — warmth and body
+        // Band 2: Mud cut          (300Hz) — always slightly scooped to keep clarity
+        // Band 3: Presence shelf   (3kHz)  — compensate treble when bass is boosted
+        // Band 4: Air shelf        (10kHz) — sparkle to offset any muddiness
+        eqNode = AVAudioUnitEQ(numberOfBands: 5)
+        
+        // ── Premium Reverb: dual-stage (early reflections + tail) ──
+        reverbNode = AVAudioUnitReverb()   // Primary: small room for early reflections / intimacy
+        reverbNode2 = AVAudioUnitReverb()  // Secondary: large space for the tail
         
         guard let engine = audioEngine,
               let player = playerNode,
-              let reverb = reverbNode,
               let timePitch = timePitchNode,
-              let eq = eqNode else { return }
+              let eq = eqNode,
+              let reverb1 = reverbNode,
+              let reverb2 = reverbNode2 else { return }
         
         engine.attach(player)
-        engine.attach(reverb)
         engine.attach(timePitch)
         engine.attach(eq)
+        engine.attach(reverb1)
+        engine.attach(reverb2)
         
-        reverb.loadFactoryPreset(.largeHall)
-        reverb.wetDryMix = 0
+        // ── TimePitch: premium quality settings ──
         timePitch.rate = 1.0
+        timePitch.pitch = 0
+        timePitch.overlap = 32  // Maximum overlap for cleanest time-stretching (less artifacts)
         
-        // Configure EQ for bass boost (centered at 80Hz, low shelf filter)
-        let bassBand = eq.bands[0]
-        bassBand.filterType = .lowShelf
-        bassBand.frequency = 80  // Center frequency for bass
-        bassBand.bandwidth = 1.0
-        bassBand.gain = 0  // Will be controlled by bassBoost property
-        bassBand.bypass = false
+        // ── EQ Bands ──
+        let subBass = eq.bands[0]
+        subBass.filterType = .lowShelf
+        subBass.frequency = 40
+        subBass.bandwidth = 0.8
+        subBass.gain = 0
+        subBass.bypass = false
         
-        print("✅ Audio engine configured")
+        let midBass = eq.bands[1]
+        midBass.filterType = .parametric
+        midBass.frequency = 120
+        midBass.bandwidth = 1.2  // Moderate Q for musical width
+        midBass.gain = 0
+        midBass.bypass = false
+        
+        let mudCut = eq.bands[2]
+        mudCut.filterType = .parametric
+        mudCut.frequency = 300
+        mudCut.bandwidth = 1.5
+        mudCut.gain = 0   // Will be auto-scooped proportional to bass boost
+        mudCut.bypass = false
+        
+        let presence = eq.bands[3]
+        presence.filterType = .parametric
+        presence.frequency = 3000
+        presence.bandwidth = 1.0
+        presence.gain = 0   // Will add a touch of presence when bass is up
+        presence.bypass = false
+        
+        let air = eq.bands[4]
+        air.filterType = .highShelf
+        air.frequency = 10000
+        air.bandwidth = 0.7
+        air.gain = 0
+        air.bypass = false
+        
+        // ── Reverb 1: early reflections (small room feel) ──
+        reverb1.loadFactoryPreset(.smallRoom)
+        reverb1.wetDryMix = 0
+        
+        // ── Reverb 2: tail (cathedral depth) ──
+        reverb2.loadFactoryPreset(.cathedral)
+        reverb2.wetDryMix = 0
+        
+        print("✅ Premium audio engine configured (5-band EQ, dual-reverb, high-overlap pitch)")
     }
     
     private func setupAudioSession() {
@@ -575,7 +626,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 guard let file = self.audioFile,
                       let engine = self.audioEngine,
                       let player = self.playerNode,
-                      let reverb = self.reverbNode,
+                      let reverb1 = self.reverbNode,
+                      let reverb2 = self.reverbNode2,
                       let timePitch = self.timePitchNode,
                       let eq = self.eqNode else {
                     print("❌ Audio nodes not configured")
@@ -587,12 +639,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 engine.disconnectNodeInput(player)
                 engine.disconnectNodeInput(timePitch)
                 engine.disconnectNodeInput(eq)
-                engine.disconnectNodeInput(reverb)
+                engine.disconnectNodeInput(reverb1)
+                engine.disconnectNodeInput(reverb2)
                 
+                // Chain: player → timePitch → EQ → reverb1 (early) → reverb2 (tail) → mixer
                 engine.connect(player, to: timePitch, format: format)
                 engine.connect(timePitch, to: eq, format: format)
-                engine.connect(eq, to: reverb, format: format)
-                engine.connect(reverb, to: engine.mainMixerNode, format: format)
+                engine.connect(eq, to: reverb1, format: format)
+                engine.connect(reverb1, to: reverb2, format: format)
+                engine.connect(reverb2, to: engine.mainMixerNode, format: format)
                 
                 if !engine.isRunning {
                     try engine.start()
@@ -698,7 +753,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             guard let engine = self.audioEngine,
                   let player = self.playerNode,
-                  let reverb = self.reverbNode,
+                  let reverb1 = self.reverbNode,
+                  let reverb2 = self.reverbNode2,
                   let timePitch = self.timePitchNode,
                   let eq = self.eqNode else {
                 print("❌ Audio components not available")
@@ -726,12 +782,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
             engine.disconnectNodeInput(player)
             engine.disconnectNodeInput(timePitch)
             engine.disconnectNodeInput(eq)
-            engine.disconnectNodeInput(reverb)
+            engine.disconnectNodeInput(reverb1)
+            engine.disconnectNodeInput(reverb2)
             
             engine.connect(player, to: timePitch, format: format)
             engine.connect(timePitch, to: eq, format: format)
-            engine.connect(eq, to: reverb, format: format)
-            engine.connect(reverb, to: engine.mainMixerNode, format: format)
+            engine.connect(eq, to: reverb1, format: format)
+            engine.connect(reverb1, to: reverb2, format: format)
+            engine.connect(reverb2, to: engine.mainMixerNode, format: format)
             
             do {
                 try engine.start()
@@ -958,7 +1016,33 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     private func applyReverb() {
         audioQueue.async {
-            self.reverbNode?.wetDryMix = Float(self.reverbAmount)
+            guard let reverb1 = self.reverbNode,
+                  let reverb2 = self.reverbNode2 else { return }
+            
+            let amount = self.reverbAmount  // 0-100
+            
+            // ── Dual-stage reverb for depth ──
+            // Stage 1 (small room): provides early reflections — the "intimacy" layer.
+            //   Ramps up first (0-30% of user slider) then holds, so even low reverb
+            //   values sound natural rather than empty.
+            // Stage 2 (cathedral): provides the long tail — the "space" layer.
+            //   Ramps in after stage 1 to add depth without washing out at low values.
+            
+            if amount <= 0 {
+                reverb1.wetDryMix = 0
+                reverb2.wetDryMix = 0
+            } else {
+                // Early reflections: quick ramp to 35% wet, then gently rise to 50%
+                let earlyMix = Float(min(amount / 30.0, 1.0) * 35 + max(0, (amount - 30) / 70.0) * 15)
+                reverb1.wetDryMix = earlyMix
+                
+                // Tail: starts at 15% of slider, ramps up to full
+                let tailAmount = max(0, amount - 15) / 85.0  // normalized 0-1 over range 15-100
+                let tailMix = Float(tailAmount * tailAmount * 45)  // Quadratic curve, max 45% wet
+                reverb2.wetDryMix = tailMix
+            }
+            
+            print("🌊 Reverb: early=\(reverb1.wetDryMix)%, tail=\(reverb2.wetDryMix)% (user: \(amount)%)")
         }
     }
     
@@ -971,8 +1055,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
             let speed = Float(self.playbackSpeed)
             
             timePitch.rate = speed
-            timePitch.pitch = Float(self.pitchShift * 100) // pitchShift is in semitones, AVAudioUnitTimePitch uses cents
-            timePitch.overlap = 8.0
+            timePitch.pitch = Float(self.pitchShift * 100)
+            
+            // ── Premium time-stretch quality ──
+            // Higher overlap = cleaner stretching with fewer phase artifacts.
+            // Scale dynamically: extreme speeds need even more overlap to stay clean.
+            let deviation = abs(speed - 1.0)
+            if deviation > 0.3 {
+                timePitch.overlap = 32  // Maximum quality for extreme speed changes
+            } else if deviation > 0.1 {
+                timePitch.overlap = 24  // High quality for moderate changes
+            } else {
+                timePitch.overlap = 16  // Efficient for near-normal speed
+            }
             
             if self.playbackSpeed != 2.0 {
                 self.savedPlaybackSpeed = self.playbackSpeed
@@ -992,24 +1087,73 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 self.updateNowPlayingInfo()
             }
             
-            print("⚡ Playback speed set to: \(self.playbackSpeed)x")
+            print("⚡ Speed: \(self.playbackSpeed)x, overlap: \(timePitch.overlap)")
         }
     }
     
     private func applyPitch() {
         audioQueue.async {
             guard let timePitch = self.timePitchNode else { return }
-            timePitch.pitch = Float(self.pitchShift * 100) // semitones to cents
-            print("🎵 Pitch set to: \(self.pitchShift) semitones")
+            
+            // ── Clean pitch shifting ──
+            // Apply pitch in cents. Higher overlap at extreme shifts reduces
+            // the metallic / chipmunk artifacts.
+            timePitch.pitch = Float(self.pitchShift * 100)
+            
+            let deviation = abs(self.pitchShift)
+            if deviation > 4 {
+                timePitch.overlap = max(timePitch.overlap, 32)
+            } else if deviation > 2 {
+                timePitch.overlap = max(timePitch.overlap, 24)
+            }
+            
+            print("🎵 Pitch: \(self.pitchShift) st, overlap: \(timePitch.overlap)")
         }
     }
     
     private func applyBassBoost() {
         audioQueue.async {
             guard let eq = self.eqNode else { return }
-            let bassBand = eq.bands[0]
-            bassBand.gain = Float(self.bassBoost)
-            print("🔊 Bass boost set to: \(self.bassBoost)dB")
+            
+            let boost = self.bassBoost  // -12 to +12 dB from user
+            
+            // ── 5-band surgical bass shaping ──
+            // Instead of a single shelf that makes everything muddy, we:
+            //   1. Boost sub-bass (40Hz) for the physical chest-thump
+            //   2. Boost mid-bass (120Hz) at ~60% of the sub for warmth without boom
+            //   3. CUT 300Hz proportionally to remove the mud that bass boost creates
+            //   4. Add a touch of 3kHz presence so the mix doesn't sound dark/muffled
+            //   5. Add a tiny bit of air (10kHz) to retain sparkle
+            
+            // Band 0: Sub-bass — full user boost
+            eq.bands[0].gain = Float(boost)
+            
+            // Band 1: Mid-bass — 60% of boost for warmth, not boom
+            eq.bands[1].gain = Float(boost * 0.6)
+            
+            // Band 2: Mud scoop — always cut proportionally when boosting bass
+            // When cutting bass (negative), don't add mud
+            if boost > 0 {
+                eq.bands[2].gain = Float(-boost * 0.35)  // Scoop mud at 35% of boost
+            } else {
+                eq.bands[2].gain = 0
+            }
+            
+            // Band 3: Presence compensation — keeps vocals/snares from drowning
+            if boost > 0 {
+                eq.bands[3].gain = Float(boost * 0.15)  // Gentle 15% presence lift
+            } else {
+                eq.bands[3].gain = 0
+            }
+            
+            // Band 4: Air — subtle sparkle to offset bass darkness
+            if boost > 0 {
+                eq.bands[4].gain = Float(boost * 0.1)
+            } else {
+                eq.bands[4].gain = 0
+            }
+            
+            print("🔊 Bass EQ: sub=\(eq.bands[0].gain)dB, mid=\(eq.bands[1].gain)dB, mud=\(eq.bands[2].gain)dB, presence=\(eq.bands[3].gain)dB, air=\(eq.bands[4].gain)dB")
         }
     }
     
