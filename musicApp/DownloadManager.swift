@@ -56,6 +56,60 @@ class DownloadManager: ObservableObject {
     func getMusicDirectory() -> URL {
         return musicDirectory
     }
+    
+    // Neutralize song names by removing formatting characters
+    func neutralizeName(_ name: String) -> String {
+        var cleaned = name
+        
+        // Remove common markdown/formatting characters
+        cleaned = cleaned.replacingOccurrences(of: "_", with: " ")  // Underscores (italic in markdown)
+        cleaned = cleaned.replacingOccurrences(of: "*", with: "")   // Asterisks (bold in markdown)
+        cleaned = cleaned.replacingOccurrences(of: "~", with: "")   // Tildes (strikethrough)
+        cleaned = cleaned.replacingOccurrences(of: "`", with: "")   // Backticks (code)
+        cleaned = cleaned.replacingOccurrences(of: "#", with: "")   // Hashes (headers)
+        
+        // Remove multiple consecutive spaces and trim
+        cleaned = cleaned.replacingOccurrences(of: "  +", with: " ", options: .regularExpression)
+        cleaned = cleaned.trimmingCharacters(in: .whitespaces)
+        
+        return cleaned
+    }
+    
+    // ONE-TIME: Neutralize all existing song names
+    // Call this once, then remove this function
+    func neutralizeAllExistingSongs() {
+        print("🧹 [DownloadManager] Starting neutralization of all existing songs...")
+        var changedCount = 0
+        
+        for (index, download) in downloads.enumerated() {
+            let cleanedName = neutralizeName(download.name)
+            
+            if cleanedName != download.name {
+                print("📝 Neutralizing: '\(download.name)' → '\(cleanedName)'")
+                
+                // Update only the name, keep everything else the same
+                downloads[index] = Download(
+                    id: download.id,
+                    name: cleanedName,
+                    url: download.url,
+                    thumbnailPath: download.thumbnailPath,
+                    videoID: download.videoID,
+                    source: download.source,
+                    originalURL: download.originalURL
+                )
+                changedCount += 1
+            }
+        }
+        
+        if changedCount > 0 {
+            saveDownloads()
+            notifyChange()
+            print("✅ [DownloadManager] Neutralized \(changedCount) song names")
+        } else {
+            print("✅ [DownloadManager] No songs needed neutralization")
+        }
+    }
+    
     private func notifyChange() {
         updateDebounceTimer?.invalidate()
         updateDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
@@ -135,8 +189,11 @@ class DownloadManager: ObservableObject {
                     thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
                 }
                 
+                // Neutralize the song name to remove formatting characters
+                let cleanedTitle = self.neutralizeName(downloadedTitle)
+                
                 let download = Download(
-                    name: downloadedTitle,
+                    name: cleanedTitle,
                     url: fileURL,
                     thumbnailPath: thumbnailPath?.path,
                     videoID: finalVideoID,

@@ -34,7 +34,9 @@ struct FolderPicker: UIViewControllerRepresentable {
                 for case let fileURL as URL in enumerator {
                     if fileURL.pathExtension.lowercased() == "mp3" || fileURL.pathExtension.lowercased() == "m4a" {
                         let name = fileURL.deletingPathExtension().lastPathComponent
-                        let download = Download(name: name, url: fileURL)
+                        // Neutralize the name before creating the download
+                        let cleanedName = parent.downloadManager.neutralizeName(name)
+                        let download = Download(name: cleanedName, url: fileURL)
                         parent.downloadManager.addDownload(download)
                     }
                 }
