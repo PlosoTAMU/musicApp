@@ -159,25 +159,38 @@ class DownloadManager: ObservableObject {
         }
     }
     func renameDownload(_ download: Download, newName: String) {
-        guard let index = downloads.firstIndex(where: { $0.id == download.id }) else { return }
+        guard let index = downloads.firstIndex(where: { $0.id == download.id }) else {
+            print("❌ [DownloadManager] Download not found in array")
+            return
+        }
         
         let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
         
-        // Rename the actual file on disk
-        let oldURL = download.url
+        // Use the URL from the actual downloads array (not the passed-in copy which may be stale)
+        let currentDownload = downloads[index]
+        let oldURL = currentDownload.url
         let fileExtension = oldURL.pathExtension
         let newFileName = "\(trimmedName).\(fileExtension)"
         let newURL = oldURL.deletingLastPathComponent().appendingPathComponent(newFileName)
         
+        // If the name didn't actually change, skip file operations
+        if oldURL.lastPathComponent == newURL.lastPathComponent {
+            return
+        }
+        
         // Try to rename the file
         do {
+            guard FileManager.default.fileExists(atPath: oldURL.path) else {
+                print("❌ [DownloadManager] Source file doesn't exist at: \(oldURL.path)")
+                return
+            }
+            
             // If file exists at new location, generate unique name
             var finalURL = newURL
             var counter = 1
             while FileManager.default.fileExists(atPath: finalURL.path) {
-                let nameWithoutExt = trimmedName
-                finalURL = oldURL.deletingLastPathComponent().appendingPathComponent("\(nameWithoutExt) (\(counter)).\(fileExtension)")
+                finalURL = oldURL.deletingLastPathComponent().appendingPathComponent("\(trimmedName) (\(counter)).\(fileExtension)")
                 counter += 1
             }
             
@@ -190,12 +203,12 @@ class DownloadManager: ObservableObject {
             let oldThumbnailPath = thumbnailsDir.appendingPathComponent("\(oldURL.lastPathComponent).jpg")
             let newThumbnailPath = thumbnailsDir.appendingPathComponent("\(finalURL.lastPathComponent).jpg")
             
-            var newThumbnailFilename: String? = download.thumbnailPath
+            var newThumbnailFilename: String? = currentDownload.thumbnailPath
             if FileManager.default.fileExists(atPath: oldThumbnailPath.path) {
                 do {
                     try FileManager.default.moveItem(at: oldThumbnailPath, to: newThumbnailPath)
                     newThumbnailFilename = newThumbnailPath.lastPathComponent
-                    print("✅ [DownloadManager] Thumbnail renamed from '\(oldThumbnailPath.lastPathComponent)' to '\(newThumbnailPath.lastPathComponent)'")
+                    print("✅ [DownloadManager] Thumbnail renamed")
                 } catch {
                     print("⚠️ [DownloadManager] Failed to rename thumbnail: \(error.localizedDescription)")
                 }
@@ -203,24 +216,24 @@ class DownloadManager: ObservableObject {
             
             // Update the download with new name, URL, and thumbnail path
             downloads[index] = Download(
-                id: download.id,
+                id: currentDownload.id,
                 name: trimmedName,
                 url: finalURL,
                 thumbnailPath: newThumbnailFilename,
-                videoID: download.videoID,
-                source: download.source,
-                originalURL: download.originalURL
+                videoID: currentDownload.videoID,
+                source: currentDownload.source,
+                originalURL: currentDownload.originalURL
             )
             
             saveDownloads()
             notifyChange()
             
             // If this track is currently playing, update the AudioPlayerManager
+            // Match by ID since URLs are value types and might be stale copies
             if let audioPlayer = self.audioPlayer,
                let currentTrack = audioPlayer.currentTrack,
-               currentTrack.url == oldURL {
+               currentTrack.id == currentDownload.id {
                 
-                // Create updated track with new URL and name
                 let updatedTrack = Track(
                     id: currentTrack.id,
                     name: trimmedName,
@@ -228,17 +241,14 @@ class DownloadManager: ObservableObject {
                     folderName: currentTrack.folderName
                 )
                 
-                // Update current track reference and URL
                 audioPlayer.currentTrack = updatedTrack
                 audioPlayer.updateCurrentTrackURL(finalURL)
                 
-                // Update the track in the current playlist
-                if let playlistIndex = audioPlayer.currentPlaylist.firstIndex(where: { $0.url == oldURL }) {
+                if let playlistIndex = audioPlayer.currentPlaylist.firstIndex(where: { $0.id == currentTrack.id }) {
                     audioPlayer.currentPlaylist[playlistIndex] = updatedTrack
                 }
                 
-                // Update the track in the queue
-                if let queueIndex = audioPlayer.queue.firstIndex(where: { $0.url == oldURL }) {
+                if let queueIndex = audioPlayer.queue.firstIndex(where: { $0.id == currentTrack.id }) {
                     audioPlayer.queue[queueIndex] = updatedTrack
                 }
                 

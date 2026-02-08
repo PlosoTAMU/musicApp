@@ -117,9 +117,34 @@ struct QueueView: View {
                         
                         // Up next
                         if audioPlayer.isPlaylistMode {
-                            if !audioPlayer.upNextTracks.isEmpty {
+                            // Show queued songs first (user-added)
+                            if !audioPlayer.queue.isEmpty {
+                                Section(header: Text("Up Next")) {
+                                    ForEach(audioPlayer.queue) { track in
+                                        QueueTrackRow(
+                                            track: track,
+                                            downloadManager: downloadManager,
+                                            isPlaying: false,
+                                            isPrevious: false,
+                                            audioPlayer: audioPlayer
+                                        )
+                                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                                        .listRowBackground(Color.clear)
+                                    }
+                                    .onMove { source, destination in
+                                        audioPlayer.moveInQueue(from: source, to: destination)
+                                    }
+                                    .onDelete { offsets in
+                                        audioPlayer.removeFromQueue(at: offsets)
+                                    }
+                                }
+                            }
+                            
+                            // Then show remaining playlist tracks
+                            let playlistUpNext = audioPlayer.playlistUpNextTracks
+                            if !playlistUpNext.isEmpty {
                                 Section(header: Text("Up Next from Playlist")) {
-                                    ForEach(Array(audioPlayer.upNextTracks.enumerated()), id: \.element.id) { index, track in
+                                    ForEach(Array(playlistUpNext.enumerated()), id: \.element.id) { index, track in
                                         QueueTrackRow(
                                             track: track,
                                             downloadManager: downloadManager,

@@ -966,19 +966,24 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     func previous() {
         if isPlaylistMode {
-            // ✅ FIXED: Use previousQueue in playlist mode too
             if !previousQueue.isEmpty {
-                // Add current to start of playlist queue
-                if let current = currentTrack,
-                let currentIdx = currentPlaylist.firstIndex(where: { $0.id == current.id }) {
-                    currentIndex = currentIdx
+                // Put current track back at the front of the queue
+                if let current = currentTrack {
+                    queue.insert(current, at: 0)
+                    // If current is a playlist track, restore the index
+                    if let currentIdx = currentPlaylist.firstIndex(where: { $0.id == current.id }) {
+                        currentIndex = currentIdx
+                    }
                 }
                 
                 // Play the previous track
                 let previousTrack = previousQueue.removeLast()
+                // If the previous track is a playlist track, update index
+                if let prevIdx = currentPlaylist.firstIndex(where: { $0.id == previousTrack.id }) {
+                    currentIndex = prevIdx
+                }
                 play(previousTrack)
             } else {
-                // No previous songs, just seek to start
                 seek(to: 0)
             }
         } else {
@@ -1005,6 +1010,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
             previousQueue.append(current)
         }
         
+        // ✅ FIXED: Always check queue first, even in playlist mode
+        // This lets queued songs play between playlist tracks
+        if !queue.isEmpty {
+            let nextTrack = queue.removeFirst()
+            play(nextTrack)
+            return
+        }
+        
         if isPlaylistMode {
             guard !currentPlaylist.isEmpty else {
                 DispatchQueue.main.async {
@@ -1016,24 +1029,33 @@ class AudioPlayerManager: NSObject, ObservableObject {
             currentIndex = (currentIndex + 1) % currentPlaylist.count
             play(currentPlaylist[currentIndex])
         } else {
-            if !queue.isEmpty {
-                let nextTrack = queue.removeFirst()
-                play(nextTrack)
-            } else {
-                DispatchQueue.main.async {
-                    self.stop()
-                    self.onPlaybackEnded?()
-                }
+            DispatchQueue.main.async {
+                self.stop()
+                self.onPlaybackEnded?()
             }
         }
     }
     
     var upNextTracks: [Track] {
         if isPlaylistMode && !currentPlaylist.isEmpty {
+            // Show queued songs first, then remaining playlist tracks
+            var upcoming: [Track] = []
+            upcoming.append(contentsOf: queue)
             let nextIndex = currentIndex + 1
             if nextIndex < currentPlaylist.count {
-                return Array(currentPlaylist[nextIndex...])
+                upcoming.append(contentsOf: currentPlaylist[nextIndex...])
             }
+            return upcoming
+        }
+        return queue
+    }
+    
+    // Playlist-only upcoming tracks (excludes manually queued songs)
+    var playlistUpNextTracks: [Track] {
+        guard isPlaylistMode, !currentPlaylist.isEmpty else { return [] }
+        let nextIndex = currentIndex + 1
+        if nextIndex < currentPlaylist.count {
+            return Array(currentPlaylist[nextIndex...])
         }
         return []
     }
@@ -1049,9 +1071,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
             
             if self.currentTrack == nil {
-                self.isPlaylistMode = false
-                let firstTrack = self.queue.removeFirst()
-                self.play(firstTrack)
+                // Only exit playlist mode if nothing is playing
+                if !self.isPlaylistMode {
+                    let firstTrack = self.queue.removeFirst()
+                    self.play(firstTrack)
+                } else {
+                    // In playlist mode with no current track, play from queue
+                    let firstTrack = self.queue.removeFirst()
+                    self.play(firstTrack)
+                }
             }
         }
     }
@@ -1067,7 +1095,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
             
             if self.currentTrack == nil {
-                self.isPlaylistMode = false
                 let firstTrack = self.queue.removeFirst()
                 self.play(firstTrack)
             }
