@@ -1076,10 +1076,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
         audioQueue.async {
             guard let timePitch = self.timePitchNode else { return }
             
-            // Speed always applies even when bypassed (it's more like transport control)
-            // But pitch is zeroed when bypassed
-            let speed = Float(self.playbackSpeed)
-            let pitch = self.effectsBypass ? 0 : Float(self.pitchShift * 100)
+            // When bypassed, reset both speed and pitch to defaults
+            let speed = self.effectsBypass ? Float(1.0) : Float(self.playbackSpeed)
+            let pitch = self.effectsBypass ? Float(0) : Float(self.pitchShift * 100)
             
             timePitch.rate = speed
             timePitch.pitch = pitch

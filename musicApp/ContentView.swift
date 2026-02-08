@@ -484,19 +484,10 @@ struct NowPlayingView: View {
                     Button {
                         audioPlayer.effectsBypass.toggle()
                     } label: {
-                        ZStack {
-                            Image(systemName: "slider.vertical.3")
-                                .font(.title3)
-                                .foregroundColor(audioPlayer.effectsBypass ? .white.opacity(0.3) : .white)
-                                .frame(width: 44, height: 44)
-                            
-                            if audioPlayer.effectsBypass {
-                                Image(systemName: "slash")
-                                    .font(.title3)
-                                    .foregroundColor(.red)
-                                    .offset(x: 1, y: 0)
-                            }
-                        }
+                        Image(systemName: "slider.vertical.3")
+                            .font(.title3)
+                            .foregroundColor(audioPlayer.effectsBypass ? .white : .blue)
+                            .frame(width: 44, height: 44)
                     }
                     
                     Menu {
@@ -562,8 +553,7 @@ struct NowPlayingView: View {
                         audioPlayer.resume()
                     }
                 }
-                
-                Spacer()
+                .padding(.bottom, 20)
                 
                 VStack(spacing: 6) {
                     // ✅ NEW: Auto-scrolling title with continuous loop
@@ -606,7 +596,7 @@ struct NowPlayingView: View {
                     .frame(height: 40)
                     .padding(.horizontal, 28)
                 }
-                
+                .padding(.bottom, 24)
                 
                 VStack(spacing: 2) {
                     HStack {
