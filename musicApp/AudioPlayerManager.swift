@@ -1249,6 +1249,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // For speeds >= 1.0x: Use player output (visualization speeds up with audio)
         if playbackSpeed < 1.0 {
             let format = engine.mainMixerNode.outputFormat(forBus: 0)
+            // Safety: Remove any existing tap first
+            if engine.mainMixerNode.numberOfInputs > 0 {
+                engine.mainMixerNode.removeTap(onBus: 0)
+            }
             engine.mainMixerNode.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
                 self?.processFFTBuffer(buffer)
             }
@@ -1256,6 +1260,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
             print("✅ [AudioPlayer] Visualizer installed on mixer output (slow playback mode)")
         } else {
             let format = player.outputFormat(forBus: 0)
+            // Safety: Remove any existing tap first
+            player.removeTap(onBus: 0)
             player.installTap(onBus: 0, bufferSize: visualizationBufferSize, format: format) { [weak self] buffer, _ in
                 self?.processFFTBuffer(buffer)
             }
@@ -1297,12 +1303,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func removeVisualizationTap() {
-        guard visualizationTapInstalled, let engine = audioEngine, let player = playerNode else { return }
+        guard let engine = audioEngine, let player = playerNode else {
+            visualizationTapInstalled = false
+            visualizationTapOnMixer = false
+            return
+        }
         
         // Only remove from the node that actually has the tap
         if visualizationTapOnMixer {
-            engine.mainMixerNode.removeTap(onBus: 0)
-            print("✅ [AudioPlayer] Visualization tap removed from mixer")
+            if engine.mainMixerNode.numberOfInputs > 0 {
+                engine.mainMixerNode.removeTap(onBus: 0)
+                print("✅ [AudioPlayer] Visualization tap removed from mixer")
+            }
         } else {
             player.removeTap(onBus: 0)
             print("✅ [AudioPlayer] Visualization tap removed from player")
