@@ -505,9 +505,9 @@ struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, 60)
+                .padding(.top, 40)
                 
-                Spacer(minLength: 30)
+                Spacer(minLength: 10)
                 
                 // Single container - sized to fit thumbnail + visualizer bars
                 ZStack {
@@ -555,9 +555,9 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                Spacer(minLength: 16)
+                Spacer(minLength: 10)
                 
-                VStack(spacing: 6) {
+                VStack(spacing: 2) {
                     // ✅ NEW: Auto-scrolling title with continuous loop
                     GeometryReader { geometry in
                         let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
@@ -599,7 +599,7 @@ struct NowPlayingView: View {
                     .padding(.horizontal, 28)
                 }
                 
-                Spacer(minLength: 20)
+                Spacer(minLength: 4)
                 
                 VStack(spacing: 2) {
                     HStack {
@@ -638,7 +638,7 @@ struct NowPlayingView: View {
                     seekValue = audioPlayer.currentTime
                 }
                 
-                Spacer(minLength: 24)
+                Spacer(minLength: 8)
                 
                 HStack(spacing: 16) {
                     Button { audioPlayer.previous() } label: {
