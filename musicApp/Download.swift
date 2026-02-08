@@ -16,17 +16,18 @@ struct Download: Identifiable, Codable {
     var originalURL: String?  // ✅ ADD THIS - store the original download URL
     var pendingDeletion: Bool = false
     
+    // ⚡ PERF: Cache the thumbnails directory path once instead of calling
+    // FileManager.default.urls(for:in:) on every row render in the list
+    private static let thumbnailsDirectory: String = {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsPath.appendingPathComponent("Thumbnails").path
+    }()
+    
     var resolvedThumbnailPath: String? {
         guard let filename = thumbnailPath else { return nil }
         
-        if !filename.contains("/") {
-            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            return documentsPath.appendingPathComponent("Thumbnails").appendingPathComponent(filename).path
-        }
-        
-        let justFilename = (filename as NSString).lastPathComponent
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documentsPath.appendingPathComponent("Thumbnails").appendingPathComponent(justFilename).path
+        let justFilename = filename.contains("/") ? (filename as NSString).lastPathComponent : filename
+        return (Download.thumbnailsDirectory as NSString).appendingPathComponent(justFilename)
     }
     
     init(id: UUID = UUID(), name: String, url: URL, thumbnailPath: String? = nil, videoID: String? = nil, source: DownloadSource = .youtube, originalURL: String? = nil) {

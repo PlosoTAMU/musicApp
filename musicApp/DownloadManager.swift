@@ -127,7 +127,7 @@ class DownloadManager: ObservableObject {
     private func notifyChange() {
         updateDebounceTimer?.invalidate()
         updateDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
-            self?.notifyChange()
+            self?.objectWillChange.send()
         }
     }
     

@@ -84,6 +84,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
         autoreleaseFrequency: .workItem
     )
     
+    // Debounce timer for saving track settings to disk
+    private var saveSettingsTimer: Timer?
+    
     var savedPlaybackSpeed: Double = 1.0
     private var currentPlaybackSessionID = UUID()
     private var hasTriggeredNext = false  // ✅ Prevent double-next
@@ -240,6 +243,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func saveCurrentTrackSettings() {
         guard let trackID = currentTrack?.id else { return }
         
+        // Update in-memory dictionary immediately
         trackSettings[trackID] = TrackSettings(
             playbackSpeed: playbackSpeed,
             reverbAmount: reverbAmount,
@@ -247,18 +251,25 @@ class AudioPlayerManager: NSObject, ObservableObject {
             bassBoost: bassBoost
         )
         
-        // Save to disk (debounced to avoid excessive writes)
-        saveTrackSettingsToDisk()
+        // Debounce disk write — coalesce rapid slider changes into a single write
+        saveSettingsTimer?.invalidate()
+        saveSettingsTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            self?.saveTrackSettingsToDisk()
+        }
     }
     
-    // ✅ NEW: Write settings to disk
+    // ✅ NEW: Write settings to disk (called from debounce timer, off main thread)
     private func saveTrackSettingsToDisk() {
-        do {
-            let data = try JSONEncoder().encode(trackSettings)
-            try data.write(to: trackSettingsFileURL, options: .atomic)
-            print("💾 [AudioPlayer] Saved settings for \(trackSettings.count) tracks")
-        } catch {
-            print("❌ [AudioPlayer] Failed to save track settings: \(error)")
+        let settingsSnapshot = trackSettings
+        let fileURL = trackSettingsFileURL
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                let data = try JSONEncoder().encode(settingsSnapshot)
+                try data.write(to: fileURL, options: .atomic)
+                print("💾 [AudioPlayer] Saved settings for \(settingsSnapshot.count) tracks")
+            } catch {
+                print("❌ [AudioPlayer] Failed to save track settings: \(error)")
+            }
         }
     }
     
