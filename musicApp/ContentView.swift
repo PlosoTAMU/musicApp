@@ -544,7 +544,7 @@ struct NowPlayingView: View {
                         .allowsHitTesting(false)
                         .zIndex(2)  // Visualizer on top
                 }
-                .frame(minWidth: 320, minHeight: 320)  // Minimum size, can expand
+                .frame(minWidth: 360, minHeight: 360)  // Larger frame to prevent clipping (220 base + 60*2 for bars + margin)
                 .compositingGroup()  // Group for better rendering
                 .onTapGesture {
                     if audioPlayer.isPlaying {
