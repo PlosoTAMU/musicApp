@@ -9,6 +9,7 @@ class VisualizerState: ObservableObject {
     
     /// Single batched update — fires objectWillChange exactly ONCE per frame
     func update(bins: [Float], bass: Float) {
+        PerformanceMonitor.shared.recordStateChange("visualizerState.update")
         objectWillChange.send()
         frequencyBins = bins
         bassLevel = bass
@@ -17,8 +18,12 @@ class VisualizerState: ObservableObject {
 
 
 class AudioPlayerManager: NSObject, ObservableObject {
-    @Published var isPlaying = false
-    @Published var currentTrack: Track?
+    @Published var isPlaying = false {
+        didSet { PerformanceMonitor.shared.recordStateChange("audioPlayer.isPlaying") }
+    }
+    @Published var currentTrack: Track? {
+        didSet { PerformanceMonitor.shared.recordStateChange("audioPlayer.currentTrack") }
+    }
     
     // ✅ Visualization lifecycle — tap is only active when visualizer is on-screen
     var isVisualizerVisible = false
@@ -28,7 +33,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     @Published var isPlaylistMode = false
     @Published var isLoopEnabled = false
     @Published var currentIndex: Int = 0
-    @Published var currentTime: Double = 0
+    @Published var currentTime: Double = 0 {
+        didSet { PerformanceMonitor.shared.recordStateChange("audioPlayer.currentTime") }
+    }
     @Published var duration: Double = 0
     @Published var reverbAmount: Double = 0 {
         didSet { 
@@ -193,6 +200,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
         trackSettingsFileURL = documentsPath.appendingPathComponent("track_settings.json")
         
         super.init()
+        
+        // ✅ Register PerformanceMonitor categories
+        PerformanceMonitor.shared.registerCategory("Canvas_EdgeVisualizer_Draw", .rendering)
+        PerformanceMonitor.shared.registerCategory("NowPlayingView_UpdateBackground", .rendering)
         
         loadTrackSettings() // ✅ LOAD saved settings
         setupAudioSession()

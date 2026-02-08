@@ -89,12 +89,25 @@ class PerformanceMonitor {
     private var vizCallbackTimestamps: [CFAbsoluteTime] = []
     private var vizCallbackRate: Double = 0
     
+    // ✅ NEW: View update tracking
+    private var viewUpdateCounts: [String: Int] = [:]
+    private var viewUpdateTimestamps: [String: [CFAbsoluteTime]] = [:]
+    
+    // ✅ NEW: State change tracking
+    private var stateChangeCounts: [String: Int] = [:]
+    private var stateChangeTimestamps: [String: [CFAbsoluteTime]] = [:]
+    
+    // ✅ NEW: Memory allocation tracking
+    private var baselineMemory: UInt64 = 0
+    private var peakMemory: UInt64 = 0
+    
     // Report interval tracking
     private var lastReportTime: CFAbsoluteTime = 0
     
     private init() {
         #if DEBUG
         lastReportTime = CFAbsoluteTimeGetCurrent()
+        baselineMemory = getMemoryUsage()
         
         // High-frequency system metrics (every 1s for granular CPU tracking)
         metricsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -189,6 +202,97 @@ class PerformanceMonitor {
             let span = now - vizCallbackTimestamps.first!
             vizCallbackRate = Double(vizCallbackTimestamps.count - 1) / span
         }
+        lock.unlock()
+        #endif
+    }
+    
+    // MARK: - ✅ NEW: View Update Tracking
+    
+    /// Call at the top of a View's body to track how often it rebuilds
+    func recordViewUpdate(_ viewName: String) {
+        #if DEBUG
+        lock.lock()
+        defer { lock.unlock() }
+        
+        let now = CFAbsoluteTimeGetCurrent()
+        viewUpdateCounts[viewName, default: 0] += 1
+        
+        if viewUpdateTimestamps[viewName] == nil {
+            viewUpdateTimestamps[viewName] = []
+        }
+        viewUpdateTimestamps[viewName]?.append(now)
+        
+        // Keep last 2 seconds of timestamps
+        if let timestamps = viewUpdateTimestamps[viewName], !timestamps.isEmpty {
+            viewUpdateTimestamps[viewName] = timestamps.filter { now - $0 < 2.0 }
+        }
+        #endif
+    }
+    
+    /// Get updates/sec for a view
+    func getViewUpdateRate(_ viewName: String) -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        
+        guard let timestamps = viewUpdateTimestamps[viewName], timestamps.count > 1 else { return 0 }
+        let span = timestamps.last! - timestamps.first!
+        guard span > 0 else { return 0 }
+        return Double(timestamps.count - 1) / span
+    }
+    
+    // MARK: - ✅ NEW: State Change Tracking
+    
+    /// Call when @Published property changes
+    func recordStateChange(_ propertyName: String) {
+        #if DEBUG
+        lock.lock()
+        defer { lock.unlock() }
+        
+        let now = CFAbsoluteTimeGetCurrent()
+        stateChangeCounts[propertyName, default: 0] += 1
+        
+        if stateChangeTimestamps[propertyName] == nil {
+            stateChangeTimestamps[propertyName] = []
+        }
+        stateChangeTimestamps[propertyName]?.append(now)
+        
+        // Keep last 2 seconds
+        if let timestamps = stateChangeTimestamps[propertyName], !timestamps.isEmpty {
+            stateChangeTimestamps[propertyName] = timestamps.filter { now - $0 < 2.0 }
+        }
+        #endif
+    }
+    
+    /// Get state changes/sec
+    func getStateChangeRate(_ propertyName: String) -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        
+        guard let timestamps = stateChangeTimestamps[propertyName], timestamps.count > 1 else { return 0 }
+        let span = timestamps.last! - timestamps.first!
+        guard span > 0 else { return 0 }
+        return Double(timestamps.count - 1) / span
+    }
+    
+    // MARK: - ✅ NEW: Memory Tracking
+    
+    private func getMemoryUsage() -> UInt64 {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+        let kerr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        guard kerr == KERN_SUCCESS else { return 0 }
+        return info.resident_size
+    }
+    
+    func recordMemorySnapshot() {
+        #if DEBUG
+        let current = getMemoryUsage()
+        lock.lock()
+        peakMemory = max(peakMemory, current)
         lock.unlock()
         #endif
     }
@@ -610,7 +714,75 @@ class PerformanceMonitor {
         }
         print("└──────────────────────────────────────────────────────")
         
-        // ── 7. RECOMMENDATIONS ──
+        // ── 7. ✅ NEW: VIEW UPDATE FREQUENCY ──
+        lock.lock()
+        let viewUpdateSnapshot = viewUpdateCounts
+        lock.unlock()
+        
+        if !viewUpdateSnapshot.isEmpty {
+            print("\n┌─ 👁️  VIEW UPDATE FREQUENCY ───────────────────────────")
+            print("│  (How often SwiftUI rebuilds each view's body)")
+            print("│")
+            
+            var viewRates: [(name: String, rate: Double, count: Int)] = []
+            for (name, count) in viewUpdateSnapshot {
+                let rate = getViewUpdateRate(name)
+                viewRates.append((name, rate, count))
+            }
+            
+            let sorted = viewRates.sorted { $0.rate > $1.rate }
+            for item in sorted.prefix(10) {
+                let pad = item.name.padding(toLength: 30, withPad: " ", startingAt: 0)
+                let rateStr = String(format: "%.1f/s", item.rate)
+                let indicator = item.rate > 30 ? "⚠️" : (item.rate > 10 ? "🟡" : "✅")
+                print("│  \(pad)  \(rateStr.padding(toLength: 8, withPad: " ", startingAt: 0)) (total: \(item.count)×) \(indicator)")
+            }
+            
+            print("└──────────────────────────────────────────────────────")
+        }
+        
+        // ── 8. ✅ NEW: STATE CHANGE FREQUENCY ──
+        lock.lock()
+        let stateChangeSnapshot = stateChangeCounts
+        lock.unlock()
+        
+        if !stateChangeSnapshot.isEmpty {
+            print("\n┌─ 🔄 STATE CHANGE FREQUENCY ──────────────────────────")
+            print("│  (@Published property updates)")
+            print("│")
+            
+            var stateRates: [(name: String, rate: Double, count: Int)] = []
+            for (name, count) in stateChangeSnapshot {
+                let rate = getStateChangeRate(name)
+                stateRates.append((name, rate, count))
+            }
+            
+            let sorted = stateRates.sorted { $0.rate > $1.rate }
+            for item in sorted.prefix(10) {
+                let pad = item.name.padding(toLength: 30, withPad: " ", startingAt: 0)
+                let rateStr = String(format: "%.1f/s", item.rate)
+                let indicator = item.rate > 30 ? "⚠️" : (item.rate > 10 ? "🟡" : "✅")
+                print("│  \(pad)  \(rateStr.padding(toLength: 8, withPad: " ", startingAt: 0)) (total: \(item.count)×) \(indicator)")
+            }
+            
+            print("└──────────────────────────────────────────────────────")
+        }
+        
+        // ── 9. ✅ NEW: MEMORY ANALYSIS ──
+        let currentMem = getMemoryUsage()
+        lock.lock()
+        let peakMem = peakMemory
+        lock.unlock()
+        let growthMB = Double(currentMem - baselineMemory) / 1_048_576.0
+        
+        print("\n┌─ 🧠 MEMORY ANALYSIS ──────────────────────────────────")
+        print("│  Baseline:     \(String(format: "%.1f MB", Double(baselineMemory) / 1_048_576.0))")
+        print("│  Current:      \(String(format: "%.1f MB", Double(currentMem) / 1_048_576.0))")
+        print("│  Peak:         \(String(format: "%.1f MB", Double(peakMem) / 1_048_576.0))")
+        print("│  Growth:       \(String(format: "%.1f MB", growthMB)) \(growthMB > 50 ? "⚠️" : "✅")")
+        print("└──────────────────────────────────────────────────────")
+        
+        // ── 11. RECOMMENDATIONS ──
         if !issues.isEmpty {
             print("\n┌─ 💡 RECOMMENDATIONS ─────────────────────────────────")
             if let latest = energySnapshot.last {

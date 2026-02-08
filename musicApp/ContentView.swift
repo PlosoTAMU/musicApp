@@ -12,7 +12,9 @@ struct ContentView: View {
     @State private var showNowPlaying = false
     
     var body: some View {
-        ZStack(alignment: .bottom) {
+        PerformanceMonitor.shared.recordViewUpdate("ContentView")
+        
+        return ZStack(alignment: .bottom) {
             TabView {
                 DownloadsView(
                     downloadManager: downloadManager,
@@ -343,6 +345,9 @@ struct MiniPlayerBar: View {
     }
     
     private func updateBackgroundImage() {
+        PerformanceMonitor.shared.start("NowPlayingView_UpdateBackground")
+        defer { PerformanceMonitor.shared.end("NowPlayingView_UpdateBackground") }
+        
         guard let track = audioPlayer.currentTrack else {
             backgroundImage = nil
             return
@@ -434,7 +439,9 @@ struct NowPlayingView: View {
     }
     
     var body: some View {
-        ZStack {
+        PerformanceMonitor.shared.recordViewUpdate("NowPlayingView")
+        
+        return ZStack {
             backgroundLayer
             
             Color.black.opacity(0.4)
@@ -1236,7 +1243,9 @@ struct PulsingThumbnailView: View {
     var onTap: (() -> Void)?
     
     var body: some View {
-        Group {
+        PerformanceMonitor.shared.recordViewUpdate("PulsingThumbnailView")
+        
+        return Group {
             if let thumbnailImage = thumbnailImage {
                 Image(uiImage: thumbnailImage)
                     .resizable()
@@ -1295,7 +1304,10 @@ struct EdgeVisualizerView: View {
     @State private var barHSB: [(h: CGFloat, s: CGFloat, b: CGFloat)] = []
     
     var body: some View {
-        Canvas { context, size in
+        PerformanceMonitor.shared.recordViewUpdate("EdgeVisualizerView")
+        
+        return Canvas { context, size in
+            PerformanceMonitor.shared.start("Canvas_EdgeVisualizer_Draw")
             let centerX = thumbnailCenter?.x ?? size.width / 2
             let centerY = thumbnailCenter?.y ?? size.height / 2
             
@@ -1347,6 +1359,8 @@ struct EdgeVisualizerView: View {
                 drawBarFast(context: context, x: x, y: y, dx: -1, dy: 0, value: bins[barIndex], hsb: hasColors ? hsb[barIndex] : nil)
                 barIndex += 1
             }
+            
+            PerformanceMonitor.shared.end("Canvas_EdgeVisualizer_Draw")
         }
         .drawingGroup()
         .onChange(of: audioPlayer.currentTrack) { newTrack in
