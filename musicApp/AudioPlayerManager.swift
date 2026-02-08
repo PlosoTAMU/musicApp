@@ -39,6 +39,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
+    @Published var effectsBypass: Bool = false {
+        didSet {
+            // Re-apply all effects with bypass state
+            applyReverb()
+            applyBassBoost()
+            applyPitch()
+            applyPlaybackSpeed()
+        }
+    }
+    
     // ✅ NEW: Store settings per track
     private var trackSettings: [UUID: TrackSettings] = [:]
     private let trackSettingsFileURL: URL
@@ -1019,6 +1029,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
             guard let reverb1 = self.reverbNode,
                   let reverb2 = self.reverbNode2 else { return }
             
+            // If bypassed, zero out the reverb
+            if self.effectsBypass {
+                reverb1.wetDryMix = 0
+                reverb2.wetDryMix = 0
+                return
+            }
+            
             let amount = self.reverbAmount  // 0-100
             
             // ── Dual-stage reverb ──
@@ -1059,10 +1076,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
         audioQueue.async {
             guard let timePitch = self.timePitchNode else { return }
             
+            // Speed always applies even when bypassed (it's more like transport control)
+            // But pitch is zeroed when bypassed
             let speed = Float(self.playbackSpeed)
+            let pitch = self.effectsBypass ? 0 : Float(self.pitchShift * 100)
             
             timePitch.rate = speed
-            timePitch.pitch = Float(self.pitchShift * 100)
+            timePitch.pitch = pitch
             
             // ── Premium time-stretch quality ──
             // Higher overlap = cleaner stretching with fewer phase artifacts.
@@ -1102,10 +1122,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
         audioQueue.async {
             guard let timePitch = self.timePitchNode else { return }
             
-            // ── Clean pitch shifting ──
-            // Apply pitch in cents. Higher overlap at extreme shifts reduces
-            // the metallic / chipmunk artifacts.
-            timePitch.pitch = Float(self.pitchShift * 100)
+            // Bypass check - zero out pitch when bypassed
+            let pitch = self.effectsBypass ? 0 : Float(self.pitchShift * 100)
+            
+            timePitch.pitch = pitch
             
             let deviation = abs(self.pitchShift)
             if deviation > 4 {
@@ -1121,6 +1141,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func applyBassBoost() {
         audioQueue.async {
             guard let eq = self.eqNode else { return }
+            
+            // If bypassed, zero out all EQ bands
+            if self.effectsBypass {
+                for band in eq.bands {
+                    band.gain = 0
+                }
+                return
+            }
             
             let boost = self.bassBoost  // -10 to +20 dB from user
             

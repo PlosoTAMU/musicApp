@@ -482,12 +482,21 @@ struct NowPlayingView: View {
                     }
                     
                     Button {
-                        showAudioSettings = true
+                        audioPlayer.effectsBypass.toggle()
                     } label: {
-                        Image(systemName: "slider.vertical.3")
-                            .font(.title3)
-                            .foregroundColor(.white)
-                            .frame(width: 44, height: 44)
+                        ZStack {
+                            Image(systemName: "slider.vertical.3")
+                                .font(.title3)
+                                .foregroundColor(audioPlayer.effectsBypass ? .white.opacity(0.3) : .white)
+                                .frame(width: 44, height: 44)
+                            
+                            if audioPlayer.effectsBypass {
+                                Image(systemName: "slash")
+                                    .font(.title3)
+                                    .foregroundColor(.red)
+                                    .offset(x: 1, y: 0)
+                            }
+                        }
                     }
                     
                     Menu {
@@ -1125,7 +1134,7 @@ struct AudioSettingsSheet: View {
                 .padding(.top, 20)
                 .padding(.bottom, 40)
             }
-            .navigationTitle("Audio Settings")
+            .navigationTitle("DJ Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
