@@ -219,9 +219,6 @@ class DownloadManager: ObservableObject {
             if let audioPlayer = self.audioPlayer,
                let currentTrack = audioPlayer.currentTrack,
                currentTrack.url == oldURL {
-                // Save current playback state
-                let wasPlaying = audioPlayer.isPlaying
-                let currentTime = audioPlayer.currentTime
                 
                 // Create updated track with new URL and name
                 let updatedTrack = Track(
@@ -230,6 +227,10 @@ class DownloadManager: ObservableObject {
                     url: finalURL,
                     folderName: currentTrack.folderName
                 )
+                
+                // Update current track reference and URL
+                audioPlayer.currentTrack = updatedTrack
+                audioPlayer.updateCurrentTrackURL(finalURL)
                 
                 // Update the track in the current playlist
                 if let playlistIndex = audioPlayer.currentPlaylist.firstIndex(where: { $0.url == oldURL }) {
@@ -241,18 +242,7 @@ class DownloadManager: ObservableObject {
                     audioPlayer.queue[queueIndex] = updatedTrack
                 }
                 
-                // Reload the audio file with the new URL
-                audioPlayer.play(updatedTrack)
-                
-                // Restore playback position and state
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    audioPlayer.seek(to: currentTime)
-                    if !wasPlaying {
-                        audioPlayer.pause()
-                    }
-                }
-                
-                print("✅ [DownloadManager] Reloaded currently playing track with new file")
+                print("✅ [DownloadManager] Updated currently playing track metadata and URL")
             }
             
         } catch {

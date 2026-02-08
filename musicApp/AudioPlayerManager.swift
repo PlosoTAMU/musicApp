@@ -796,6 +796,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
+    // Update the current track URL (used when file is renamed while playing)
+    func updateCurrentTrackURL(_ newURL: URL) {
+        currentTrackURL = newURL
+    }
+    
     func stop() {
         currentPlaybackSessionID = UUID()
 
