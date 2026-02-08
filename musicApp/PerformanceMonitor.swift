@@ -265,7 +265,7 @@ class PerformanceMonitor {
             
             // Get thread name
             var extInfo = thread_extended_info()
-            var extInfoCount = mach_msg_type_number_t(THREAD_EXTENDED_INFO_COUNT)
+            var extInfoCount = mach_msg_type_number_t(MemoryLayout<thread_extended_info>.size / MemoryLayout<natural_t>.size)
             var name = "Thread-\(index)"
             let extResult = withUnsafeMutablePointer(to: &extInfo) {
                 $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
