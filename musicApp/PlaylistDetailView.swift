@@ -58,9 +58,12 @@ struct PlaylistDetailView: View {
     let playlist: Playlist
     @ObservedObject var playlistManager: PlaylistManager
     @ObservedObject var downloadManager: DownloadManager
-    @ObservedObject var audioPlayer: AudioPlayerManager
+    var audioPlayer: AudioPlayerManager
     @State private var showAddSongs = false
     @State private var totalDuration: TimeInterval = 0
+    @State private var isVisible = false
+    @State private var currentPlayingTrackID: UUID?
+    @State private var isAudioPlaying = false
     
     var tracks: [Download] {
         playlist.trackIDs.compactMap { id in
@@ -119,16 +122,17 @@ struct PlaylistDetailView: View {
                 ForEach(Array(tracks.enumerated()), id: \.element.id) { index, download in
                     PlaylistSongRow(
                         download: download,
-                        audioPlayer: audioPlayer,
+                        isCurrentlyPlaying: currentPlayingTrackID == download.id,
+                        isPlaying: isAudioPlaying,
                         playlist: playlist,
                         onTap: {
                             let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
                             audioPlayer.play(track)
                         },
-                        onRename: { newName in  // ✅ ADD THIS
+                        onRename: { newName in
                             downloadManager.renameDownload(download, newName: newName)
                         },
-                        onRedownload: {  // ✅ ADD THIS
+                        onRedownload: {
                             if let videoID = download.videoID,
                             let originalURL = constructURL(from: videoID, source: download.source) {
                                 downloadManager.startBackgroundDownload(
@@ -138,6 +142,10 @@ struct PlaylistDetailView: View {
                                     title: "Redownloading..."
                                 )
                             }
+                        },
+                        onQueue: {
+                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+                            audioPlayer.addToQueue(track)
                         }
                     )
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
@@ -168,8 +176,8 @@ struct PlaylistDetailView: View {
             .background(Color.black)
             .environment(\.editMode, .constant(.active))
             .scrollIndicators(.visible)
-            .safeAreaInset(edge: .bottom) {  // ✅ ADD THIS
-                Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
+            .safeAreaInset(edge: .bottom) {
+                Color.clear.frame(height: currentPlayingTrackID != nil ? 65 : 0)
             }
         }
         .navigationTitle(playlist.name)
@@ -194,7 +202,24 @@ struct PlaylistDetailView: View {
             )
         }
         .onAppear {
+            isVisible = true
+            currentPlayingTrackID = audioPlayer.currentTrack?.id
+            isAudioPlaying = audioPlayer.isPlaying
             updateTotalDuration()
+        }
+        .onDisappear {
+            isVisible = false
+        }
+        .onReceive(audioPlayer.$currentTrack) { newTrack in
+            let newID = newTrack?.id
+            if currentPlayingTrackID != newID {
+                currentPlayingTrackID = newID
+            }
+        }
+        .onReceive(audioPlayer.$isPlaying) { playing in
+            if isAudioPlaying != playing {
+                isAudioPlaying = playing
+            }
         }
         .onChange(of: playlist.trackIDs) { _ in
             updateTotalDuration()
@@ -213,17 +238,28 @@ struct PlaylistDetailView: View {
     }
     
     private func updateTotalDuration() {
-        totalDuration = 0
-        for track in tracks {
-            if let duration = getAudioDuration(url: track.url) {
-                totalDuration += duration
+        let trackURLs = tracks.map { $0.url }
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            var total: TimeInterval = 0
+            for url in trackURLs {
+                let asset = AVAsset(url: url)
+                let duration = asset.duration.seconds
+                if duration.isFinite {
+                    total += duration
+                }
+            }
+            
+            DispatchQueue.main.async {
+                totalDuration = total
             }
         }
     }
     
     private func getAudioDuration(url: URL) -> TimeInterval? {
         let asset = AVAsset(url: url)
-        return asset.duration.seconds
+        let d = asset.duration.seconds
+        return d.isFinite ? d : nil
     }
     
     private func formatDuration(_ duration: TimeInterval) -> String {
@@ -236,21 +272,17 @@ struct PlaylistDetailView: View {
 
 struct PlaylistSongRow: View {
     let download: Download
-    @ObservedObject var audioPlayer: AudioPlayerManager
+    let isCurrentlyPlaying: Bool
+    let isPlaying: Bool
     let playlist: Playlist
     let onTap: () -> Void
-    let onRename: (String) -> Void       // ✅ ADD THIS
-    let onRedownload: () -> Void         // ✅ ADD THIS
+    let onRename: (String) -> Void
+    let onRedownload: () -> Void
+    let onQueue: () -> Void
     
-    @State private var showRenameAlert = false  // ✅ ADD THIS
-    @State private var newName: String = ""     // ✅ ADD THIS
+    @State private var showRenameAlert = false
+    @State private var newName: String = ""
     
-    private var isCurrentlyPlaying: Bool {
-        audioPlayer.currentTrack?.id == download.id
-    }
-    
-    // In PlaylistDetailView.txt, replace PlaylistSongRow body:
-
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
@@ -263,7 +295,7 @@ struct PlaylistSongRow: View {
                     )
                     
                     // ✅ ADDED: Play/Pause icon overlay
-                    if isCurrentlyPlaying && audioPlayer.isPlaying {
+                    if isCurrentlyPlaying && isPlaying {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color.black.opacity(0.4))
                             .frame(width: 48, height: 48)
@@ -279,7 +311,7 @@ struct PlaylistSongRow: View {
                         .font(.body)
                         .fontWeight(isCurrentlyPlaying ? .bold : .regular)
                         .italic(isCurrentlyPlaying)
-                        .foregroundColor(isCurrentlyPlaying ? .blue : .primary)  // ✅ Blue when playing
+                        .foregroundColor(isCurrentlyPlaying ? .blue : .primary)
                         .lineLimit(1)
                     
                     Text(download.source.rawValue.capitalized)
@@ -320,7 +352,7 @@ struct PlaylistSongRow: View {
             }
             
             // ✅ ADDED: Volume icon when playing
-            if isCurrentlyPlaying && audioPlayer.isPlaying {
+            if isCurrentlyPlaying && isPlaying {
                 Image(systemName: "speaker.wave.2.fill")
                     .foregroundColor(.blue)
                     .font(.body)
@@ -330,8 +362,7 @@ struct PlaylistSongRow: View {
         .padding(.vertical, 12)
         .background(Color.black)
         .swipeToQueue {
-            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
-            audioPlayer.addToQueue(track)
+            onQueue()
         }
     }
 }

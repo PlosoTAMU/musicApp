@@ -1,11 +1,14 @@
 import SwiftUI
+import AVFoundation
 
 struct PlaylistsView: View {
     @ObservedObject var playlistManager: PlaylistManager
     @ObservedObject var downloadManager: DownloadManager
-    @ObservedObject var audioPlayer: AudioPlayerManager
+    var audioPlayer: AudioPlayerManager
     @State private var showCreatePlaylist = false
     @State private var refreshID = UUID()
+    @State private var cachedDurations: [UUID: TimeInterval] = [:]
+    @State private var hasCurrentTrack = false
     
     var body: some View {
         NavigationView {
@@ -28,8 +31,8 @@ struct PlaylistsView: View {
                                 Text(playlist.name)
                                     .font(.headline)
                                 
-                                let trackCount = playlistManager.getTracks(for: playlist, from: downloadManager).count
-                                let duration = playlistManager.getTotalDuration(for: playlist, from: downloadManager)
+                                let trackCount = playlist.trackIDs.count
+                                let duration = cachedDurations[playlist.id] ?? 0
                                 
                                 Text("\(trackCount) songs • \(formatDuration(duration))")
                                     .font(.caption)
@@ -45,9 +48,9 @@ struct PlaylistsView: View {
             .background(Color.black)
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .scrollIndicators(.visible) // FIXED: Add scroll bar
-            .safeAreaInset(edge: .bottom) {  // ✅ ADD THIS
-                Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
+            .scrollIndicators(.visible)
+            .safeAreaInset(edge: .bottom) {
+                Color.clear.frame(height: hasCurrentTrack ? 65 : 0)
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -59,8 +62,12 @@ struct PlaylistsView: View {
                 }
             }
             .onAppear {
-                // Force refresh
+                hasCurrentTrack = audioPlayer.currentTrack != nil
                 refreshID = UUID()
+                computeDurationsAsync()
+            }
+            .onReceive(audioPlayer.$currentTrack) { track in
+                hasCurrentTrack = track != nil
             }
         }
         .sheet(isPresented: $showCreatePlaylist) {
@@ -70,8 +77,34 @@ struct PlaylistsView: View {
                 onDismiss: { 
                     showCreatePlaylist = false
                     refreshID = UUID()
+                    computeDurationsAsync()
                 }
             )
+        }
+    }
+    
+    /// Compute all playlist durations off the main thread
+    private func computeDurationsAsync() {
+        let playlists = playlistManager.playlists
+        let dm = downloadManager
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            var durations: [UUID: TimeInterval] = [:]
+            
+            for playlist in playlists {
+                var total: TimeInterval = 0
+                for trackID in playlist.trackIDs {
+                    if let download = dm.getDownload(byID: trackID) {
+                        let asset = AVAsset(url: download.url)
+                        total += asset.duration.seconds
+                    }
+                }
+                durations[playlist.id] = total
+            }
+            
+            DispatchQueue.main.async {
+                cachedDurations = durations
+            }
         }
     }
     
@@ -80,6 +113,7 @@ struct PlaylistsView: View {
             playlistManager.deletePlaylist(playlistManager.playlists[index])
         }
         refreshID = UUID()
+        computeDurationsAsync()
     }
     
     private func formatDuration(_ duration: TimeInterval) -> String {
