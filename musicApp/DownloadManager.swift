@@ -190,21 +190,23 @@ class DownloadManager: ObservableObject {
             let oldThumbnailPath = thumbnailsDir.appendingPathComponent("\(oldURL.lastPathComponent).jpg")
             let newThumbnailPath = thumbnailsDir.appendingPathComponent("\(finalURL.lastPathComponent).jpg")
             
+            var newThumbnailFilename: String? = download.thumbnailPath
             if FileManager.default.fileExists(atPath: oldThumbnailPath.path) {
                 do {
                     try FileManager.default.moveItem(at: oldThumbnailPath, to: newThumbnailPath)
+                    newThumbnailFilename = newThumbnailPath.lastPathComponent
                     print("✅ [DownloadManager] Thumbnail renamed from '\(oldThumbnailPath.lastPathComponent)' to '\(newThumbnailPath.lastPathComponent)'")
                 } catch {
                     print("⚠️ [DownloadManager] Failed to rename thumbnail: \(error.localizedDescription)")
                 }
             }
             
-            // Update the download with new name and URL
+            // Update the download with new name, URL, and thumbnail path
             downloads[index] = Download(
                 id: download.id,
                 name: trimmedName,
                 url: finalURL,
-                thumbnailPath: download.thumbnailPath,
+                thumbnailPath: newThumbnailFilename,
                 videoID: download.videoID,
                 source: download.source,
                 originalURL: download.originalURL
