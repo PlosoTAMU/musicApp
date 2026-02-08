@@ -412,6 +412,8 @@ struct NowPlayingView: View {
     @State private var newTrackName: String = ""
     @State private var showAudioSettings = false
     @State private var thumbnailCenter: CGPoint = .zero
+    // ✅ REMOVED: thumbnailPulse state - now using audioPlayer.pulse directly
+
     
     private var sliderBinding: Binding<Double> {
         Binding(
@@ -425,6 +427,7 @@ struct NowPlayingView: View {
         )
     }
     
+    // ✅ NEW: Calculate current progress for waveform highlighting
     private var playbackProgress: CGFloat {
         guard audioPlayer.duration > 0 else { return 0 }
         return CGFloat(audioPlayer.currentTime / audioPlayer.duration)
@@ -452,7 +455,7 @@ struct NowPlayingView: View {
             Color.black.opacity(0.4)
                 .ignoresSafeArea()
             
-            VStack(spacing: 16) { // ✅ Unified spacing for entire stack
+            VStack(spacing: 0) {
                 HStack {
                     Button {
                         isPresented = false
@@ -465,6 +468,7 @@ struct NowPlayingView: View {
                     
                     Spacer()
                     
+                    // ✅ NEW: Loop button outside the menu
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
                             audioPlayer.isLoopEnabled.toggle()
@@ -504,7 +508,9 @@ struct NowPlayingView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 40)
                 
-                // Thumbnail only - untouched
+                Spacer(minLength: 10)
+                
+                // Thumbnail only
                 Group {
                     if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                         Image(uiImage: thumbnailImage)
@@ -550,8 +556,10 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                // ✅ Compact Title Section
-                VStack(spacing: 4) {
+                Spacer(minLength: 32)
+                
+                VStack(spacing: 0) {
+                    // ✅ NEW: Auto-scrolling title with continuous loop
                     GeometryReader { geometry in
                         let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
                         let textWidth = titleText.widthOfString(usingFont: UIFont.boldSystemFont(ofSize: 28))
@@ -581,6 +589,7 @@ struct NowPlayingView: View {
                             }
                         }
                         .onLongPressGesture {
+                            // Long press to rename the track
                             if let track = audioPlayer.currentTrack {
                                 newTrackName = track.name
                                 showRenameAlert = true
@@ -588,95 +597,101 @@ struct NowPlayingView: View {
                         }
                     }
                     .frame(height: 40)
-                }
-                .padding(.horizontal, 28)
-                
-                // ✅ Compact Progress Section
-                VStack(spacing: 4) {
-                    HStack {
-                        Spacer()
-                        Text("-" + formatTime((audioPlayer.duration - (isSeeking ? localSeekPosition : audioPlayer.currentTime)) / audioPlayer.playbackSpeed))
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.7))
-                    }
+                    .padding(.horizontal, 28)
                     
-                    Slider(value: sliderBinding, in: 0...max(audioPlayer.duration, 1)) { editing in
-                        isSeeking = editing
-                        if editing {
-                            localSeekPosition = audioPlayer.currentTime
-                        } else {
-                            audioPlayer.seek(to: localSeekPosition)
+                    // ✅ TIGHTENED: Progress bar section
+                    VStack(spacing: 4) {
+                        HStack {
+                            Spacer()
+                            
+                            Text("-" + formatTime((audioPlayer.duration - (isSeeking ? localSeekPosition : audioPlayer.currentTime)) / audioPlayer.playbackSpeed))
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                        
+                        Slider(value: sliderBinding, in: 0...max(audioPlayer.duration, 1)) { editing in
+                            isSeeking = editing
+                            if editing {
+                                localSeekPosition = audioPlayer.currentTime
+                            } else {
+                                audioPlayer.seek(to: localSeekPosition)
+                            }
+                        }
+                        .accentColor(.white)
+                        .disabled(audioPlayer.duration == 0)
+                        
+                        HStack {
+                            Text(formatTime(isSeeking ? localSeekPosition : audioPlayer.currentTime))
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
+                            
+                            Spacer()
+                            
+                            Text(formatTime(audioPlayer.duration))
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
                         }
                     }
-                    .accentColor(.white)
-                    .disabled(audioPlayer.duration == 0)
-                    
-                    HStack {
-                        Text(formatTime(isSeeking ? localSeekPosition : audioPlayer.currentTime))
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.7))
-                        
-                        Spacer()
-                        
-                        Text(formatTime(audioPlayer.duration))
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.7))
+                    .padding(.horizontal, 32)
+                    .padding(.top, 12)
+                    .onAppear {
+                        seekValue = audioPlayer.currentTime
                     }
                 }
-                .padding(.horizontal, 32)
                 
-                // ✅ Compact Playback Controls
-                HStack(spacing: 20) {
-                    Button { audioPlayer.previous() } label: {
-                        Image(systemName: "backward.fill")
-                            .font(.system(size: 32))
-                            .foregroundColor(.white)
-                            .frame(width: 50, height: 50)
-                    }
-                    
-                    RewindButton(audioPlayer: audioPlayer)
-                    
-                    Button {
-                        if audioPlayer.isPlaying {
-                            audioPlayer.pause()
-                        } else {
-                            audioPlayer.resume()
+                Spacer(minLength: 16)
+                
+                // ✅ COMBINED: Play controls with volume in one cohesive section
+                VStack(spacing: 12) {
+                    HStack(spacing: 16) {
+                        Button { audioPlayer.previous() } label: {
+                            Image(systemName: "backward.fill")
+                                .font(.system(size: 32))
+                                .foregroundColor(.white)
+                                .frame(width: 50, height: 50)
                         }
-                    } label: {
-                        Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 76))
-                            .foregroundColor(.white)
+                        
+                        RewindButton(audioPlayer: audioPlayer)
+                        
+                        Button {
+                            if audioPlayer.isPlaying {
+                                audioPlayer.pause()
+                            } else {
+                                audioPlayer.resume()
+                            }
+                        } label: {
+                            Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                .font(.system(size: 76))
+                                .foregroundColor(.white)
+                        }
+                        
+                        FastForwardButton(audioPlayer: audioPlayer)
+                        
+                        Button { audioPlayer.next() } label: {
+                            Image(systemName: "forward.fill")
+                                .font(.system(size: 32))
+                                .foregroundColor(.white)
+                                .frame(width: 50, height: 50)
+                        }
                     }
+                    .padding(.horizontal, 28)
                     
-                    FastForwardButton(audioPlayer: audioPlayer)
-                    
-                    Button { audioPlayer.next() } label: {
-                        Image(systemName: "forward.fill")
-                            .font(.system(size: 32))
-                            .foregroundColor(.white)
-                            .frame(width: 50, height: 50)
+                    HStack(spacing: 12) {
+                        Image(systemName: "speaker.fill")
+                            .foregroundColor(.white.opacity(0.7))
+                            .font(.caption)
+                        VolumeSlider()
+                            .frame(height: 20)
+                        Image(systemName: "speaker.wave.3.fill")
+                            .foregroundColor(.white.opacity(0.7))
+                            .font(.caption)
                     }
+                    .padding(.horizontal, 36)
                 }
-                .padding(.horizontal, 28)
-                
-                // ✅ Compact Volume Controls
-                HStack(spacing: 8) {
-                    Image(systemName: "speaker.fill")
-                        .foregroundColor(.white.opacity(0.7))
-                        .font(.caption)
-                    VolumeSlider()
-                        .frame(height: 20)
-                    Image(systemName: "speaker.wave.3.fill")
-                        .foregroundColor(.white.opacity(0.7))
-                        .font(.caption)
-                }
-                .padding(.horizontal, 36)
-                .padding(.bottom, 30) // Reduced from 50
-                
+                .padding(.bottom, 50)
             }
-            .padding(.top, 8) // Small top padding for the stack
             
-            // Visualizer layer
+            // Visualizer layer - sits on top of everything, ignores all layout constraints
             EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailCenter: thumbnailCenter)
                 .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
                 .allowsHitTesting(false)
@@ -696,8 +711,10 @@ struct NowPlayingView: View {
             DragGesture()
                 .onEnded { value in
                     if value.translation.height > 100 {
+                        // Swipe down - dismiss
                         isPresented = false
                     } else if value.translation.height < -100 {
+                        // Swipe up - open DJ menu
                         showAudioSettings = true
                     }
                 }
@@ -728,6 +745,7 @@ struct NowPlayingView: View {
             }
         }
     }
+    
     
     private func updateBackgroundImage() {
         guard let track = audioPlayer.currentTrack else {
@@ -793,6 +811,7 @@ struct NowPlayingView: View {
         AppDelegate.orientationLock = .all
     }
 }
+
 
 // MARK: - Rewind/Forward Buttons
 struct RewindButton: View {
