@@ -41,9 +41,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     var savedPlaybackSpeed: Double = 1.0
     private var currentPlaybackSessionID = UUID()
-    private var hasTriggeredNext = false  // ✅ NEW: Prevent double-next from both updateTime and completion callback
-    private var lastUpdateTime: Double = 0  // ✅ NEW: Track last currentTime to detect when playback stops
-    private var stuckTimeCounter: Int = 0  // ✅ NEW: Count how many updates we've been stuck
+    private var hasTriggeredNext = false  // ✅ Prevent double-next
     
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
@@ -500,8 +498,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
         hasTriggeredNext = false  // ✅ RESET: New track, allow next() to be triggered again
-        lastUpdateTime = 0  // ✅ RESET: Clear time tracking
-        stuckTimeCounter = 0  // ✅ RESET: Clear stuck counter
     
         // ✅ FIX: Reset visualization IMMEDIATELY and SYNCHRONOUSLY
         // This ensures UI shows zero before any async work happens
@@ -576,8 +572,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
                            !self.hasTriggeredNext {
                             self.hasTriggeredNext = true
                             self.next()
-                        } else {
-                            print("⚠️ Completion handler ignored (sessionID: \(sessionID == self.currentPlaybackSessionID), routeChange: \(self.isHandlingRouteChange), playing: \(self.isPlaying), alreadyTriggered: \(self.hasTriggeredNext))")
                         }
                     }
                 }
@@ -590,15 +584,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     self?.installVisualizationTap()
                 }
                 
-                let frameCount = Double(file.length)
-                let sampleRate = file.fileFormat.sampleRate
-                let calculatedDuration = frameCount / sampleRate
+                // ✅ FIX: Get ACTUAL playback duration from AVAsset, not from file.length
+                // file.length includes padding/metadata, but AVAsset.duration is the real playback time
+                let asset = AVAsset(url: trackURL)
+                let actualDuration = asset.duration.seconds
                 
                 DispatchQueue.main.async {
                     self.isPlaying = true
                     self.currentTrack = track
                     self.savedCurrentTime = 0
-                    self.duration = calculatedDuration
+                    self.duration = actualDuration  // ✅ Use actual playback duration
                     
                     if let index = self.currentPlaylist.firstIndex(where: { $0.id == track.id }) {
                         self.currentIndex = index
@@ -622,7 +617,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func pause() {
         savedCurrentTime = currentTime
         needsReschedule = true
-        stuckTimeCounter = 0  // ✅ RESET: Clear stuck counter when pausing
         
         audioQueue.async {
             self.playerNode?.pause()
@@ -696,7 +690,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
             self.currentPlaybackSessionID = UUID()
             let sessionID = self.currentPlaybackSessionID
             self.hasTriggeredNext = false  // ✅ RESET: Resuming playback, allow next() to be triggered again
-            self.stuckTimeCounter = 0  // ✅ RESET: Clear stuck counter
             
             let resumeTime = self.needsReschedule ? self.savedCurrentTime : self.currentTime
             let sampleRate = file.fileFormat.sampleRate
@@ -796,8 +789,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
         hasTriggeredNext = false  // ✅ RESET: Seeking means we're not at the end anymore
-        stuckTimeCounter = 0  // ✅ RESET: Clear stuck counter
-        lastUpdateTime = clampedTime  // ✅ RESET: Update to seek position
         
         DispatchQueue.main.async {
             self.stopTimeUpdates()
@@ -1092,29 +1083,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let newTime = seekOffset + currentSegmentTime
         
         currentTime = min(newTime, duration)
-        
-        // ✅ FIX: Detect when the song has actually ended by checking if playback stopped advancing
-        // This handles files where the actual audio ends before the calculated duration
-        let timeDifference = abs(currentTime - lastUpdateTime)
-        
-        if timeDifference < 0.01 && isPlaying && !isLoopEnabled {
-            // Playback isn't advancing - we might be at the end
-            stuckTimeCounter += 1
-            
-            // If we've been stuck for 2 consecutive updates (1 second), the song has ended
-            if stuckTimeCounter >= 2 && !hasTriggeredNext {
-                hasTriggeredNext = true
-                print("🎵 Song ended (stuck at \(String(format: "%.1f", currentTime))s, duration: \(String(format: "%.1f", duration))s)")
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.next()
-                }
-            }
-        } else {
-            // Playback is advancing normally
-            stuckTimeCounter = 0
-            lastUpdateTime = currentTime
-        }
         
         if Int(currentTime) % 5 == 0 {
             updateNowPlayingInfo()
