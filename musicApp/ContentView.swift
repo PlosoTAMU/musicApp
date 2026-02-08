@@ -676,8 +676,6 @@ struct NowPlayingView: View {
                 .padding(.horizontal, 28)
                 .padding(.top, 2)
                 
-                Spacer(minLength: 0)
-                
                 HStack(spacing: 12) {
                     Image(systemName: "speaker.fill")
                         .foregroundColor(.white.opacity(0.7))
@@ -689,7 +687,7 @@ struct NowPlayingView: View {
                         .font(.caption)
                 }
                 .padding(.horizontal, 36)
-                .padding(.bottom, 16)
+                .padding(.bottom, 50)
                 
             }
             
