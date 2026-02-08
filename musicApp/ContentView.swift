@@ -435,6 +435,7 @@ struct NowPlayingView: View {
     
     var body: some View {
         ZStack {
+            // Background Layer
             if let bgImage = backgroundImage {
                 Image(uiImage: bgImage)
                     .resizable()
@@ -455,8 +456,9 @@ struct NowPlayingView: View {
             Color.black.opacity(0.4)
                 .ignoresSafeArea()
             
+            // Main Content
             VStack(spacing: 0) {
-                // Top bar
+                // 1. Top Bar
                 HStack {
                     Button {
                         isPresented = false
@@ -508,16 +510,17 @@ struct NowPlayingView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 40)
                 
-                Spacer(minLength: 0)
-                    .frame(maxHeight: 40)
+                // 2. Top Spacer: Flexible but constrained (Pulls thumbnail UP)
+                Spacer()
+                    .frame(maxHeight: 60)
                 
-                // Thumbnail
+                // 3. Thumbnail
                 Group {
                     if let thumbnailImage = getThumbnailImage(for: audioPlayer.currentTrack) {
                         Image(uiImage: thumbnailImage)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                            .frame(width: 200, height: 200)
+                            .frame(width: 220, height: 220) // Slightly larger since we have room now
                             .clipShape(RoundedRectangle(cornerRadius: 16))
                             .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
                     } else {
@@ -527,7 +530,7 @@ struct NowPlayingView: View {
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ))
-                            .frame(width: 200, height: 200)
+                            .frame(width: 220, height: 220)
                             .overlay(
                                 Image(systemName: "music.note")
                                     .font(.system(size: 60))
@@ -557,11 +560,13 @@ struct NowPlayingView: View {
                     }
                 }
                 
-                Spacer(minLength: 0)
-                    .frame(maxHeight: 24)
+                // 4. Middle Spacer: FIXED height (Tightens gap between thumb and title)
+                Spacer()
+                    .frame(height: 25)
                 
-                // ✅ FIXED: Everything below thumbnail grouped with FIXED spacing — no more Spacer
-                VStack(spacing: 0) {
+                // 5. Controls Group: Increased internal spacing for "more space" feel
+                VStack(spacing: 20) {
+                    
                     // Title
                     GeometryReader { geometry in
                         let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
@@ -601,11 +606,10 @@ struct NowPlayingView: View {
                     .frame(height: 40)
                     .padding(.horizontal, 28)
                     
-                    // Progress bar
-                    VStack(spacing: 4) {
+                    // Progress Bar
+                    VStack(spacing: 6) {
                         HStack {
                             Spacer()
-                            
                             Text("-" + formatTime((audioPlayer.duration - (isSeeking ? localSeekPosition : audioPlayer.currentTime)) / audioPlayer.playbackSpeed))
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.7))
@@ -626,22 +630,16 @@ struct NowPlayingView: View {
                             Text(formatTime(isSeeking ? localSeekPosition : audioPlayer.currentTime))
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.7))
-                            
                             Spacer()
-                            
                             Text(formatTime(audioPlayer.duration))
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.7))
                         }
                     }
                     .padding(.horizontal, 32)
-                    .padding(.top, 12)
-                    .onAppear {
-                        seekValue = audioPlayer.currentTime
-                    }
                     
-                    // ✅ Play controls — FIXED distance from progress bar
-                    HStack(spacing: 16) {
+                    // Playback Buttons
+                    HStack(spacing: 20) {
                         Button { audioPlayer.previous() } label: {
                             Image(systemName: "backward.fill")
                                 .font(.system(size: 32))
@@ -672,10 +670,9 @@ struct NowPlayingView: View {
                                 .frame(width: 50, height: 50)
                         }
                     }
-                    .padding(.horizontal, 28)
-                    .padding(.top, 24)
+                    .padding(.horizontal, 20)
                     
-                    // ✅ Volume — FIXED distance from controls
+                    // Volume
                     HStack(spacing: 12) {
                         Image(systemName: "speaker.fill")
                             .foregroundColor(.white.opacity(0.7))
@@ -687,12 +684,16 @@ struct NowPlayingView: View {
                             .font(.caption)
                     }
                     .padding(.horizontal, 36)
-                    .padding(.top, 20)
                 }
-                .padding(.bottom, 50)
+                
+                // 6. Bottom Spacer: This pushes everything else UP
+                Spacer()
+                
+                // Minimal bottom padding
+                Color.clear.frame(height: 20)
             }
             
-            // Visualizer layer
+            // Visualizer (Overlay)
             EdgeVisualizerView(audioPlayer: audioPlayer, thumbnailCenter: thumbnailCenter)
                 .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
                 .allowsHitTesting(false)
@@ -720,7 +721,7 @@ struct NowPlayingView: View {
         )
         .sheet(isPresented: $showPlaylistPicker) {
             if let track = audioPlayer.currentTrack,
-            let download = downloadManager.getDownload(byID: track.id) {
+               let download = downloadManager.getDownload(byID: track.id) {
                 AddToPlaylistSheet(
                     download: download,
                     playlistManager: playlistManager,
@@ -738,7 +739,7 @@ struct NowPlayingView: View {
             Button("Cancel", role: .cancel) { }
             Button("Rename") {
                 if let track = audioPlayer.currentTrack,
-                let download = downloadManager.downloads.first(where: { $0.url == track.url }) {
+                   let download = downloadManager.downloads.first(where: { $0.url == track.url }) {
                     downloadManager.renameDownload(download, newName: newTrackName)
                 }
             }
