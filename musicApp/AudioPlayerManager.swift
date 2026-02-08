@@ -32,6 +32,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
             saveCurrentTrackSettings()
         }
     }
+    @Published var bassBoost: Double = 0 {
+        didSet {
+            applyBassBoost()
+            saveCurrentTrackSettings()
+        }
+    }
     
     // ✅ NEW: Store settings per track
     private var trackSettings: [UUID: TrackSettings] = [:]
@@ -54,6 +60,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var audioFile: AVAudioFile?
     private var reverbNode: AVAudioUnitReverb?
     private var timePitchNode: AVAudioUnitTimePitch?
+    private var eqNode: AVAudioUnitEQ?
     
     private var timeUpdateTimer: Timer?
     
@@ -169,6 +176,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         var playbackSpeed: Double
         var reverbAmount: Double
         var pitchShift: Double?
+        var bassBoost: Double?
     }
     
     // ✅ NEW: Load saved settings
@@ -194,7 +202,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         trackSettings[trackID] = TrackSettings(
             playbackSpeed: playbackSpeed,
             reverbAmount: reverbAmount,
-            pitchShift: pitchShift
+            pitchShift: pitchShift,
+            bassBoost: bassBoost
         )
         
         // Save to disk (debounced to avoid excessive writes)
@@ -216,16 +225,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func applyTrackSettings(for track: Track) {
         if let settings = trackSettings[track.id] {
             // Restore saved settings
-            print("📼 [AudioPlayer] Restoring settings: \(settings.playbackSpeed)x speed, \(settings.reverbAmount)% reverb, \(settings.pitchShift ?? 0) pitch")
+            print("📼 [AudioPlayer] Restoring settings: \(settings.playbackSpeed)x speed, \(settings.reverbAmount)% reverb, \(settings.pitchShift ?? 0) pitch, \(settings.bassBoost ?? 0)dB bass")
             playbackSpeed = settings.playbackSpeed
             reverbAmount = settings.reverbAmount
             pitchShift = settings.pitchShift ?? 0
+            bassBoost = settings.bassBoost ?? 0
         } else {
             // Use defaults for new track
-            print("📼 [AudioPlayer] Using default settings: 1.0x speed, 0% reverb, 0 pitch")
+            print("📼 [AudioPlayer] Using default settings: 1.0x speed, 0% reverb, 0 pitch, 0dB bass")
             playbackSpeed = 1.0
             reverbAmount = 0.0
             pitchShift = 0
+            bassBoost = 0
         }
     }
 
@@ -235,19 +246,30 @@ class AudioPlayerManager: NSObject, ObservableObject {
         playerNode = AVAudioPlayerNode()
         reverbNode = AVAudioUnitReverb()
         timePitchNode = AVAudioUnitTimePitch()
+        eqNode = AVAudioUnitEQ(numberOfBands: 1)
         
         guard let engine = audioEngine,
               let player = playerNode,
               let reverb = reverbNode,
-              let timePitch = timePitchNode else { return }
+              let timePitch = timePitchNode,
+              let eq = eqNode else { return }
         
         engine.attach(player)
         engine.attach(reverb)
         engine.attach(timePitch)
+        engine.attach(eq)
         
         reverb.loadFactoryPreset(.largeHall)
         reverb.wetDryMix = 0
         timePitch.rate = 1.0
+        
+        // Configure EQ for bass boost (centered at 80Hz, low shelf filter)
+        let bassBand = eq.bands[0]
+        bassBand.filterType = .lowShelf
+        bassBand.frequency = 80  // Center frequency for bass
+        bassBand.bandwidth = 1.0
+        bassBand.gain = 0  // Will be controlled by bassBoost property
+        bassBand.bypass = false
         
         print("✅ Audio engine configured")
     }
@@ -554,7 +576,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
                       let engine = self.audioEngine,
                       let player = self.playerNode,
                       let reverb = self.reverbNode,
-                      let timePitch = self.timePitchNode else {
+                      let timePitch = self.timePitchNode,
+                      let eq = self.eqNode else {
                     print("❌ Audio nodes not configured")
                     return
                 }
@@ -563,10 +586,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 
                 engine.disconnectNodeInput(player)
                 engine.disconnectNodeInput(timePitch)
+                engine.disconnectNodeInput(eq)
                 engine.disconnectNodeInput(reverb)
                 
                 engine.connect(player, to: timePitch, format: format)
-                engine.connect(timePitch, to: reverb, format: format)
+                engine.connect(timePitch, to: eq, format: format)
+                engine.connect(eq, to: reverb, format: format)
                 engine.connect(reverb, to: engine.mainMixerNode, format: format)
                 
                 if !engine.isRunning {
@@ -699,10 +724,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             engine.disconnectNodeInput(player)
             engine.disconnectNodeInput(timePitch)
+            engine.disconnectNodeInput(eq)
             engine.disconnectNodeInput(reverb)
             
             engine.connect(player, to: timePitch, format: format)
-            engine.connect(timePitch, to: reverb, format: format)
+            engine.connect(timePitch, to: eq, format: format)
+            engine.connect(eq, to: reverb, format: format)
             engine.connect(reverb, to: engine.mainMixerNode, format: format)
             
             do {
@@ -973,6 +1000,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
             guard let timePitch = self.timePitchNode else { return }
             timePitch.pitch = Float(self.pitchShift * 100) // semitones to cents
             print("🎵 Pitch set to: \(self.pitchShift) semitones")
+        }
+    }
+    
+    private func applyBassBoost() {
+        audioQueue.async {
+            guard let eq = self.eqNode else { return }
+            let bassBand = eq.bands[0]
+            bassBand.gain = Float(self.bassBoost)
+            print("🔊 Bass boost set to: \(self.bassBoost)dB")
         }
     }
     

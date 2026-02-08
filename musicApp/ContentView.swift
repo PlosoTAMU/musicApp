@@ -1071,6 +1071,44 @@ struct AudioSettingsSheet: View {
                     }
                 }
                 
+                // Bass Boost
+                VStack(spacing: 8) {
+                    HStack {
+                        Image(systemName: "speaker.wave.3.fill")
+                            .foregroundColor(.orange)
+                            .frame(width: 24)
+                        Text("Bass Boost")
+                            .font(.headline)
+                        Spacer()
+                        Text(audioPlayer.bassBoost == 0 ? "0" : String(format: "%+.0f", audioPlayer.bassBoost))
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                        Text("dB")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Slider(value: $audioPlayer.bassBoost, in: -12...12)
+                        .tint(.orange)
+                    
+                    HStack {
+                        Text("-12")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("Reset") {
+                            audioPlayer.bassBoost = 0
+                        }
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                        Spacer()
+                        Text("+12")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
                 Spacer()
             }
             .padding(.horizontal, 24)
