@@ -80,8 +80,6 @@ struct ContentView: View {
             // Set up the reference so DownloadManager can update playing tracks
             downloadManager.audioPlayer = audioPlayer
             
-            // ONE-TIME: Neutralize all existing song names (remove after first run)
-            downloadManager.neutralizeAllExistingSongs()
             
             processIncomingShares()
             
