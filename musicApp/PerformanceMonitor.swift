@@ -107,7 +107,7 @@ class PerformanceMonitor {
     private init() {
         #if DEBUG
         lastReportTime = CFAbsoluteTimeGetCurrent()
-        baselineMemory = getMemoryUsage()
+        baselineMemory = getCurrentMemoryFootprint()
         
         // High-frequency system metrics (every 1s for granular CPU tracking)
         metricsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -276,7 +276,7 @@ class PerformanceMonitor {
     
     // MARK: - ✅ NEW: Memory Tracking
     
-    private func getMemoryUsage() -> UInt64 {
+    private func getCurrentMemoryFootprint() -> UInt64 {
         var info = mach_task_basic_info()
         var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
         let kerr = withUnsafeMutablePointer(to: &info) {
@@ -290,7 +290,7 @@ class PerformanceMonitor {
     
     func recordMemorySnapshot() {
         #if DEBUG
-        let current = getMemoryUsage()
+        let current = getCurrentMemoryFootprint()
         lock.lock()
         peakMemory = max(peakMemory, current)
         lock.unlock()
@@ -769,7 +769,7 @@ class PerformanceMonitor {
         }
         
         // ── 9. ✅ NEW: MEMORY ANALYSIS ──
-        let currentMem = getMemoryUsage()
+        let currentMem = getCurrentMemoryFootprint()
         lock.lock()
         let peakMem = peakMemory
         lock.unlock()
