@@ -210,10 +210,11 @@ struct QueueView: View {
             }
             .navigationTitle("Queue")
             .toolbar {
-                if (!audioPlayer.queue.isEmpty || !audioPlayer.previousQueue.isEmpty) && !audioPlayer.isPlaylistMode {
+                // Show "Clear All" if there are ANY upcoming tracks (queue or playlist)
+                if !audioPlayer.queue.isEmpty || !audioPlayer.previousQueue.isEmpty || audioPlayer.isPlaylistMode {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button {
-                            audioPlayer.clearQueue()
+                            audioPlayer.clearQueueAndExitPlaylist()
                         } label: {
                             Text("Clear All")
                                 .foregroundColor(.red)

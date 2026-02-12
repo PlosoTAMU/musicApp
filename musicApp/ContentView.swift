@@ -669,7 +669,7 @@ struct NowPlayingView: View {
             HStack {
                 Spacer()
                 
-                Text("-" + formatTime((audioPlayer.duration - (isSeeking ? localSeekPosition : audioPlayer.currentTime)) / audioPlayer.playbackSpeed))
+                Text("-" + formatTime((audioPlayer.duration - (isSeeking ? localSeekPosition : audioPlayer.currentTime)) / audioPlayer.effectivePlaybackSpeed))
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.7))
             }

@@ -62,7 +62,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    @Published var effectsBypass: Bool = false {
+    @Published var effectsBypass: Bool = true {
         didSet {
             // Re-apply all effects with bypass state
             applyReverb()
@@ -70,6 +70,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
             applyPitch()
             applyPlaybackSpeed()
         }
+    }
+    
+    // Computed property that returns the actual effective playback speed
+    // (accounts for bypass - when bypassed, speed is always 1.0)
+    var effectivePlaybackSpeed: Double {
+        return effectsBypass ? 1.0 : playbackSpeed
     }
     
     // ✅ NEW: Store settings per track
@@ -1391,6 +1397,21 @@ class AudioPlayerManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.queue.removeAll()
             self.previousQueue.removeAll()
+        }
+    }
+    
+    func clearQueueAndExitPlaylist() {
+        DispatchQueue.main.async {
+            // Clear all queues
+            self.queue.removeAll()
+            self.previousQueue.removeAll()
+            
+            // Exit playlist mode
+            self.isPlaylistMode = false
+            self.currentPlaylist.removeAll()
+            self.currentIndex = 0
+            
+            print("🔄 [AudioPlayer] Cleared queue and exited playlist mode")
         }
     }
     
