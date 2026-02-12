@@ -88,7 +88,7 @@ struct PlaylistsView: View {
         let playlists = playlistManager.playlists
         let dm = downloadManager
         
-        DispatchQueue.global(qos: .userInitiated).async {
+        Task {
             var durations: [UUID: TimeInterval] = [:]
             
             for playlist in playlists {
@@ -96,13 +96,18 @@ struct PlaylistsView: View {
                 for trackID in playlist.trackIDs {
                     if let download = dm.getDownload(byID: trackID) {
                         let asset = AVAsset(url: download.url)
-                        total += asset.duration.seconds
+                        if let duration = try? await asset.load(.duration) {
+                            let seconds = duration.seconds
+                            if seconds.isFinite {
+                                total += seconds
+                            }
+                        }
                     }
                 }
                 durations[playlist.id] = total
             }
             
-            DispatchQueue.main.async {
+            await MainActor.run {
                 cachedDurations = durations
             }
         }

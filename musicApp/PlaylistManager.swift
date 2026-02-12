@@ -64,12 +64,12 @@ class PlaylistManager: ObservableObject {
         playlist.trackIDs.compactMap { downloadManager.getDownload(byID: $0) }
     }
     
-    func getTotalDuration(for playlist: Playlist, from downloadManager: DownloadManager) -> TimeInterval {
+    func getTotalDuration(for playlist: Playlist, from downloadManager: DownloadManager) async -> TimeInterval {
         let tracks = getTracks(for: playlist, from: downloadManager)
         var totalDuration: TimeInterval = 0
         
         for track in tracks {
-            if let duration = getAudioDuration(url: track.url) {
+            if let duration = await getAudioDuration(url: track.url) {
                 totalDuration += duration
             }
         }
@@ -77,9 +77,13 @@ class PlaylistManager: ObservableObject {
         return totalDuration
     }
     
-    private func getAudioDuration(url: URL) -> TimeInterval? {
+    private func getAudioDuration(url: URL) async -> TimeInterval? {
         let asset = AVAsset(url: url)
-        return asset.duration.seconds
+        if let duration = try? await asset.load(.duration) {
+            let seconds = duration.seconds
+            return seconds.isFinite ? seconds : nil
+        }
+        return nil
     }
     
     func savePlaylists() {

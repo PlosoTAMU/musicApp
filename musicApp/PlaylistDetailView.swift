@@ -240,26 +240,31 @@ struct PlaylistDetailView: View {
     private func updateTotalDuration() {
         let trackURLs = tracks.map { $0.url }
         
-        DispatchQueue.global(qos: .userInitiated).async {
+        Task {
             var total: TimeInterval = 0
             for url in trackURLs {
                 let asset = AVAsset(url: url)
-                let duration = asset.duration.seconds
-                if duration.isFinite {
-                    total += duration
+                if let duration = try? await asset.load(.duration) {
+                    let seconds = duration.seconds
+                    if seconds.isFinite {
+                        total += seconds
+                    }
                 }
             }
             
-            DispatchQueue.main.async {
+            await MainActor.run {
                 totalDuration = total
             }
         }
     }
     
-    private func getAudioDuration(url: URL) -> TimeInterval? {
+    private func getAudioDuration(url: URL) async -> TimeInterval? {
         let asset = AVAsset(url: url)
-        let d = asset.duration.seconds
-        return d.isFinite ? d : nil
+        if let duration = try? await asset.load(.duration) {
+            let seconds = duration.seconds
+            return seconds.isFinite ? seconds : nil
+        }
+        return nil
     }
     
     private func formatDuration(_ duration: TimeInterval) -> String {

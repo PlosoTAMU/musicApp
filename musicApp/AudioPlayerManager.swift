@@ -979,7 +979,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     func seek(to time: Double) {
-        guard let file = audioFile else { return }
+        guard audioFile != nil else { return }
         
         let clampedTime = max(0, min(time, duration - 0.5))
         

@@ -131,6 +131,27 @@ class DownloadManager: ObservableObject {
         }
     }
     
+    // Helper function to fetch thumbnail with retries (Swift 6 concurrency-safe)
+    private func fetchThumbnailWithRetries(for fileURL: URL, videoID: String, attempts: Int) async -> URL? {
+        // Try to get existing thumbnail with retries
+        for attempt in 1...attempts {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL) {
+                return thumbnailPath
+            }
+            print("🔄 Thumbnail check \(attempt)/\(attempts)")
+        }
+        
+        // If not found and we have a videoID, generate it
+        if !videoID.isEmpty {
+            EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            return EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+        }
+        
+        return nil
+    }
+    
     func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String = "Fetching info") {
         let activeDownload = ActiveDownload(id: UUID(), videoID: videoID, title: title, progress: 0.0)
         activeDownloads.append(activeDownload)
@@ -189,19 +210,8 @@ class DownloadManager: ObservableObject {
                 // Now proceed with YouTube download
                 let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: finalURL, videoID: finalVideoID)
                 
-                var thumbnailPath: URL? = nil
-                for attempt in 1...5 {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
-                    if thumbnailPath != nil { break }
-                    print("🔄 Thumbnail check \(attempt)/5")
-                }
-                
-                if thumbnailPath == nil && !finalVideoID.isEmpty {
-                    EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: finalVideoID)
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL)
-                }
+                // Get thumbnail with retries (avoiding var capture in concurrent code)
+                let thumbnailPath = await self.fetchThumbnailWithRetries(for: fileURL, videoID: finalVideoID, attempts: 5)
                 
                 // Neutralize the song name to remove formatting characters
                 let cleanedTitle = self.neutralizeName(downloadedTitle)
@@ -823,19 +833,8 @@ class DownloadManager: ObservableObject {
                     videoID: videoID
                 )
                 
-                // Wait for thumbnail
-                var thumbnailPath: URL? = nil
-                for attempt in 1...5 {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: newFileURL)
-                    if thumbnailPath != nil { break }
-                }
-                
-                if thumbnailPath == nil && !videoID.isEmpty {
-                    EmbeddedPython.shared.ensureThumbnail(for: newFileURL, videoID: videoID)
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: newFileURL)
-                }
+                // Get thumbnail with retries (avoiding var capture in concurrent code)
+                let thumbnailPath = await self.fetchThumbnailWithRetries(for: newFileURL, videoID: videoID, attempts: 5)
                 
                 // Validate the new file is playable
                 let testFile = try AVAudioFile(forReading: newFileURL)
@@ -941,9 +940,6 @@ class DownloadManager: ObservableObject {
     private func validateAndFixThumbnails() {
         print("🔍 [DownloadManager] Validating thumbnails...")
         var needsSave = false
-        
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let thumbnailsDir = documentsPath.appendingPathComponent("Thumbnails", isDirectory: true)
         
         for (index, download) in downloads.enumerated() {
             // FIXED: Use resolvedThumbnailPath instead of raw thumbnailPath

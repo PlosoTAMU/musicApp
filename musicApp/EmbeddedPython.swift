@@ -3,7 +3,8 @@ import ffmpegkit
 import UIKit
 
 /// Manages an embedded Python interpreter for running yt-dlp on iOS
-class EmbeddedPython: ObservableObject {
+/// Thread-safe: Uses dedicated serial queue for Python operations, main queue for UI updates
+class EmbeddedPython: ObservableObject, @unchecked Sendable {
     static let shared = EmbeddedPython()
     
     @Published var isInitialized = false
@@ -315,9 +316,8 @@ class EmbeddedPython: ObservableObject {
     private func startProgressMonitoring(outputDir: String) {
         stopProgressMonitoring() // Clean up any existing timer
         
-        currentProgressFile = outputDir
-        
         DispatchQueue.main.async { [weak self] in
+            self?.currentProgressFile = outputDir
             self?.progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
                 self?.checkDownloadProgress()
             }
@@ -332,8 +332,8 @@ class EmbeddedPython: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.progressTimer?.invalidate()
             self?.progressTimer = nil
+            self?.currentProgressFile = nil
         }
-        currentProgressFile = nil
     }
     
     // MARK: - Title Monitoring
@@ -346,18 +346,20 @@ class EmbeddedPython: ObservableObject {
         
         let tempDir = FileManager.default.temporaryDirectory
         let titleFile = tempDir.appendingPathComponent("\(videoID)_title.txt").path
-        currentTitleFile = titleFile
-        
-        // Don't re-fetch if already fetched
-        guard !titleHasBeenFetched.contains(videoID) else {
-            print("📝 [TitleMonitoring] Title already fetched for: \(videoID)")
-            return
-        }
-        
-        print("📝 [TitleMonitoring] Starting title monitoring for: \(videoID)")
         
         DispatchQueue.main.async { [weak self] in
-            self?.titleTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            
+            // Don't re-fetch if already fetched
+            guard !self.titleHasBeenFetched.contains(videoID) else {
+                print("📝 [TitleMonitoring] Title already fetched for: \(videoID)")
+                return
+            }
+            
+            print("📝 [TitleMonitoring] Starting title monitoring for: \(videoID)")
+            
+            self.currentTitleFile = titleFile
+            self.titleTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
                 self?.checkTitleFile(videoID: videoID)
             }
         }
@@ -367,8 +369,8 @@ class EmbeddedPython: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.titleTimer?.invalidate()
             self?.titleTimer = nil
+            self?.currentTitleFile = nil
         }
-        currentTitleFile = nil
     }
     
     private func checkTitleFile(videoID: String) {

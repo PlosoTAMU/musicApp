@@ -117,7 +117,7 @@ struct ContentView: View {
         
         @objc func tick(displayLink: CADisplayLink) {
             if lastTimestamp > 0 {
-                let fps = 1.0 / (displayLink.timestamp - lastTimestamp)
+                // Calculate and record frame (fps calculation happens inside PerformanceMonitor)
                 PerformanceMonitor.shared.recordFrame()
             }
             lastTimestamp = displayLink.timestamp
@@ -382,8 +382,8 @@ struct MiniPlayerBar: View {
             cropRect = CGRect(x: 0, y: y, width: originalImage.size.width, height: newHeight)
         }
         
-        if let cgImage = originalImage.cgImage?.cropping(to: cropRect) {
-            backgroundImage = UIImage(cgImage: cgImage)
+        if let croppedCGImage = originalImage.cgImage?.cropping(to: cropRect) {
+            backgroundImage = UIImage(cgImage: croppedCGImage)
         } else {
             backgroundImage = originalImage
         }
@@ -789,8 +789,8 @@ struct NowPlayingView: View {
             cropRect = CGRect(x: 0, y: y, width: originalImage.size.width, height: newHeight)
         }
         
-        if let cgImage = originalImage.cgImage?.cropping(to: cropRect) {
-            backgroundImage = UIImage(cgImage: cgImage)
+        if let croppedCGImage = originalImage.cgImage?.cropping(to: cropRect) {
+            backgroundImage = UIImage(cgImage: croppedCGImage)
         } else {
             backgroundImage = originalImage
         }
@@ -949,7 +949,8 @@ class VolumeContainerView: UIView {
     
     private func setup() {
         volumeView.showsVolumeSlider = true
-        volumeView.showsRouteButton = false
+        // Note: showsRouteButton was deprecated in iOS 13. 
+        // If you need AirPlay/route picking UI, use AVRoutePickerView instead.
         volumeView.translatesAutoresizingMaskIntoConstraints = false
         
         addSubview(volumeView)

@@ -14,13 +14,7 @@ struct CreatePlaylistSheet: View {
             VStack(spacing: 0) {
                 // Name input
                 HStack {
-                    TextField("Playlist Name", text: $playlistName, onEditingChanged: { isEditing in
-                        if isEditing {
-                            DispatchQueue.main.async {
-                                let textField = UITextField.appearance()
-                            }
-                        }
-                    })
+                    TextField("Playlist Name", text: $playlistName)
                     .textFieldStyle(.roundedBorder)
                     .focused($isTextFieldFocused)
                     .onAppear {
