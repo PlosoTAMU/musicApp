@@ -1425,7 +1425,7 @@ struct EdgeVisualizerView: View {
     }
     
     private func extractDominantColors(from image: UIImage) -> [Color] {
-        guard let cgImage = image.cgImage else { return [Color.white] }
+        guard image.cgImage != nil else { return [Color.white] }
         
         // Resize to small size for performance
         let size = CGSize(width: 50, height: 50)
