@@ -1402,16 +1402,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     func clearQueueAndExitPlaylist() {
         DispatchQueue.main.async {
-            // Clear all queues
+            // Clear only upcoming queue (NOT previous queue - keep history)
             self.queue.removeAll()
-            self.previousQueue.removeAll()
             
             // Exit playlist mode
             self.isPlaylistMode = false
             self.currentPlaylist.removeAll()
             self.currentIndex = 0
             
-            print("🔄 [AudioPlayer] Cleared queue and exited playlist mode")
+            print("🔄 [AudioPlayer] Cleared upcoming queue and exited playlist mode (kept history)")
         }
     }
     
