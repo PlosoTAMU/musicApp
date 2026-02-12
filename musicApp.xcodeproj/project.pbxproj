@@ -456,7 +456,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "#!/bin/bash\n# Sign all Python .so files\nfind \"$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app\" -name \"*.so\" -type f -exec codesign --force --sign - {} \\;\necho \"✅ Signed all Python extension modules\"\n";
+			shellScript = "#!/bin/bash\n# Sign all Python .so files\nfind \"$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app/python-stdlib/lib-dynload\" -name \"*.so\" -type f -exec codesign --force --sign - {} \\;\necho \"✅ Signed all Python extension modules\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
