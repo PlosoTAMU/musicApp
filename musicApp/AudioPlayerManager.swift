@@ -988,7 +988,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func seek(to time: Double) {
         guard audioFile != nil else { return }
         
+        // ✅ Handle crop times: user time is relative to crop start
+        let cropStart = currentTrack?.cropStartTime ?? 0.0
+        let absoluteTime = cropStart + time
+        
         let clampedTime = max(0, min(time, duration - 0.5))
+        let clampedAbsoluteTime = cropStart + clampedTime
         
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
@@ -1002,10 +1007,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
             guard let self = self,
                   let player = self.playerNode,
                   let engine = self.audioEngine,
-                  let file = self.audioFile else { return }
+                  let file = self.audioFile,
+                  let track = self.currentTrack else { return }
             
             let sampleRate = file.fileFormat.sampleRate
-            let startFrame = AVAudioFramePosition(clampedTime * sampleRate)
+            
+            // ✅ Get crop boundaries
+            let totalFileLength = AVAudioFrameCount(file.length)
+            let cropEnd = track.cropEndTime ?? (Double(totalFileLength) / sampleRate)
+            let cropStartFrame = AVAudioFramePosition(cropStart * sampleRate)
+            let cropEndFrame = AVAudioFramePosition(cropEnd * sampleRate)
+            
+            // ✅ Calculate absolute start frame (within the file)
+            let startFrame = AVAudioFramePosition(clampedAbsoluteTime * sampleRate)
             
             player.stop()
             
@@ -1018,13 +1032,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 }
             }
             
-            if startFrame < file.length && startFrame >= 0 {
-                let remainingFrames = AVAudioFrameCount(file.length - startFrame)
+            // ✅ Schedule from seek position to crop end (not file end)
+            if startFrame < cropEndFrame && startFrame >= cropStartFrame {
+                let remainingFrames = AVAudioFrameCount(cropEndFrame - startFrame)
                 
                 if remainingFrames > 0 {
                     let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
                     
-                    // Schedule remaining audio
+                    // Schedule remaining cropped audio
                     player.scheduleSegment(file,
                                           startingFrame: startFrame,
                                           frameCount: remainingFrames,

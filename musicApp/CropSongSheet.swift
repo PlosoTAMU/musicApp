@@ -634,12 +634,21 @@ struct CropSongSheet: View {
         let finalStart: Double? = hasCrop ? startTime : nil
         let finalEnd: Double? = hasCrop ? endTime : nil
         
+        // Persist to disk and update all in-memory copies
         downloadManager.updateCropTimes(for: track.id, startTime: finalStart, endTime: finalEnd)
         
-        // If this track is currently playing, restart with new crop
+        // If this track is currently playing, reload it with the new crop times
         if let current = audioPlayer.currentTrack, current.id == track.id {
             wasMainPlayerPlaying = false
-            audioPlayer.play(audioPlayer.currentTrack!)
+            
+            // Create updated track with new crop times
+            var updatedTrack = current
+            updatedTrack.cropStartTime = finalStart
+            updatedTrack.cropEndTime = finalEnd
+            
+            // Stop current playback and restart with cropped version
+            audioPlayer.stop()
+            audioPlayer.play(updatedTrack)
         }
         
         stopPreview()
