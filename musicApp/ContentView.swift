@@ -420,6 +420,7 @@ struct NowPlayingView: View {
     @State private var newTrackName: String = ""
     @State private var showAudioSettings = false
     @State private var thumbnailCenter: CGPoint = .zero
+    @State private var showCropSheet = false
     // ✅ REMOVED: thumbnailPulse state - now using audioPlayer.pulse directly
 
     
@@ -505,6 +506,15 @@ struct NowPlayingView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showCropSheet) {
+            if let track = audioPlayer.currentTrack {
+                CropSongSheet(
+                    track: track,
+                    downloadManager: downloadManager,
+                    audioPlayer: audioPlayer
+                )
+            }
+        }
         .alert("Rename Song", isPresented: $showRenameAlert) {
             TextField("Song name", text: $newTrackName)
             Button("Cancel", role: .cancel) { }
@@ -579,6 +589,9 @@ struct NowPlayingView: View {
                 Button(action: { showPlaylistPicker = true }) {
                     Label("Add to Playlist", systemImage: "plus")
                 }
+                Button(action: { showCropSheet = true }) {
+                    Label("Crop Song", systemImage: "scissors")
+                }
                 Button(action: {}) {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }
@@ -624,42 +637,61 @@ struct NowPlayingView: View {
     
     @ViewBuilder
     private var titleView: some View {
-        GeometryReader { geometry in
-            let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
-            let textWidth = titleText.widthOfString(usingFont: UIFont.boldSystemFont(ofSize: 28))
-            let needsScroll = textWidth > geometry.size.width
+        VStack(spacing: 4) {
+            GeometryReader { geometry in
+                let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
+                let textWidth = titleText.widthOfString(usingFont: UIFont.boldSystemFont(ofSize: 28))
+                let needsScroll = textWidth > geometry.size.width
+                
+                ZStack {
+                    if needsScroll {
+                        ScrollingTextView(
+                            text: titleText,
+                            font: .title,
+                            width: geometry.size.width
+                        )
+                    } else {
+                        Text(titleText)
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .italic()
+                            .foregroundColor(.white)
+                            .frame(width: geometry.size.width, alignment: .center)
+                    }
+                }
+                .onTapGesture {
+                    if audioPlayer.isPlaying {
+                        audioPlayer.pause()
+                    } else {
+                        audioPlayer.resume()
+                    }
+                }
+                .onLongPressGesture {
+                    if let track = audioPlayer.currentTrack {
+                        newTrackName = track.name
+                        showRenameAlert = true
+                    }
+                }
+            }
+            .frame(height: 40)
             
-            ZStack {
-                if needsScroll {
-                    ScrollingTextView(
-                        text: titleText,
-                        font: .title,
-                        width: geometry.size.width
-                    )
-                } else {
-                    Text(titleText)
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .italic()
-                        .foregroundColor(.white)
-                        .frame(width: geometry.size.width, alignment: .center)
+            // Crop indicator badge
+            if let track = audioPlayer.currentTrack,
+               track.cropStartTime != nil || track.cropEndTime != nil {
+                HStack(spacing: 4) {
+                    Image(systemName: "scissors")
+                        .font(.caption2)
+                    Text("Cropped")
+                        .font(.caption2)
+                        .fontWeight(.medium)
                 }
-            }
-            .onTapGesture {
-                if audioPlayer.isPlaying {
-                    audioPlayer.pause()
-                } else {
-                    audioPlayer.resume()
-                }
-            }
-            .onLongPressGesture {
-                if let track = audioPlayer.currentTrack {
-                    newTrackName = track.name
-                    showRenameAlert = true
-                }
+                .foregroundColor(.blue)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.blue.opacity(0.2))
+                .cornerRadius(8)
             }
         }
-        .frame(height: 40)
         .padding(.horizontal, 28)
     }
     

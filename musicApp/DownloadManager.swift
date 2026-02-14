@@ -340,6 +340,41 @@ class DownloadManager: ObservableObject {
             print("❌ [DownloadManager] Failed to rename file: \(error.localizedDescription)")
         }
     }
+    
+    // Update crop times for a track
+    func updateCropTimes(for trackID: UUID, startTime: Double?, endTime: Double?) {
+        // Update in AudioPlayer's current track
+        if let audioPlayer = self.audioPlayer,
+           let currentTrack = audioPlayer.currentTrack,
+           currentTrack.id == trackID {
+            
+            var updatedTrack = currentTrack
+            updatedTrack.cropStartTime = startTime
+            updatedTrack.cropEndTime = endTime
+            
+            audioPlayer.currentTrack = updatedTrack
+            
+            // Update in playlist
+            if let playlistIndex = audioPlayer.currentPlaylist.firstIndex(where: { $0.id == trackID }) {
+                audioPlayer.currentPlaylist[playlistIndex].cropStartTime = startTime
+                audioPlayer.currentPlaylist[playlistIndex].cropEndTime = endTime
+            }
+            
+            // Update in queue
+            if let queueIndex = audioPlayer.queue.firstIndex(where: { $0.id == trackID }) {
+                audioPlayer.queue[queueIndex].cropStartTime = startTime
+                audioPlayer.queue[queueIndex].cropEndTime = endTime
+            }
+            
+            // Update in previous queue
+            if let prevIndex = audioPlayer.previousQueue.firstIndex(where: { $0.id == trackID }) {
+                audioPlayer.previousQueue[prevIndex].cropStartTime = startTime
+                audioPlayer.previousQueue[prevIndex].cropEndTime = endTime
+            }
+            
+            print("✅ [DownloadManager] Updated crop times for track: \(currentTrack.name)")
+        }
+    }
 
     // ✅ ADD: Helper method to convert Spotify to YouTube
     private func convertSpotifyToYouTube(spotifyURL: String) async throws -> String {

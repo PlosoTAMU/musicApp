@@ -6,13 +6,17 @@ struct Track: Identifiable, Codable, Equatable {
     let url: URL
     let folderName: String
     var bookmarkData: Data?
+    var cropStartTime: Double? // Time in seconds to start playback
+    var cropEndTime: Double?   // Time in seconds to end playback
     
     // Custom init for runtime creation
-    init(id: UUID = UUID(), name: String, url: URL, folderName: String) {
+    init(id: UUID = UUID(), name: String, url: URL, folderName: String, cropStartTime: Double? = nil, cropEndTime: Double? = nil) {
         self.id = id
         self.name = name
         self.url = url
         self.folderName = folderName
+        self.cropStartTime = cropStartTime
+        self.cropEndTime = cropEndTime
         
         // Create bookmark for imported files
         if folderName != "YouTube Downloads" {
@@ -31,6 +35,8 @@ struct Track: Identifiable, Codable, Equatable {
         case url
         case folderName
         case bookmarkData
+        case cropStartTime
+        case cropEndTime
     }
     
     init(from decoder: Decoder) throws {
@@ -40,6 +46,8 @@ struct Track: Identifiable, Codable, Equatable {
         url = try container.decode(URL.self, forKey: .url)
         folderName = try container.decode(String.self, forKey: .folderName)
         bookmarkData = try container.decodeIfPresent(Data.self, forKey: .bookmarkData)
+        cropStartTime = try container.decodeIfPresent(Double.self, forKey: .cropStartTime)
+        cropEndTime = try container.decodeIfPresent(Double.self, forKey: .cropEndTime)
     }
     
     func encode(to encoder: Encoder) throws {
@@ -49,6 +57,8 @@ struct Track: Identifiable, Codable, Equatable {
         try container.encode(url, forKey: .url)                  // ✅ FIXED: 'forKey'
         try container.encode(folderName, forKey: .folderName)    // ✅ FIXED: 'forKey'
         try container.encodeIfPresent(bookmarkData, forKey: .bookmarkData)  // ✅ FIXED: 'forKey'
+        try container.encodeIfPresent(cropStartTime, forKey: .cropStartTime)
+        try container.encodeIfPresent(cropEndTime, forKey: .cropEndTime)
     }
     
     // Equatable conformance

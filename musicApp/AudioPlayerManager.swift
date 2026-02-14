@@ -707,17 +707,25 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     try engine.start()
                 }
                 
-                // ✅ FIX: Schedule the entire file + add 0.5s silence buffer to ensure we reach the full duration
+                // ✅ Handle crop times - determine which segment of the file to play
+                let totalFileLength = AVAudioFrameCount(file.length)
                 let sampleRate = file.fileFormat.sampleRate
-                let paddingFrames = AVAudioFrameCount(0.5 * sampleRate) // 0.5 seconds of silence
                 
-                // Schedule the actual file content
+                let cropStart = track.cropStartTime ?? 0.0
+                let cropEnd = track.cropEndTime ?? (Double(totalFileLength) / sampleRate)
+                
+                let startFrame = AVAudioFramePosition(cropStart * sampleRate)
+                let endFrame = AVAudioFramePosition(cropEnd * sampleRate)
+                let frameCount = AVAudioFrameCount(max(0, endFrame - startFrame))
+                
+                // Schedule the cropped segment
                 player.scheduleSegment(file,
-                                      startingFrame: 0,
-                                      frameCount: AVAudioFrameCount(file.length),
+                                      startingFrame: startFrame,
+                                      frameCount: frameCount,
                                       at: nil)
                 
-                // Schedule silence padding after the file
+                // Schedule silence padding after the file (0.5s)
+                let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
                 let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
                                                      frameCapacity: paddingFrames)!
                 silenceBuffer.frameLength = paddingFrames
@@ -746,15 +754,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     self.installVisualizationTap()
                 }
                 
-                // ✅ Calculate duration from file.length (playback will now exceed this slightly)
-                let frameCount = Double(file.length)
-                let calculatedDuration = frameCount / sampleRate
+                // ✅ Calculate duration (respecting crop times)
+                let croppedDuration = cropEnd - cropStart
                 
                 DispatchQueue.main.async {
                     self.isPlaying = true
                     self.currentTrack = track
                     self.savedCurrentTime = 0
-                    self.duration = calculatedDuration
+                    self.duration = croppedDuration
                     
                     if let index = self.currentPlaylist.firstIndex(where: { $0.id == track.id }) {
                         self.currentIndex = index
