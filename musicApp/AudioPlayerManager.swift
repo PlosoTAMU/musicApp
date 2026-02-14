@@ -867,16 +867,25 @@ class AudioPlayerManager: NSObject, ObservableObject {
             
             let resumeTime = self.needsReschedule ? self.savedCurrentTime : self.currentTime
             let sampleRate = file.fileFormat.sampleRate
-            let startFrame = AVAudioFramePosition(max(0, resumeTime) * sampleRate)
             
-            print("🔄 Resuming from \(resumeTime)s (frame: \(startFrame))")
+            // ✅ Handle crop times: user time is relative to crop start
+            let cropStart = track.cropStartTime ?? 0.0
+            let totalFileLength = AVAudioFrameCount(file.length)
+            let cropEnd = track.cropEndTime ?? (Double(totalFileLength) / sampleRate)
             
-            if startFrame < file.length && startFrame >= 0 {
-                let remainingFrames = AVAudioFrameCount(file.length - startFrame)
-                let sampleRate = file.fileFormat.sampleRate
+            // Convert user time to absolute file time
+            let absoluteResumeTime = cropStart + resumeTime
+            let startFrame = AVAudioFramePosition(max(0, absoluteResumeTime) * sampleRate)
+            let cropEndFrame = AVAudioFramePosition(cropEnd * sampleRate)
+            
+            print("🔄 Resuming from \(resumeTime)s user time (\(absoluteResumeTime)s file time, frame: \(startFrame))")
+            
+            if startFrame < cropEndFrame && startFrame >= 0 {
+                // ✅ Schedule from resume position to crop end (not file end)
+                let remainingFrames = AVAudioFrameCount(cropEndFrame - startFrame)
                 let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
                 
-                // Schedule remaining audio
+                // Schedule remaining cropped audio
                 player.scheduleSegment(file,
                                       startingFrame: startFrame,
                                       frameCount: remainingFrames,
@@ -906,35 +915,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     self.currentTime = resumeTime
                 }
             } else {
-                // ✅ FIX: Schedule entire file + silence padding
-                let sampleRate = file.fileFormat.sampleRate
-                let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
-                
-                player.scheduleSegment(file,
-                                      startingFrame: 0,
-                                      frameCount: AVAudioFrameCount(file.length),
-                                      at: nil)
-                
-                let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
-                                                     frameCapacity: paddingFrames)!
-                silenceBuffer.frameLength = paddingFrames
-                
-                player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
-                    guard let self = self else { return }
-                    DispatchQueue.main.async {
-                        if self.currentPlaybackSessionID == sessionID &&
-                           !self.isHandlingRouteChange &&
-                           self.isPlaying &&
-                           !self.hasTriggeredNext {
-                            self.hasTriggeredNext = true
-                            self.next()
-                        }
-                    }
-                }
-                self.seekOffset = 0
+                // At or past the end — skip to next track
                 DispatchQueue.main.async {
-                    self.currentTime = 0
+                    self.next()
                 }
+                return
             }
             
             player.play()
