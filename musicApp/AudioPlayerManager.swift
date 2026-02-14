@@ -1134,12 +1134,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
             let speed = self.effectsBypass ? Float(1.0) : Float(self.playbackSpeed)
             let pitch = self.effectsBypass ? Float(0) : Float(self.pitchShift * 100)
             
-            timePitch.rate = speed
-            timePitch.pitch = pitch
-            
             // ── Premium time-stretch quality ──
             // Higher overlap = cleaner stretching with fewer phase artifacts.
             // Scale dynamically: extreme speeds need even more overlap to stay clean.
+            // IMPORTANT: Set overlap BEFORE changing rate/pitch to avoid artifacts
             let deviation = abs(speed - 1.0)
             if deviation > 0.3 {
                 timePitch.overlap = 32  // Maximum quality for extreme speed changes
@@ -1148,6 +1146,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
             } else {
                 timePitch.overlap = 16  // Efficient for near-normal speed
             }
+            
+            // Now apply rate and pitch with proper overlap already configured
+            timePitch.rate = speed
+            timePitch.pitch = pitch
             
             if self.playbackSpeed != 2.0 {
                 self.savedPlaybackSpeed = self.playbackSpeed
