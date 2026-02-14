@@ -8,15 +8,8 @@ struct CropSongSheet: View {
     @Environment(\.dismiss) var dismiss
     
     @State private var fullDuration: Double = 0
-    @State private var startTime: Double = 0 {
-        didSet {
-            // Auto-start preview when start time changes
-            if !isLoading && loadError == nil && oldValue != startTime {
-                startPreview()
-            }
-        }
-    }
-    @State private var endTime: Double = 1 // non-zero default avoids invalid slider ranges on init
+    @State private var startTime: Double = 0
+    @State private var endTime: Double = 1
     @State private var isPreviewPlaying = false
     @State private var currentPreviewTime: Double = 0
     @State private var previewPlayer: AVAudioPlayer?
@@ -24,14 +17,21 @@ struct CropSongSheet: View {
     @State private var wasMainPlayerPlaying = false
     @State private var isLoading = true
     @State private var loadError: String?
+    @State private var isSeeking = false
+    @State private var seekPosition: Double = 0
     
-    // Safe slider ranges — never produce empty / reversed ranges
+    // Safe slider ranges
     private var startSliderRange: ClosedRange<Double> {
         0...max(endTime - 0.5, 0)
     }
     private var endSliderRange: ClosedRange<Double> {
         let lower = startTime + 0.5
         return lower...max(lower, fullDuration)
+    }
+    
+    // Display time for the playback position
+    private var displayTime: Double {
+        isSeeking ? seekPosition : currentPreviewTime
     }
     
     // MARK: - Body
@@ -104,8 +104,9 @@ struct CropSongSheet: View {
     // MARK: - Crop Editor
     
     private var cropEditorContent: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 12) {
+        VStack(spacing: 0) {
+            // Song info
+            VStack(spacing: 8) {
                 Text(track.name)
                     .font(.title3)
                     .fontWeight(.semibold)
@@ -113,198 +114,309 @@ struct CropSongSheet: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
                 
-                Text("Full Length: \(formatTime(fullDuration))")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                Text("Cropped Length: \(formatTime(max(0, endTime - startTime)))")
-                    .font(.headline)
-                    .foregroundColor(.blue)
-            }
-            .padding(.top, 20)
-            
-            Spacer()
-            
-            timelineView
-            
-            // Start time slider
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "scissors")
+                HStack(spacing: 16) {
+                    Label(formatTime(fullDuration), systemImage: "waveform")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Label(formatTime(max(0, endTime - startTime)), systemImage: "scissors")
+                        .font(.caption)
+                        .fontWeight(.medium)
                         .foregroundColor(.blue)
-                        .frame(width: 24)
-                    Text("Start Time")
-                        .font(.headline)
-                    Spacer()
-                    Text(formatTime(startTime))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .monospacedDigit()
-                }
-                Slider(value: $startTime, in: startSliderRange)
-                    .tint(.blue)
-                HStack {
-                    Text("0:00").font(.caption2).foregroundColor(.secondary)
-                    Spacer()
-                    Text(formatTime(fullDuration)).font(.caption2).foregroundColor(.secondary)
                 }
             }
-            .padding(.horizontal, 32)
-            
-            // End time slider
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "scissors")
-                        .foregroundColor(.orange)
-                        .frame(width: 24)
-                    Text("End Time")
-                        .font(.headline)
-                    Spacer()
-                    Text(formatTime(endTime))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .monospacedDigit()
-                }
-                Slider(value: $endTime, in: endSliderRange)
-                    .tint(.orange)
-                HStack {
-                    Text("0:00").font(.caption2).foregroundColor(.secondary)
-                    Spacer()
-                    Text(formatTime(fullDuration)).font(.caption2).foregroundColor(.secondary)
-                }
-            }
-            .padding(.horizontal, 32)
-            
-            // Preview button
-            Button {
-                if isPreviewPlaying {
-                    stopPreview()
-                } else {
-                    startPreview()
-                }
-            } label: {
-                HStack {
-                    Image(systemName: isPreviewPlaying ? "stop.fill" : "play.fill")
-                    Text(isPreviewPlaying ? "Stop Preview" : "Preview Cropped Section")
-                }
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(Color.blue)
-                .foregroundColor(.white)
-                .cornerRadius(12)
-            }
-            .padding(.horizontal, 32)
-            
-            Spacer()
-            
-            // Action buttons
-            HStack(spacing: 16) {
-                Button {
-                    startTime = 0
-                    endTime = fullDuration
-                } label: {
-                    Text("Reset")
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.gray.opacity(0.2))
-                        .foregroundColor(.primary)
-                        .cornerRadius(12)
-                }
-                
-                Button {
-                    applyCrop()
-                } label: {
-                    Text("Apply Crop")
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
-                }
-            }
-            .padding(.horizontal, 32)
+            .padding(.top, 16)
             .padding(.bottom, 20)
+            
+            // Seekable progress bar (like NowPlaying)
+            progressBarView
+                .padding(.bottom, 24)
+            
+            // Preview controls
+            previewControls
+                .padding(.bottom, 20)
+            
+            Divider().padding(.horizontal, 24)
+            
+            // Crop range section
+            ScrollView {
+                VStack(spacing: 20) {
+                    cropSliders
+                    
+                    // Action buttons
+                    actionButtons
+                }
+                .padding(.top, 16)
+                .padding(.bottom, 32)
+            }
         }
     }
     
-    // MARK: - Timeline View
+    // MARK: - Progress Bar (seekable, like NowPlaying)
     
-    private var timelineView: some View {
-        VStack(spacing: 8) {
+    private var progressBarView: some View {
+        VStack(spacing: 6) {
+            // Time labels above the bar
+            HStack {
+                Text(formatTime(displayTime))
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                    .monospacedDigit()
+                
+                Spacer()
+                
+                // Time remaining in crop region
+                let remaining = endTime - displayTime
+                Text("-\(formatTime(max(0, remaining)))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.horizontal, 32)
+            
+            // The actual seekable bar
             GeometryReader { geometry in
                 let width = geometry.size.width
                 let safeDuration = max(fullDuration, 0.01)
-                let startX = CGFloat(startTime / safeDuration) * width
-                let endX = CGFloat(endTime / safeDuration) * width
+                
+                // Crop region markers (background context)
+                let cropStartFraction = CGFloat(startTime / safeDuration)
+                let cropEndFraction = CGFloat(endTime / safeDuration)
+                
+                // Playhead position
+                let playFraction = CGFloat(displayTime / safeDuration)
                 
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.gray.opacity(0.3))
+                    // Full track (dimmed)
+                    Capsule()
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(height: 6)
                     
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.blue.opacity(0.3))
-                        .frame(width: max(0, endX - startX))
-                        .offset(x: startX)
+                    // Crop region background
+                    Capsule()
+                        .fill(Color.blue.opacity(0.15))
+                        .frame(width: max(0, (cropEndFraction - cropStartFraction) * width), height: 6)
+                        .offset(x: cropStartFraction * width)
                     
-                    Rectangle()
+                    // Played portion (from song start to playhead)
+                    Capsule()
                         .fill(Color.blue)
-                        .frame(width: 3)
-                        .offset(x: startX)
+                        .frame(width: max(0, playFraction * width), height: 6)
                     
-                    Rectangle()
+                    // Crop boundary markers
+                    Circle()
                         .fill(Color.blue)
-                        .frame(width: 3)
-                        .offset(x: max(0, endX - 3))
+                        .frame(width: 10, height: 10)
+                        .offset(x: cropStartFraction * width - 5)
                     
-                    if isPreviewPlaying {
-                        Rectangle()
-                            .fill(Color.red)
-                            .frame(width: 2)
-                            .offset(x: CGFloat(currentPreviewTime / safeDuration) * width)
-                    }
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 10, height: 10)
+                        .offset(x: cropEndFraction * width - 5)
+                    
+                    // Playhead knob
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: isSeeking ? 18 : 14, height: isSeeking ? 18 : 14)
+                        .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+                        .offset(x: playFraction * width - (isSeeking ? 9 : 7))
+                        .animation(.easeOut(duration: 0.1), value: isSeeking)
                 }
-                .contentShape(Rectangle()) // Make entire area tappable
+                .frame(height: 20)
+                .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
-                            let tappedX = value.location.x
-                            let clampedX = max(0, min(tappedX, width))
-                            let tappedTime = Double(clampedX / width) * fullDuration
-                            
-                            // Clamp to crop boundaries
-                            let seekTime = max(startTime, min(tappedTime, endTime))
-                            
-                            // Update preview player position
-                            if let player = previewPlayer {
-                                player.currentTime = seekTime
-                                currentPreviewTime = seekTime
-                            }
+                            isSeeking = true
+                            let x = max(0, min(value.location.x, width))
+                            let time = Double(x / width) * fullDuration
+                            // Clamp to crop region
+                            seekPosition = max(startTime, min(time, endTime))
                         }
-                        .onEnded { value in
-                            let tappedX = value.location.x
-                            let clampedX = max(0, min(tappedX, width))
-                            let tappedTime = Double(clampedX / width) * fullDuration
-                            
-                            // Clamp to crop boundaries
-                            let seekTime = max(startTime, min(tappedTime, endTime))
-                            
-                            // If not playing, start from this position
-                            if previewPlayer == nil {
-                                startPreview(from: seekTime)
+                        .onEnded { _ in
+                            // Seek the player
+                            if let player = previewPlayer {
+                                player.currentTime = seekPosition
+                                currentPreviewTime = seekPosition
+                            } else {
+                                // Start playing from seek position
+                                startPreview(from: seekPosition)
                             }
+                            isSeeking = false
                         }
                 )
             }
-            .frame(height: 60)
+            .frame(height: 20)
             .padding(.horizontal, 32)
             
+            // Crop region time labels
             HStack {
-                Text("0:00").font(.caption).foregroundColor(.secondary)
+                Text(formatTime(startTime))
+                    .font(.caption2)
+                    .foregroundColor(.blue)
+                
                 Spacer()
-                Text(formatTime(fullDuration)).font(.caption).foregroundColor(.secondary)
+                
+                Text(formatTime(endTime))
+                    .font(.caption2)
+                    .foregroundColor(.blue)
             }
             .padding(.horizontal, 32)
         }
+    }
+    
+    // MARK: - Preview Controls
+    
+    private var previewControls: some View {
+        HStack(spacing: 32) {
+            // Jump to start
+            Button {
+                seekToTime(startTime)
+            } label: {
+                Image(systemName: "backward.end.fill")
+                    .font(.title3)
+                    .foregroundColor(.primary)
+                    .frame(width: 44, height: 44)
+            }
+            
+            // Rewind 5s
+            Button {
+                let newTime = max(startTime, displayTime - 5)
+                seekToTime(newTime)
+            } label: {
+                Image(systemName: "gobackward.5")
+                    .font(.title3)
+                    .foregroundColor(.primary)
+                    .frame(width: 44, height: 44)
+            }
+            
+            // Play/Pause
+            Button {
+                if isPreviewPlaying {
+                    pausePreview()
+                } else if previewPlayer != nil {
+                    resumePreview()
+                } else {
+                    startPreview(from: currentPreviewTime > startTime ? currentPreviewTime : nil)
+                }
+            } label: {
+                Image(systemName: isPreviewPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 52))
+                    .foregroundColor(.blue)
+            }
+            
+            // Forward 5s
+            Button {
+                let newTime = min(endTime, displayTime + 5)
+                seekToTime(newTime)
+            } label: {
+                Image(systemName: "goforward.5")
+                    .font(.title3)
+                    .foregroundColor(.primary)
+                    .frame(width: 44, height: 44)
+            }
+            
+            // Jump to end
+            Button {
+                seekToTime(max(startTime, endTime - 2))
+            } label: {
+                Image(systemName: "forward.end.fill")
+                    .font(.title3)
+                    .foregroundColor(.primary)
+                    .frame(width: 44, height: 44)
+            }
+        }
+    }
+    
+    // MARK: - Crop Sliders
+    
+    private var cropSliders: some View {
+        VStack(spacing: 16) {
+            // Start time
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: "arrow.right.to.line")
+                        .foregroundColor(.blue)
+                        .frame(width: 20)
+                    Text("Start")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Spacer()
+                    Text(formatTime(startTime))
+                        .font(.subheadline)
+                        .foregroundColor(.blue)
+                        .monospacedDigit()
+                }
+                Slider(value: $startTime, in: startSliderRange) { editing in
+                    if !editing {
+                        // Jump preview to new start when done adjusting
+                        seekToTime(startTime)
+                    }
+                }
+                .tint(.blue)
+            }
+            .padding(.horizontal, 32)
+            
+            // End time
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: "arrow.left.to.line")
+                        .foregroundColor(.orange)
+                        .frame(width: 20)
+                    Text("End")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Spacer()
+                    Text(formatTime(endTime))
+                        .font(.subheadline)
+                        .foregroundColor(.orange)
+                        .monospacedDigit()
+                }
+                Slider(value: $endTime, in: endSliderRange) { editing in
+                    if !editing {
+                        // Jump preview near end so user can hear the cut
+                        seekToTime(max(startTime, endTime - 3))
+                    }
+                }
+                .tint(.orange)
+            }
+            .padding(.horizontal, 32)
+        }
+    }
+    
+    // MARK: - Action Buttons
+    
+    private var actionButtons: some View {
+        HStack(spacing: 16) {
+            Button {
+                startTime = 0
+                endTime = fullDuration
+                seekToTime(0)
+            } label: {
+                Text("Reset")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color.gray.opacity(0.15))
+                    .foregroundColor(.primary)
+                    .cornerRadius(12)
+            }
+            
+            Button {
+                applyCrop()
+            } label: {
+                Text("Apply Crop")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+            }
+        }
+        .padding(.horizontal, 32)
     }
     
     // MARK: - Load Duration
@@ -342,6 +454,9 @@ struct CropSongSheet: View {
             startTime = max(0, min(startTime, duration - 0.5))
             endTime = max(startTime + 0.5, min(endTime, duration))
             
+            // Set initial playhead at crop start
+            currentPreviewTime = startTime
+            
             isLoading = false
         } catch {
             loadError = "Unable to read audio: \(error.localizedDescription)"
@@ -369,24 +484,33 @@ struct CropSongSheet: View {
             isPreviewPlaying = true
             currentPreviewTime = playFromTime
             
-            let capturedStartTime = startTime
-            let capturedEndTime = endTime
-            previewTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-                guard let p = self.previewPlayer, p.isPlaying else {
-                    self.stopPreview()
-                    return
-                }
-                self.currentPreviewTime = p.currentTime
-                if p.currentTime >= capturedEndTime {
-                    // Loop back to start
-                    p.currentTime = capturedStartTime
-                    self.currentPreviewTime = capturedStartTime
-                }
-            }
+            startTimerLoop()
         } catch {
             print("❌ Failed to start preview: \(error)")
             url.stopAccessingSecurityScopedResource()
         }
+    }
+    
+    private func pausePreview() {
+        previewPlayer?.pause()
+        previewTimer?.invalidate()
+        previewTimer = nil
+        isPreviewPlaying = false
+        // Keep previewPlayer alive so we can resume
+    }
+    
+    private func resumePreview() {
+        guard let player = previewPlayer else { return }
+        
+        // If we're past the end, loop back to start
+        if player.currentTime >= endTime {
+            player.currentTime = startTime
+            currentPreviewTime = startTime
+        }
+        
+        player.play()
+        isPreviewPlaying = true
+        startTimerLoop()
     }
     
     private func stopPreview() {
@@ -395,6 +519,43 @@ struct CropSongSheet: View {
         previewPlayer?.stop()
         previewPlayer = nil
         isPreviewPlaying = false
+    }
+    
+    private func startTimerLoop() {
+        previewTimer?.invalidate()
+        previewTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { _ in
+            guard let p = self.previewPlayer else {
+                self.pausePreview()
+                return
+            }
+            
+            if !p.isPlaying {
+                self.pausePreview()
+                return
+            }
+            
+            self.currentPreviewTime = p.currentTime
+            
+            // Loop at end boundary
+            if p.currentTime >= self.endTime {
+                p.currentTime = self.startTime
+                self.currentPreviewTime = self.startTime
+            }
+        }
+    }
+    
+    private func seekToTime(_ time: Double) {
+        let clamped = max(startTime, min(time, endTime))
+        currentPreviewTime = clamped
+        
+        if let player = previewPlayer {
+            player.currentTime = clamped
+            if !isPreviewPlaying {
+                resumePreview()
+            }
+        } else {
+            startPreview(from: clamped)
+        }
     }
     
     // MARK: - Apply Crop
@@ -409,7 +570,7 @@ struct CropSongSheet: View {
         
         // If this track is currently playing, restart with new crop
         if let current = audioPlayer.currentTrack, current.id == track.id {
-            wasMainPlayerPlaying = false // we're restarting — don't also resume old state
+            wasMainPlayerPlaying = false
             audioPlayer.play(audioPlayer.currentTrack!)
         }
         
