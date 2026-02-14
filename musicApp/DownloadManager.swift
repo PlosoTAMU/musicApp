@@ -178,6 +178,7 @@ class DownloadManager: ObservableObject {
                 // ✅ FIXED: Check if it's a Spotify URL and convert first
                 var finalURL = url
                 var finalVideoID = videoID
+                var spotifyTrackInfo: String? = nil
                 
                 if source == .spotify {
                     // Update status to show conversion
@@ -189,7 +190,9 @@ class DownloadManager: ObservableObject {
                     }
                     
                     // Convert Spotify to YouTube using the urllib-based script
-                    finalURL = try await self.convertSpotifyToYouTube(spotifyURL: url)
+                    let (convertedURL, trackInfo) = try await self.convertSpotifyToYouTube(spotifyURL: url)
+                    finalURL = convertedURL
+                    spotifyTrackInfo = trackInfo
                     
                     // Extract YouTube video ID from converted URL
                     if let extractedID = self.extractYouTubeID(from: finalURL) {
@@ -197,6 +200,9 @@ class DownloadManager: ObservableObject {
                     }
                     
                     print("✅ [DownloadManager] Converted Spotify to YouTube: \(finalURL)")
+                    if let trackInfo = spotifyTrackInfo {
+                        print("✅ [DownloadManager] Spotify track info: \(trackInfo)")
+                    }
                     
                     // Update status
                     await MainActor.run {
@@ -210,15 +216,47 @@ class DownloadManager: ObservableObject {
                 // Now proceed with YouTube download
                 let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: finalURL, videoID: finalVideoID)
                 
+                // ✅ NEW: Rename file if it's from Spotify and we have track info
+                var finalFileURL = fileURL
+                if source == .spotify, let trackInfo = spotifyTrackInfo {
+                    // Clean the track info to be filesystem-safe
+                    let cleanTrackInfo = trackInfo
+                        .replacingOccurrences(of: "–", with: "-")  // Replace em-dash with hyphen
+                        .replacingOccurrences(of: "/", with: "-")
+                        .replacingOccurrences(of: ":", with: "-")
+                        .replacingOccurrences(of: "\"", with: "")
+                        .replacingOccurrences(of: "<", with: "")
+                        .replacingOccurrences(of: ">", with: "")
+                        .replacingOccurrences(of: "|", with: "-")
+                        .replacingOccurrences(of: "?", with: "")
+                        .replacingOccurrences(of: "*", with: "")
+                    
+                    let fileExtension = fileURL.pathExtension
+                    let newFileName = "\(cleanTrackInfo).\(fileExtension)"
+                    let newFileURL = fileURL.deletingLastPathComponent().appendingPathComponent(newFileName)
+                    
+                    do {
+                        // Rename the audio file
+                        try FileManager.default.moveItem(at: fileURL, to: newFileURL)
+                        finalFileURL = newFileURL
+                        print("✅ [DownloadManager] Renamed Spotify file to: \(newFileName)")
+                    } catch {
+                        print("⚠️ [DownloadManager] Failed to rename file: \(error.localizedDescription)")
+                        // Continue with original filename if rename fails
+                    }
+                }
+                
                 // Get thumbnail with retries (avoiding var capture in concurrent code)
-                let thumbnailPath = await self.fetchThumbnailWithRetries(for: fileURL, videoID: finalVideoID, attempts: 5)
+                let thumbnailPath = await self.fetchThumbnailWithRetries(for: finalFileURL, videoID: finalVideoID, attempts: 5)
                 
                 // Neutralize the song name to remove formatting characters
-                let cleanedTitle = self.neutralizeName(downloadedTitle)
+                // Use Spotify track info if available, otherwise use downloaded title
+                let displayName = spotifyTrackInfo ?? downloadedTitle
+                let cleanedTitle = self.neutralizeName(displayName)
                 
                 let download = Download(
                     name: cleanedTitle,
-                    url: fileURL,
+                    url: finalFileURL,
                     thumbnailPath: thumbnailPath?.path,
                     videoID: finalVideoID,
                     source: source,  // Keep original source (.spotify) for UI icon
@@ -377,7 +415,7 @@ class DownloadManager: ObservableObject {
     }
 
     // ✅ ADD: Helper method to convert Spotify to YouTube
-    private func convertSpotifyToYouTube(spotifyURL: String) async throws -> String {
+    private func convertSpotifyToYouTube(spotifyURL: String) async throws -> (youtubeURL: String, trackInfo: String?) {
         return try await withCheckedThrowingContinuation { continuation in
             let resultFilePath = NSTemporaryDirectory() + "spotify_result_\(UUID().uuidString).json"
             
@@ -406,7 +444,8 @@ class DownloadManager: ObservableObject {
                     return
                 }
                 
-                continuation.resume(returning: youtubeURL)
+                let trackInfo = json["track_info"] as? String
+                continuation.resume(returning: (youtubeURL, trackInfo))
             }
         }
     }
@@ -473,9 +512,11 @@ class DownloadManager: ObservableObject {
         try:
             youtube_url, error = spotify_to_youtube(spotify_url)
             if youtube_url:
+                track_info = get_spotify_track_info(spotify_url)
                 result = {
                     'success': True,
-                    'youtube_url': youtube_url
+                    'youtube_url': youtube_url,
+                    'track_info': track_info
                 }
             else:
                 result = {

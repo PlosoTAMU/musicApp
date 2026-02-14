@@ -8,7 +8,14 @@ struct CropSongSheet: View {
     @Environment(\.dismiss) var dismiss
     
     @State private var fullDuration: Double = 0
-    @State private var startTime: Double = 0
+    @State private var startTime: Double = 0 {
+        didSet {
+            // Auto-start preview when start time changes
+            if !isLoading && loadError == nil && oldValue != startTime {
+                startPreview()
+            }
+        }
+    }
     @State private var endTime: Double = 1 // non-zero default avoids invalid slider ranges on init
     @State private var isPreviewPlaying = false
     @State private var currentPreviewTime: Double = 0
@@ -256,6 +263,37 @@ struct CropSongSheet: View {
                             .offset(x: CGFloat(currentPreviewTime / safeDuration) * width)
                     }
                 }
+                .contentShape(Rectangle()) // Make entire area tappable
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let tappedX = value.location.x
+                            let clampedX = max(0, min(tappedX, width))
+                            let tappedTime = Double(clampedX / width) * fullDuration
+                            
+                            // Clamp to crop boundaries
+                            let seekTime = max(startTime, min(tappedTime, endTime))
+                            
+                            // Update preview player position
+                            if let player = previewPlayer {
+                                player.currentTime = seekTime
+                                currentPreviewTime = seekTime
+                            }
+                        }
+                        .onEnded { value in
+                            let tappedX = value.location.x
+                            let clampedX = max(0, min(tappedX, width))
+                            let tappedTime = Double(clampedX / width) * fullDuration
+                            
+                            // Clamp to crop boundaries
+                            let seekTime = max(startTime, min(tappedTime, endTime))
+                            
+                            // If not playing, start from this position
+                            if previewPlayer == nil {
+                                startPreview(from: seekTime)
+                            }
+                        }
+                )
             }
             .frame(height: 60)
             .padding(.horizontal, 32)
@@ -313,7 +351,7 @@ struct CropSongSheet: View {
     
     // MARK: - Preview Playback
     
-    private func startPreview() {
+    private func startPreview(from seekTime: Double? = nil) {
         guard let url = track.resolvedURL() else { return }
         
         stopPreview()
@@ -322,13 +360,16 @@ struct CropSongSheet: View {
         do {
             let player = try AVAudioPlayer(contentsOf: url)
             player.prepareToPlay()
-            player.currentTime = startTime
+            
+            let playFromTime = seekTime ?? startTime
+            player.currentTime = playFromTime
             player.play()
             
             previewPlayer = player
             isPreviewPlaying = true
-            currentPreviewTime = startTime
+            currentPreviewTime = playFromTime
             
+            let capturedStartTime = startTime
             let capturedEndTime = endTime
             previewTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                 guard let p = self.previewPlayer, p.isPlaying else {
@@ -337,7 +378,9 @@ struct CropSongSheet: View {
                 }
                 self.currentPreviewTime = p.currentTime
                 if p.currentTime >= capturedEndTime {
-                    self.stopPreview()
+                    // Loop back to start
+                    p.currentTime = capturedStartTime
+                    self.currentPreviewTime = capturedStartTime
                 }
             }
         } catch {
