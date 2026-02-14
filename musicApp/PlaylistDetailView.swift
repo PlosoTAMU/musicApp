@@ -77,7 +77,7 @@ struct PlaylistDetailView: View {
                 HStack(spacing: 16) {
                     Button {
                         let tracks = self.tracks.map { download in
-                            Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+                            Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
                         }
                         audioPlayer.loadPlaylist(tracks, shuffle: false)
                     } label: {
@@ -95,7 +95,7 @@ struct PlaylistDetailView: View {
                     
                     Button {
                         let tracks = self.tracks.map { download in
-                            Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+                            Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
                         }
                         audioPlayer.loadPlaylist(tracks, shuffle: true)
                     } label: {
@@ -126,7 +126,7 @@ struct PlaylistDetailView: View {
                         isPlaying: isAudioPlaying,
                         playlist: playlist,
                         onTap: {
-                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
                             audioPlayer.play(track)
                         },
                         onRename: { newName in
@@ -144,7 +144,7 @@ struct PlaylistDetailView: View {
                             }
                         },
                         onQueue: {
-                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name)
+                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
                             audioPlayer.addToQueue(track)
                         }
                     )

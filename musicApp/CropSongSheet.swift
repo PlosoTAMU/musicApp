@@ -19,6 +19,10 @@ struct CropSongSheet: View {
     @State private var loadError: String?
     @State private var isSeeking = false
     @State private var seekPosition: Double = 0
+    @State private var startTimeText: String = ""
+    @State private var endTimeText: String = ""
+    @State private var isEditingStartTime = false
+    @State private var isEditingEndTime = false
     
     // Safe slider ranges
     private var startSliderRange: ClosedRange<Double> {
@@ -342,14 +346,46 @@ struct CropSongSheet: View {
                         .font(.subheadline)
                         .fontWeight(.medium)
                     Spacer()
-                    Text(formatTime(startTime))
-                        .font(.subheadline)
-                        .foregroundColor(.blue)
-                        .monospacedDigit()
+                    
+                    // Tappable time label → text field
+                    if isEditingStartTime {
+                        HStack(spacing: 4) {
+                            TextField("m:ss", text: $startTimeText)
+                                .font(.subheadline)
+                                .monospacedDigit()
+                                .foregroundColor(.blue)
+                                .keyboardType(.numbersAndPunctuation)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 60)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit {
+                                    applyManualTime(text: startTimeText, isStart: true)
+                                }
+                            Button {
+                                applyManualTime(text: startTimeText, isStart: true)
+                            } label: {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    } else {
+                        Text(formatTime(startTime))
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                            .monospacedDigit()
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(6)
+                            .onTapGesture {
+                                startTimeText = formatTime(startTime)
+                                isEditingStartTime = true
+                                isEditingEndTime = false
+                            }
+                    }
                 }
                 Slider(value: $startTime, in: startSliderRange) { editing in
                     if !editing {
-                        // Jump preview to new start when done adjusting
                         seekToTime(startTime)
                     }
                 }
@@ -367,14 +403,46 @@ struct CropSongSheet: View {
                         .font(.subheadline)
                         .fontWeight(.medium)
                     Spacer()
-                    Text(formatTime(endTime))
-                        .font(.subheadline)
-                        .foregroundColor(.orange)
-                        .monospacedDigit()
+                    
+                    // Tappable time label → text field
+                    if isEditingEndTime {
+                        HStack(spacing: 4) {
+                            TextField("m:ss", text: $endTimeText)
+                                .font(.subheadline)
+                                .monospacedDigit()
+                                .foregroundColor(.orange)
+                                .keyboardType(.numbersAndPunctuation)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 60)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit {
+                                    applyManualTime(text: endTimeText, isStart: false)
+                                }
+                            Button {
+                                applyManualTime(text: endTimeText, isStart: false)
+                            } label: {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                    } else {
+                        Text(formatTime(endTime))
+                            .font(.subheadline)
+                            .foregroundColor(.orange)
+                            .monospacedDigit()
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.orange.opacity(0.1))
+                            .cornerRadius(6)
+                            .onTapGesture {
+                                endTimeText = formatTime(endTime)
+                                isEditingEndTime = true
+                                isEditingStartTime = false
+                            }
+                    }
                 }
                 Slider(value: $endTime, in: endSliderRange) { editing in
                     if !editing {
-                        // Jump preview near end so user can hear the cut
                         seekToTime(max(startTime, endTime - 3))
                     }
                 }
@@ -579,6 +647,54 @@ struct CropSongSheet: View {
     }
     
     // MARK: - Helpers
+    
+    /// Parse "m:ss" or "mm:ss" or just seconds (e.g. "90") into a Double
+    private func parseTime(_ text: String) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        
+        // Try "m:ss" or "mm:ss" format
+        if trimmed.contains(":") {
+            let parts = trimmed.split(separator: ":")
+            guard parts.count == 2,
+                  let minutes = Int(parts[0]),
+                  let seconds = Int(parts[1]),
+                  minutes >= 0, seconds >= 0, seconds < 60 else { return nil }
+            return Double(minutes * 60 + seconds)
+        }
+        
+        // Try raw seconds
+        if let seconds = Double(trimmed), seconds >= 0 {
+            return seconds
+        }
+        
+        return nil
+    }
+    
+    private func applyManualTime(text: String, isStart: Bool) {
+        guard let parsed = parseTime(text) else {
+            // Invalid — reset the text field and dismiss
+            if isStart {
+                startTimeText = formatTime(startTime)
+                isEditingStartTime = false
+            } else {
+                endTimeText = formatTime(endTime)
+                isEditingEndTime = false
+            }
+            return
+        }
+        
+        if isStart {
+            let clamped = max(0, min(parsed, endTime - 0.5))
+            startTime = clamped
+            isEditingStartTime = false
+            seekToTime(startTime)
+        } else {
+            let clamped = max(startTime + 0.5, min(parsed, fullDuration))
+            endTime = clamped
+            isEditingEndTime = false
+            seekToTime(max(startTime, endTime - 3))
+        }
+    }
     
     private func formatTime(_ time: Double) -> String {
         guard time.isFinite && time >= 0 else { return "0:00" }

@@ -341,7 +341,9 @@ class DownloadManager: ObservableObject {
                 thumbnailPath: newThumbnailFilename,
                 videoID: currentDownload.videoID,
                 source: currentDownload.source,
-                originalURL: currentDownload.originalURL
+                originalURL: currentDownload.originalURL,
+                cropStartTime: currentDownload.cropStartTime,
+                cropEndTime: currentDownload.cropEndTime
             )
             
             saveDownloads()
@@ -381,36 +383,37 @@ class DownloadManager: ObservableObject {
     
     // Update crop times for a track
     func updateCropTimes(for trackID: UUID, startTime: Double?, endTime: Double?) {
-        // Update in AudioPlayer's current track
-        if let audioPlayer = self.audioPlayer,
-           let currentTrack = audioPlayer.currentTrack,
-           currentTrack.id == trackID {
+        // 1. Persist to the Download model (saved to disk)
+        if let downloadIndex = downloads.firstIndex(where: { $0.id == trackID }) {
+            downloads[downloadIndex].cropStartTime = startTime
+            downloads[downloadIndex].cropEndTime = endTime
+            saveDownloads()
+            print("✅ [DownloadManager] Persisted crop times to disk for: \(downloads[downloadIndex].name)")
+        }
+        
+        // 2. Update in AudioPlayer's in-memory state
+        if let audioPlayer = self.audioPlayer {
+            if let currentTrack = audioPlayer.currentTrack, currentTrack.id == trackID {
+                var updatedTrack = currentTrack
+                updatedTrack.cropStartTime = startTime
+                updatedTrack.cropEndTime = endTime
+                audioPlayer.currentTrack = updatedTrack
+            }
             
-            var updatedTrack = currentTrack
-            updatedTrack.cropStartTime = startTime
-            updatedTrack.cropEndTime = endTime
-            
-            audioPlayer.currentTrack = updatedTrack
-            
-            // Update in playlist
             if let playlistIndex = audioPlayer.currentPlaylist.firstIndex(where: { $0.id == trackID }) {
                 audioPlayer.currentPlaylist[playlistIndex].cropStartTime = startTime
                 audioPlayer.currentPlaylist[playlistIndex].cropEndTime = endTime
             }
             
-            // Update in queue
             if let queueIndex = audioPlayer.queue.firstIndex(where: { $0.id == trackID }) {
                 audioPlayer.queue[queueIndex].cropStartTime = startTime
                 audioPlayer.queue[queueIndex].cropEndTime = endTime
             }
             
-            // Update in previous queue
             if let prevIndex = audioPlayer.previousQueue.firstIndex(where: { $0.id == trackID }) {
                 audioPlayer.previousQueue[prevIndex].cropStartTime = startTime
                 audioPlayer.previousQueue[prevIndex].cropEndTime = endTime
             }
-            
-            print("✅ [DownloadManager] Updated crop times for track: \(currentTrack.name)")
         }
     }
 
@@ -590,7 +593,9 @@ class DownloadManager: ObservableObject {
                     thumbnailPath: thumbnailFilename,
                     videoID: download.videoID,
                     source: download.source,
-                    originalURL: download.originalURL  // ✅ PRESERVE THIS
+                    originalURL: download.originalURL,
+                    cropStartTime: download.cropStartTime,
+                    cropEndTime: download.cropEndTime
                 )
             } catch {
                 print("❌ [DownloadManager] Failed to move file: \(error)")
@@ -606,7 +611,9 @@ class DownloadManager: ObservableObject {
                     thumbnailPath: thumbnailFilename,
                     videoID: download.videoID,
                     source: download.source,
-                    originalURL: download.originalURL  // ✅ PRESERVE THIS
+                    originalURL: download.originalURL,
+                    cropStartTime: download.cropStartTime,
+                    cropEndTime: download.cropEndTime
                 )
             }
         }
@@ -823,7 +830,9 @@ class DownloadManager: ObservableObject {
                     thumbnailPath: loadedDownloads[i].thumbnailPath,
                     videoID: loadedDownloads[i].videoID,
                     source: loadedDownloads[i].source,
-                    originalURL: loadedDownloads[i].originalURL  // Preserve originalURL
+                    originalURL: loadedDownloads[i].originalURL,
+                    cropStartTime: loadedDownloads[i].cropStartTime,
+                    cropEndTime: loadedDownloads[i].cropEndTime
                 )
                 
                 loadedDownloads[i].pendingDeletion = false

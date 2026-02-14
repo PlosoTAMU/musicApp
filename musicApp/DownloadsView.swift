@@ -238,7 +238,7 @@ struct DownloadRow: View {
         .background(Color.black)
         .swipeToQueue {
             let folderName = folderName(for: download.source)
-            let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
+            let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
             audioPlayer.addToQueue(track)
         }
         .alert("Rename Song", isPresented: $showRenameAlert) {
@@ -263,7 +263,7 @@ struct DownloadRow: View {
             }
         } else {
             let folderName = folderName(for: download.source)
-            let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName)
+            let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
             audioPlayer.play(track)
         }
     }

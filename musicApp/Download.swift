@@ -14,6 +14,8 @@ struct Download: Identifiable, Codable {
     var videoID: String?
     var source: DownloadSource
     var originalURL: String?  // ✅ ADD THIS - store the original download URL
+    var cropStartTime: Double?
+    var cropEndTime: Double?
     var pendingDeletion: Bool = false
     
     // ⚡ PERF: Cache the thumbnails directory path once instead of calling
@@ -30,7 +32,7 @@ struct Download: Identifiable, Codable {
         return (Download.thumbnailsDirectory as NSString).appendingPathComponent(justFilename)
     }
     
-    init(id: UUID = UUID(), name: String, url: URL, thumbnailPath: String? = nil, videoID: String? = nil, source: DownloadSource = .youtube, originalURL: String? = nil) {
+    init(id: UUID = UUID(), name: String, url: URL, thumbnailPath: String? = nil, videoID: String? = nil, source: DownloadSource = .youtube, originalURL: String? = nil, cropStartTime: Double? = nil, cropEndTime: Double? = nil) {
         self.id = id
         self.name = name
         self.url = url
@@ -42,6 +44,8 @@ struct Download: Identifiable, Codable {
         self.videoID = videoID
         self.source = source
         self.originalURL = originalURL  // ✅ ADD THIS
+        self.cropStartTime = cropStartTime
+        self.cropEndTime = cropEndTime
         self.pendingDeletion = false
     }
 }
