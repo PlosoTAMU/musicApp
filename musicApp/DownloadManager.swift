@@ -296,6 +296,7 @@ class DownloadManager: ObservableObject {
         print("✅ [Playlist] All downloads complete")
     }
 
+
     // MARK: - Download Single Track from Queue
 
     private func downloadTrackFromQueue(url: String, videoID: String, source: DownloadSource, title: String) async {
@@ -306,18 +307,8 @@ class DownloadManager: ObservableObject {
             self.activeDownloads.append(activeDownload)
         }
         
-        // Set up title callback
-        EmbeddedPython.shared.onTitleFetched = { [weak self] callbackVideoID, callbackTitle in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                
-                if let index = self.activeDownloads.firstIndex(where: { $0.id == downloadID }) {
-                    self.activeDownloads[index].title = callbackTitle
-                    self.activeDownloads[index].progress = 0.5
-                    self.notifyChange()
-                }
-            }
-        }
+        // ✅ FIXED: Use downloadID for matching instead of relying on shared callback
+        // Don't set up onTitleFetched here - it gets overwritten by concurrent downloads
         
         do {
             var finalURL = url
@@ -338,6 +329,25 @@ class DownloadManager: ObservableObject {
                 
                 if let extractedID = self.extractYouTubeID(from: finalURL) {
                     finalVideoID = extractedID
+                }
+                
+                // ✅ Update with actual track info from Spotify
+                if let trackInfo = spotifyTrackInfo {
+                    await MainActor.run {
+                        if let index = self.activeDownloads.firstIndex(where: { $0.id == downloadID }) {
+                            self.activeDownloads[index].title = trackInfo
+                            self.notifyChange()
+                        }
+                    }
+                }
+            }
+            
+            // ✅ Update progress before download
+            await MainActor.run {
+                if let index = self.activeDownloads.firstIndex(where: { $0.id == downloadID }) {
+                    self.activeDownloads[index].title = source == .spotify && spotifyTrackInfo != nil ? spotifyTrackInfo! : "Downloading..."
+                    self.activeDownloads[index].progress = 0.5
+                    self.notifyChange()
                 }
             }
             
@@ -368,16 +378,18 @@ class DownloadManager: ObservableObject {
                 }
             }
             
+            // ✅ CRITICAL: Fetch thumbnail USING THE CORRECT videoID for this specific track
             let thumbnailPath = await self.fetchThumbnailWithRetries(for: finalFileURL, videoID: finalVideoID, attempts: 5)
             
             let displayName = spotifyTrackInfo ?? downloadedTitle
             let cleanedTitle = self.neutralizeName(displayName)
             
+            // ✅ CRITICAL: Create download with the CORRECT videoID and thumbnail that match THIS track
             let download = Download(
                 name: cleanedTitle,
                 url: finalFileURL,
                 thumbnailPath: thumbnailPath?.path,
-                videoID: finalVideoID,
+                videoID: finalVideoID,  // ✅ This MUST match the file and thumbnail
                 source: source,
                 originalURL: url
             )
@@ -386,6 +398,8 @@ class DownloadManager: ObservableObject {
                 self.activeDownloads.removeAll { $0.id == downloadID }
                 self.addDownload(download)
             }
+            
+            print("✅ [Queue] Successfully downloaded: \(cleanedTitle) (videoID: \(finalVideoID))")
             
         } catch {
             print("❌ [Queue] Download failed for \(title): \(error)")
