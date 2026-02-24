@@ -250,6 +250,7 @@ class DownloadManager: ObservableObject {
     }
 
     // ✅ NEW: Modified version of startBackgroundDownload with completion callback
+    // ✅ FIXED: Modified version of startBackgroundDownload with completion callback
     private func startBackgroundDownloadWithID(
         id: UUID,
         url: String,
@@ -258,6 +259,13 @@ class DownloadManager: ObservableObject {
         title: String,
         onComplete: @escaping () -> Void
     ) {
+        // ✅ ADD DUPLICATE CHECK HERE
+        if findDuplicateByVideoID(videoID: videoID, source: source) != nil {
+            print("⏭️ [Playlist] Skipping duplicate during download: \(title)")
+            onComplete()  // Release the slot immediately
+            return
+        }
+        
         let activeDownload = ActiveDownload(id: id, videoID: videoID, title: title, progress: 0.0)
         
         Task { @MainActor in
@@ -288,6 +296,15 @@ class DownloadManager: ObservableObject {
             defer { onComplete() }
             
             do {
+                // ✅ CHECK AGAIN right before download (in case it finished while queued)
+                if self.findDuplicateByVideoID(videoID: videoID, source: source) != nil {
+                    print("⏭️ [Playlist] Duplicate detected just before download: \(title)")
+                    await MainActor.run {
+                        self.activeDownloads.removeAll { $0.id == targetDownloadID }
+                    }
+                    return
+                }
+                
                 var finalURL = url
                 var finalVideoID = videoID
                 var spotifyTrackInfo: String? = nil
