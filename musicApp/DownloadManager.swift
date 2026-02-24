@@ -121,7 +121,317 @@ class DownloadManager: ObservableObject {
         
         return cleaned
     }
-    
+    // MARK: - Playlist Download Support
+
+    /// Detects if URL is a playlist and returns (source, playlistID)
+    func detectPlaylist(from urlString: String) -> (source: DownloadSource, playlistID: String, isPlaylist: Bool)? {
+        guard let url = URL(string: urlString) else { return nil }
+        let host = url.host?.lowercased() ?? ""
+        
+        // YouTube Playlist
+        if host.contains("youtube.com") || host.contains("youtu.be") {
+            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+            let queryItems = components.queryItems,
+            let listID = queryItems.first(where: { $0.name == "list" })?.value {
+                return (.youtube, listID, true)
+            }
+        }
+        
+        // Spotify Playlist or Album
+        if host.contains("spotify.com") {
+            let pathComponents = url.pathComponents.filter { $0 != "/" }
+            
+            if let playlistIndex = pathComponents.firstIndex(of: "playlist"),
+            playlistIndex + 1 < pathComponents.count {
+                var playlistID = pathComponents[playlistIndex + 1]
+                if let queryIndex = playlistID.firstIndex(of: "?") {
+                    playlistID = String(playlistID[..<queryIndex])
+                }
+                return (.spotify, playlistID, true)
+            }
+            
+            if let albumIndex = pathComponents.firstIndex(of: "album"),
+            albumIndex + 1 < pathComponents.count {
+                var albumID = pathComponents[albumIndex + 1]
+                if let queryIndex = albumID.firstIndex(of: "?") {
+                    albumID = String(albumID[..<queryIndex])
+                }
+                return (.spotify, albumID, true)
+            }
+        }
+        
+        return nil
+    }
+
+    /// Downloads all tracks from a playlist
+    func downloadPlaylist(url: String, source: DownloadSource, playlistID: String) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
+            
+            do {
+                let tracks: [(videoID: String, title: String, url: String)]
+                
+                if source == .youtube {
+                    tracks = try await self.fetchYouTubePlaylistTracks(playlistID: playlistID)
+                } else {
+                    tracks = try await self.fetchSpotifyPlaylistTracks(playlistID: playlistID, originalURL: url)
+                }
+                
+                print("📋 [Playlist] Found \(tracks.count) tracks")
+                
+                // Download each track sequentially to avoid overwhelming the system
+                for (index, track) in tracks.enumerated() {
+                    // Check for duplicates
+                    if self.findDuplicateByVideoID(videoID: track.videoID, source: source) != nil {
+                        print("⏭️ [Playlist] Skipping duplicate: \(track.title)")
+                        continue
+                    }
+                    
+                    await MainActor.run {
+                        print("📥 [Playlist] Downloading \(index + 1)/\(tracks.count): \(track.title)")
+                    }
+                    
+                    self.startBackgroundDownload(
+                        url: track.url,
+                        videoID: track.videoID,
+                        source: source,
+                        title: "[\(index + 1)/\(tracks.count)] \(track.title)"
+                    )
+                    
+                    // Small delay between starting downloads to prevent rate limiting
+                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                }
+                
+            } catch {
+                print("❌ [Playlist] Failed to fetch playlist: \(error)")
+            }
+        }
+    }
+
+    // MARK: - YouTube Playlist Extraction
+
+    private func fetchYouTubePlaylistTracks(playlistID: String) async throws -> [(videoID: String, title: String, url: String)] {
+        return try await withCheckedThrowingContinuation { continuation in
+            let resultFilePath = NSTemporaryDirectory() + "yt_playlist_\(UUID().uuidString).json"
+            let script = generateYouTubePlaylistScript(playlistID: playlistID, resultFilePath: resultFilePath)
+            
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard EmbeddedPython.shared.executePythonScript(script) else {
+                    continuation.resume(throwing: NSError(domain: "YouTubePlaylist", code: -1, 
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to execute playlist script"]))
+                    return
+                }
+                
+                guard let jsonData = try? Data(contentsOf: URL(fileURLWithPath: resultFilePath)),
+                    let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                    continuation.resume(throwing: NSError(domain: "YouTubePlaylist", code: -2,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to read playlist result"]))
+                    return
+                }
+                
+                try? FileManager.default.removeItem(atPath: resultFilePath)
+                
+                guard let success = json["success"] as? Bool, success,
+                    let tracksArray = json["tracks"] as? [[String: String]] else {
+                    let error = json["error"] as? String ?? "Unknown error"
+                    continuation.resume(throwing: NSError(domain: "YouTubePlaylist", code: -3,
+                        userInfo: [NSLocalizedDescriptionKey: error]))
+                    return
+                }
+                
+                let tracks = tracksArray.compactMap { track -> (videoID: String, title: String, url: String)? in
+                    guard let videoID = track["video_id"],
+                        let title = track["title"] else { return nil }
+                    let url = "https://www.youtube.com/watch?v=\(videoID)"
+                    return (videoID, title, url)
+                }
+                
+                continuation.resume(returning: tracks)
+            }
+        }
+    }
+
+    private func generateYouTubePlaylistScript(playlistID: String, resultFilePath: String) -> String {
+        return """
+        import json
+        import re
+        import requests
+
+        def get_playlist_videos(playlist_id):
+            try:
+                url = f"https://www.youtube.com/playlist?list={playlist_id}"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept-Language": "en-US,en;q=0.9"
+                }
+                
+                response = requests.get(url, headers=headers, timeout=30)
+                if response.status_code != 200:
+                    return None, f"HTTP {response.status_code}"
+                
+                html = response.text
+                
+                # Extract video IDs and titles from playlist page
+                # Pattern matches: {"videoId":"XXXXXXXXXXX","title":{"runs":[{"text":"Title"}]
+                pattern = r'"videoId":"([a-zA-Z0-9_-]{11})".*?"title":\\{"runs":\\[\\{"text":"([^"]+)"'
+                matches = re.findall(pattern, html)
+                
+                if not matches:
+                    # Fallback: just extract video IDs
+                    video_ids = list(set(re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)))
+                    matches = [(vid, f"Track {i+1}") for i, vid in enumerate(video_ids)]
+                
+                # Remove duplicates while preserving order
+                seen = set()
+                unique_tracks = []
+                for video_id, title in matches:
+                    if video_id not in seen:
+                        seen.add(video_id)
+                        unique_tracks.append({"video_id": video_id, "title": title})
+                
+                return unique_tracks, None
+                
+            except Exception as e:
+                return None, str(e)
+
+        playlist_id = r'''\(playlistID)'''
+        result = {}
+
+        tracks, error = get_playlist_videos(playlist_id)
+        if tracks:
+            result = {"success": True, "tracks": tracks}
+        else:
+            result = {"success": False, "error": error or "Failed to fetch playlist"}
+
+        with open(r'''\(resultFilePath)''', 'w', encoding='utf-8') as f:
+            json.dump(result, f)
+        """
+    }
+
+    // MARK: - Spotify Playlist Extraction
+
+    private func fetchSpotifyPlaylistTracks(playlistID: String, originalURL: String) async throws -> [(videoID: String, title: String, url: String)] {
+        return try await withCheckedThrowingContinuation { continuation in
+            let resultFilePath = NSTemporaryDirectory() + "spotify_playlist_\(UUID().uuidString).json"
+            
+            // Detect if it's an album or playlist from the URL
+            let isAlbum = originalURL.contains("/album/")
+            let script = generateSpotifyPlaylistScript(playlistID: playlistID, isAlbum: isAlbum, resultFilePath: resultFilePath)
+            
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard EmbeddedPython.shared.executePythonScript(script) else {
+                    continuation.resume(throwing: NSError(domain: "SpotifyPlaylist", code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to execute Spotify playlist script"]))
+                    return
+                }
+                
+                guard let jsonData = try? Data(contentsOf: URL(fileURLWithPath: resultFilePath)),
+                    let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                    continuation.resume(throwing: NSError(domain: "SpotifyPlaylist", code: -2,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to read Spotify playlist result"]))
+                    return
+                }
+                
+                try? FileManager.default.removeItem(atPath: resultFilePath)
+                
+                guard let success = json["success"] as? Bool, success,
+                    let tracksArray = json["tracks"] as? [[String: String]] else {
+                    let error = json["error"] as? String ?? "Unknown error"
+                    continuation.resume(throwing: NSError(domain: "SpotifyPlaylist", code: -3,
+                        userInfo: [NSLocalizedDescriptionKey: error]))
+                    return
+                }
+                
+                let tracks = tracksArray.compactMap { track -> (videoID: String, title: String, url: String)? in
+                    guard let trackID = track["track_id"],
+                        let title = track["title"] else { return nil }
+                    let url = "https://open.spotify.com/track/\(trackID)"
+                    return (trackID, title, url)
+                }
+                
+                continuation.resume(returning: tracks)
+            }
+        }
+    }
+
+    private func generateSpotifyPlaylistScript(playlistID: String, isAlbum: Bool, resultFilePath: String) -> String {
+        let endpoint = isAlbum ? "album" : "playlist"
+        
+        return """
+        import json
+        import re
+        import requests
+
+        def get_spotify_playlist_tracks(playlist_id, is_album):
+            try:
+                endpoint = "album" if is_album else "playlist"
+                url = f"https://open.spotify.com/{endpoint}/{playlist_id}"
+                
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept-Language": "en-US,en;q=0.9"
+                }
+                
+                response = requests.get(url, headers=headers, timeout=30)
+                if response.status_code != 200:
+                    return None, f"HTTP {response.status_code}"
+                
+                html = response.text
+                tracks = []
+                
+                # Try to extract from embedded JSON data
+                # Spotify embeds track data in script tags
+                script_pattern = r'<script[^>]*>\\s*Spotify\\s*=\\s*({.*?});?\\s*</script>'
+                
+                # Alternative: look for track URIs and names in the HTML
+                # Pattern for track IDs
+                track_ids = re.findall(r'spotify:track:([a-zA-Z0-9]{22})', html)
+                
+                # Try to get titles from meta tags or other sources
+                title_pattern = r'"name":"([^"]+)"[^}]*"uri":"spotify:track:([a-zA-Z0-9]{22})"'
+                title_matches = re.findall(title_pattern, html)
+                
+                if title_matches:
+                    seen = set()
+                    for title, track_id in title_matches:
+                        if track_id not in seen:
+                            seen.add(track_id)
+                            tracks.append({"track_id": track_id, "title": title})
+                elif track_ids:
+                    # Fallback: just use track IDs
+                    seen = set()
+                    for i, track_id in enumerate(track_ids):
+                        if track_id not in seen:
+                            seen.add(track_id)
+                            tracks.append({"track_id": track_id, "title": f"Track {i+1}"})
+                
+                if not tracks:
+                    # Try oembed API for basic info
+                    oembed_url = f"https://open.spotify.com/oembed?url={url}"
+                    oembed_resp = requests.get(oembed_url, timeout=10)
+                    if oembed_resp.status_code == 200:
+                        return None, "Playlist found but couldn't extract individual tracks. Try sharing individual songs."
+                    return None, "No tracks found in playlist"
+                
+                return tracks, None
+                
+            except Exception as e:
+                return None, str(e)
+
+        playlist_id = r'''\(playlistID)'''
+        is_album = \(isAlbum ? "True" : "False")
+        result = {}
+
+        tracks, error = get_spotify_playlist_tracks(playlist_id, is_album)
+        if tracks:
+            result = {"success": True, "tracks": tracks}
+        else:
+            result = {"success": False, "error": error or "Failed to fetch playlist"}
+
+        with open(r'''\(resultFilePath)''', 'w', encoding='utf-8') as f:
+            json.dump(result, f)
+        """
+    }
 
     
     private func notifyChange() {

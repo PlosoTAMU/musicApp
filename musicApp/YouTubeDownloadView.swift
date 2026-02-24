@@ -4,6 +4,8 @@ struct YouTubeDownloadView: View {
     @ObservedObject var downloadManager: DownloadManager
     @State private var errorMessage: String?
     @State private var hasProcessed = false
+    @State private var isPlaylist = false
+    @State private var playlistTrackCount: Int?
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
@@ -50,24 +52,20 @@ struct YouTubeDownloadView: View {
             .onAppear {
                 if !hasProcessed {
                     hasProcessed = true
-                    // FIXED: Setup callback before starting download
                     setupTitleCallback()
                     checkClipboardAndStart()
                 }
             }
             .onDisappear {
-                // Clean up callback
                 EmbeddedPython.shared.onTitleFetched = nil
             }
         }
     }
     
-    // FIXED: Setup callback to update download title in real-time
     private func setupTitleCallback() {
         EmbeddedPython.shared.onTitleFetched = { [weak downloadManager] videoID, title in
             guard let manager = downloadManager else { return }
             
-            // Find the active download by videoID and update its title
             if let index = manager.activeDownloads.firstIndex(where: { $0.videoID == videoID }) {
                 manager.activeDownloads[index] = ActiveDownload(
                     id: manager.activeDownloads[index].id,
@@ -75,7 +73,6 @@ struct YouTubeDownloadView: View {
                     title: title,
                     progress: manager.activeDownloads[index].progress
                 )
-                print("📝 [YouTubeDownloadView] Updated banner title to: \(title)")
             }
         }
     }
@@ -92,18 +89,29 @@ struct YouTubeDownloadView: View {
             return
         }
         
+        // ✅ NEW: Check if it's a playlist first
+        if let playlistInfo = downloadManager.detectPlaylist(from: clipboardString) {
+            // It's a playlist!
+            downloadManager.downloadPlaylist(
+                url: clipboardString,
+                source: playlistInfo.source,
+                playlistID: playlistInfo.playlistID
+            )
+            dismiss()
+            return
+        }
+        
+        // Single track download (existing logic)
         guard let (source, videoID) = detectSourceAndExtractID(from: clipboardString) else {
             errorMessage = "Invalid URL format.\nPlease copy a valid YouTube or Spotify link."
             return
         }
         
-        // Check for duplicates FIRST
         if let existing = downloadManager.findDuplicateByVideoID(videoID: videoID, source: source) {
             errorMessage = "Already downloaded:\n\(existing.name)"
-            return // Show this error in the sheet
+            return
         }
         
-        // FIXED: Start with "Fetching info" - will be updated by callback
         downloadManager.startBackgroundDownload(
             url: clipboardString,
             videoID: videoID,
@@ -111,10 +119,8 @@ struct YouTubeDownloadView: View {
             title: "Fetching info"
         )
         
-        // Dismiss immediately - banner will show and update
         dismiss()
     }
-    
     private func detectSourceAndExtractID(from urlString: String) -> (DownloadSource, String)? {
         guard let url = URL(string: urlString) else { return nil }
         let host = url.host?.lowercased() ?? ""
@@ -151,10 +157,6 @@ struct YouTubeDownloadView: View {
             }
             
             if url.pathComponents.contains("embed"), url.pathComponents.count > 2 {
-                return url.pathComponents[2]
-            }
-            
-            if url.pathComponents.contains("v"), url.pathComponents.count > 2 {
                 return url.pathComponents[2]
             }
             
