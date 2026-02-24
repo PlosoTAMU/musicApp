@@ -962,6 +962,26 @@ class DownloadManager: ObservableObject {
         return waveformsDir.appendingPathComponent("\(videoID).waveform")
     }
     
+    // MARK: - Start Background Download (single track entry point)
+
+    func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String) {
+        // Check playlist URLs and route to playlist downloader
+        if let (detectedSource, playlistID, isPlaylist) = detectPlaylist(from: url), isPlaylist {
+            downloadPlaylist(url: url, source: detectedSource, playlistID: playlistID)
+            return
+        }
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
+            await self.downloadSingleTrackFromQueue(
+                url: url,
+                videoID: videoID,
+                source: source,
+                title: title
+            )
+        }
+    }
+
     // Update addDownload to preserve originalURL:
     func addDownload(_ download: Download) {
         let targetURL = musicDirectory.appendingPathComponent(download.url.lastPathComponent)
