@@ -179,28 +179,40 @@ class DownloadManager: ObservableObject {
                 
                 print("📋 [Playlist] Found \(tracks.count) tracks")
                 
-                // Download each track sequentially to avoid overwhelming the system
-                for (index, track) in tracks.enumerated() {
-                    // Check for duplicates
-                    if self.findDuplicateByVideoID(videoID: track.videoID, source: source) != nil {
-                        print("⏭️ [Playlist] Skipping duplicate: \(track.title)")
-                        continue
+                // ✅ NEW: Track concurrent downloads with a semaphore (max 7)
+                let maxConcurrent = 7
+                let semaphore = DispatchSemaphore(value: maxConcurrent)
+                
+                // Create task group for concurrent downloads
+                await withTaskGroup(of: Void.self) { group in
+                    for (index, track) in tracks.enumerated() {
+                        // Check for duplicates
+                        if self.findDuplicateByVideoID(videoID: track.videoID, source: source) != nil {
+                            print("⏭️ [Playlist] Skipping duplicate: \(track.title)")
+                            continue
+                        }
+                        
+                        group.addTask {
+                            // Wait for available slot
+                            semaphore.wait()
+                            defer { semaphore.signal() }
+                            
+                            print("📥 [Playlist] Downloading \(index + 1)/\(tracks.count): \(track.title)")
+                            
+                            self.startBackgroundDownload(
+                                url: track.url,
+                                videoID: track.videoID,
+                                source: source,
+                                title: "[\(index + 1)/\(tracks.count)] \(track.title)"
+                            )
+                            
+                            // Small delay to prevent overwhelming the system
+                            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                        }
                     }
-                    
-                    await MainActor.run {
-                        print("📥 [Playlist] Downloading \(index + 1)/\(tracks.count): \(track.title)")
-                    }
-                    
-                    self.startBackgroundDownload(
-                        url: track.url,
-                        videoID: track.videoID,
-                        source: source,
-                        title: "[\(index + 1)/\(tracks.count)] \(track.title)"
-                    )
-                    
-                    // Small delay between starting downloads to prevent rate limiting
-                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
                 }
+                
+                print("✅ [Playlist] All downloads queued/completed")
                 
             } catch {
                 print("❌ [Playlist] Failed to fetch playlist: \(error)")
