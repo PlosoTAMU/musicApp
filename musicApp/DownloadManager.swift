@@ -235,6 +235,10 @@ class DownloadManager: ObservableObject {
             return pendingTracks.isEmpty
         }
         
+        func hasWork() -> Bool {
+            return !pendingTracks.isEmpty || isProcessing
+        }
+        
         func setProcessing(_ value: Bool) {
             isProcessing = value
         }
