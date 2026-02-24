@@ -170,6 +170,7 @@ class DownloadManager: ObservableObject {
         private var pendingTracks: [(videoID: String, title: String, url: String, source: DownloadSource)] = []
         private var activeCount = 0
         private let maxConcurrent = 7
+        private var downloadingVideoIDs = Set<String>()  // ✅ NEW: Track in-progress
         
         func enqueue(tracks: [(videoID: String, title: String, url: String)], source: DownloadSource) {
             for track in tracks {
@@ -179,12 +180,27 @@ class DownloadManager: ObservableObject {
         
         func dequeue() -> (videoID: String, title: String, url: String, source: DownloadSource)? {
             guard !pendingTracks.isEmpty, activeCount < maxConcurrent else { return nil }
-            activeCount += 1
-            return pendingTracks.removeFirst()
+            
+            // ✅ NEW: Skip tracks already being downloaded
+            while !pendingTracks.isEmpty {
+                let track = pendingTracks.removeFirst()
+                if !downloadingVideoIDs.contains(track.videoID) {
+                    downloadingVideoIDs.insert(track.videoID)
+                    activeCount += 1
+                    return track
+                }
+                print("⏭️ [Queue] Skipping already-downloading: \(track.title)")
+            }
+            return nil
         }
         
-        func markComplete() {
+        func markComplete(videoID: String) {  // ✅ UPDATED: Pass videoID
             activeCount -= 1
+            downloadingVideoIDs.remove(videoID)
+        }
+        
+        func isDownloading(videoID: String) -> Bool {  // ✅ NEW
+            return downloadingVideoIDs.contains(videoID)
         }
         
         func hasWork() -> Bool {
@@ -242,26 +258,23 @@ class DownloadManager: ObservableObject {
 
     private func processPlaylistQueue() async {
         while await playlistQueue.hasWork() {
-            // Try to dequeue and start downloads up to the limit
             while let track = await playlistQueue.dequeue() {
                 let stats = await playlistQueue.getStats()
                 print("📥 [Queue] Starting download (\(stats.active) active, \(stats.pending) pending): \(track.title)")
                 
-                // Start download with completion callback
                 Task.detached(priority: .userInitiated) { [weak self] in
                     guard let self = self else {
-                        await self?.playlistQueue.markComplete()
+                        await self?.playlistQueue.markComplete(videoID: track.videoID)  // ✅ Pass videoID
                         return
                     }
                     
-                    // Check duplicate again right before download
+                    // Check duplicate in completed downloads
                     if self.findDuplicateByVideoID(videoID: track.videoID, source: track.source) != nil {
-                        print("⏭️ [Queue] Duplicate detected before download: \(track.title)")
-                        await self.playlistQueue.markComplete()
+                        print("⏭️ [Queue] Duplicate detected: \(track.title)")
+                        await self.playlistQueue.markComplete(videoID: track.videoID)  // ✅ Pass videoID
                         return
                     }
                     
-                    // Start the download
                     await self.downloadTrackFromQueue(
                         url: track.url,
                         videoID: track.videoID,
@@ -269,18 +282,15 @@ class DownloadManager: ObservableObject {
                         title: track.title
                     )
                     
-                    // Mark complete and trigger next download
-                    await self.playlistQueue.markComplete()
+                    await self.playlistQueue.markComplete(videoID: track.videoID)  // ✅ Pass videoID
                     let stats = await self.playlistQueue.getStats()
                     print("✅ [Queue] Download complete (\(stats.active) active, \(stats.pending) pending)")
                 }
                 
-                // Small delay between starting downloads
-                try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
+                try? await Task.sleep(nanoseconds: 300_000_000)
             }
             
-            // Wait before checking queue again
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+            try? await Task.sleep(nanoseconds: 500_000_000)
         }
         
         print("✅ [Playlist] All downloads complete")
