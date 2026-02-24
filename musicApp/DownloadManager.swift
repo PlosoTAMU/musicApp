@@ -163,96 +163,7 @@ class DownloadManager: ObservableObject {
         return nil
     }
 
-    /// Downloads all tracks from a playlist with rolling 7-concurrent limit
-    // MARK: - Playlist Download Queue
-
-    private actor PlaylistDownloadQueue {
-        private var pendingTracks: [(videoID: String, title: String, url: String, source: DownloadSource)] = []
-        private var activeCount = 0
-        private let maxConcurrent = 7
-        private var downloadingVideoIDs = Set<String>()  // ✅ NEW: Track in-progress
-        
-        func enqueue(tracks: [(videoID: String, title: String, url: String)], source: DownloadSource) {
-            for track in tracks {
-                pendingTracks.append((track.videoID, track.title, track.url, source))
-            }
-        }
-        
-        func dequeue() -> (videoID: String, title: String, url: String, source: DownloadSource)? {
-            guard !pendingTracks.isEmpty, activeCount < maxConcurrent else { return nil }
-            
-            // ✅ NEW: Skip tracks already being downloaded
-            while !pendingTracks.isEmpty {
-                let track = pendingTracks.removeFirst()
-                if !downloadingVideoIDs.contains(track.videoID) {
-                    downloadingVideoIDs.insert(track.videoID)
-                    activeCount += 1
-                    return track
-                }
-                print("⏭️ [Queue] Skipping already-downloading: \(track.title)")
-            }
-            return nil
-        }
-        
-        func markComplete(videoID: String) {  // ✅ UPDATED: Pass videoID
-            activeCount -= 1
-            downloadingVideoIDs.remove(videoID)
-        }
-        
-        func isDownloading(videoID: String) -> Bool {  // ✅ NEW
-            return downloadingVideoIDs.contains(videoID)
-        }
-        
-        func hasWork() -> Bool {
-            return !pendingTracks.isEmpty || activeCount > 0
-        }
-        
-        func getStats() -> (pending: Int, active: Int) {
-            return (pendingTracks.count, activeCount)
-        }
-    }
-
-    private let playlistQueue = PlaylistDownloadQueue()
-
-    /// Downloads all tracks from a playlist with proper queue management
-    func downloadPlaylist(url: String, source: DownloadSource, playlistID: String) {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self = self else { return }
-            
-            do {
-                let tracks: [(videoID: String, title: String, url: String)]
-                
-                if source == .youtube {
-                    tracks = try await self.fetchYouTubePlaylistTracks(playlistID: playlistID)
-                } else {
-                    tracks = try await self.fetchSpotifyPlaylistTracks(playlistID: playlistID, originalURL: url)
-                }
-                
-                print("📋 [Playlist] Found \(tracks.count) tracks, adding to queue")
-                
-                // Filter out duplicates and add to queue
-                var tracksToQueue: [(videoID: String, title: String, url: String)] = []
-                for track in tracks {
-                    if self.findDuplicateByVideoID(videoID: track.videoID, source: source) == nil {
-                        tracksToQueue.append(track)
-                    } else {
-                        print("⏭️ [Playlist] Skipping duplicate: \(track.title)")
-                    }
-                }
-                
-                // Add all tracks to queue
-                await self.playlistQueue.enqueue(tracks: tracksToQueue, source: source)
-                
-                print("📋 [Playlist] Queued \(tracksToQueue.count) tracks")
-                
-                // Start processing the queue
-                await self.processPlaylistQueue()
-                
-            } catch {
-                print("❌ [Playlist] Failed to fetch playlist: \(error)")
-            }
-        }
-    }
+    
 
     // MARK: - Queue Processor
 
@@ -296,32 +207,173 @@ class DownloadManager: ObservableObject {
         print("✅ [Playlist] All downloads complete")
     }
 
+    // MARK: - Playlist Download Queue (FIXED - Sequential, No Shared Callbacks)
 
-    // MARK: - Download Single Track from Queue
-
-    private func downloadTrackFromQueue(url: String, videoID: String, source: DownloadSource, title: String) async {
-        let downloadID = UUID()
-        let activeDownload = ActiveDownload(id: downloadID, videoID: videoID, title: title, progress: 0.0)
+    private actor PlaylistDownloadQueue {
+        private var pendingTracks: [(videoID: String, title: String, url: String, source: DownloadSource)] = []
+        private var isProcessing = false
+        private var downloadedVideoIDs = Set<String>()  // Track what we've downloaded in this session
         
+        func enqueue(tracks: [(videoID: String, title: String, url: String)], source: DownloadSource) {
+            for track in tracks {
+                // Skip if already queued or downloaded in this session
+                if !downloadedVideoIDs.contains(track.videoID) {
+                    pendingTracks.append((track.videoID, track.title, track.url, source))
+                }
+            }
+        }
+        
+        func dequeue() -> (videoID: String, title: String, url: String, source: DownloadSource)? {
+            guard !pendingTracks.isEmpty else { return nil }
+            let track = pendingTracks.removeFirst()
+            downloadedVideoIDs.insert(track.videoID)  // Mark as being processed
+            return track
+        }
+        
+        func isEmpty() -> Bool {
+            return pendingTracks.isEmpty
+        }
+        
+        func setProcessing(_ value: Bool) {
+            isProcessing = value
+        }
+        
+        func isCurrentlyProcessing() -> Bool {
+            return isProcessing
+        }
+        
+        func getPendingCount() -> Int {
+            return pendingTracks.count
+        }
+        
+        func clear() {
+            pendingTracks.removeAll()
+            downloadedVideoIDs.removeAll()
+            isProcessing = false
+        }
+    }
+
+    private let playlistQueue = PlaylistDownloadQueue()
+
+    /// Downloads all tracks from a playlist - queues them and processes ONE AT A TIME
+    func downloadPlaylist(url: String, source: DownloadSource, playlistID: String) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
+            
+            do {
+                let tracks: [(videoID: String, title: String, url: String)]
+                
+                if source == .youtube {
+                    tracks = try await self.fetchYouTubePlaylistTracks(playlistID: playlistID)
+                } else {
+                    tracks = try await self.fetchSpotifyPlaylistTracks(playlistID: playlistID, originalURL: url)
+                }
+                
+                print("📋 [Playlist] Found \(tracks.count) tracks")
+                
+                // Filter out duplicates that are already downloaded
+                var tracksToQueue: [(videoID: String, title: String, url: String)] = []
+                for track in tracks {
+                    if self.findDuplicateByVideoID(videoID: track.videoID, source: source) == nil {
+                        tracksToQueue.append(track)
+                    } else {
+                        print("⏭️ [Playlist] Skipping already-downloaded: \(track.title)")
+                    }
+                }
+                
+                guard !tracksToQueue.isEmpty else {
+                    print("✅ [Playlist] All tracks already downloaded")
+                    return
+                }
+                
+                // Add to queue
+                await self.playlistQueue.enqueue(tracks: tracksToQueue, source: source)
+                print("📋 [Playlist] Queued \(tracksToQueue.count) new tracks")
+                
+                // Start processing if not already running
+                if await !self.playlistQueue.isCurrentlyProcessing() {
+                    await self.processPlaylistQueueSequentially()
+                }
+                
+            } catch {
+                print("❌ [Playlist] Failed to fetch playlist: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Sequential Queue Processor (ONE AT A TIME)
+
+    private func processPlaylistQueueSequentially() async {
+        // Prevent multiple processors
+        guard await !playlistQueue.isCurrentlyProcessing() else { return }
+        await playlistQueue.setProcessing(true)
+        
+        defer {
+            Task { await playlistQueue.setProcessing(false) }
+        }
+        
+        while let track = await playlistQueue.dequeue() {
+            let pending = await playlistQueue.getPendingCount()
+            print("📥 [Queue] Starting download (\(pending) remaining): \(track.title)")
+            
+            // Check duplicate one more time right before download
+            if findDuplicateByVideoID(videoID: track.videoID, source: track.source) != nil {
+                print("⏭️ [Queue] Skipping duplicate: \(track.title)")
+                continue
+            }
+            
+            // Download this ONE track completely before moving to the next
+            await downloadSingleTrackFromQueue(
+                url: track.url,
+                videoID: track.videoID,
+                source: track.source,
+                title: track.title
+            )
+            
+            print("✅ [Queue] Completed: \(track.title)")
+        }
+        
+        print("✅ [Playlist] All downloads complete")
+    }
+
+    // MARK: - Download Single Track (Self-Contained, No Shared Callbacks)
+
+    private func downloadSingleTrackFromQueue(url: String, videoID: String, source: DownloadSource, title: String) async {
+        // Create unique ID for this specific download
+        let downloadID = UUID()
+        
+        // Create and show the active download banner
+        let activeDownload = ActiveDownload(id: downloadID, videoID: videoID, title: title, progress: 0.0)
         await MainActor.run {
             self.activeDownloads.append(activeDownload)
         }
         
-        // ✅ FIXED: Use downloadID for matching instead of relying on shared callback
-        // Don't set up onTitleFetched here - it gets overwritten by concurrent downloads
+        // Helper to update this specific download's banner
+        func updateBanner(title: String, progress: Double) async {
+            await MainActor.run {
+                if let index = self.activeDownloads.firstIndex(where: { $0.id == downloadID }) {
+                    self.activeDownloads[index].title = title
+                    self.activeDownloads[index].progress = progress
+                    self.notifyChange()
+                }
+            }
+        }
+        
+        // Helper to remove this specific banner
+        func removeBanner() async {
+            await MainActor.run {
+                self.activeDownloads.removeAll { $0.id == downloadID }
+            }
+        }
         
         do {
             var finalURL = url
             var finalVideoID = videoID
             var spotifyTrackInfo: String? = nil
             
+            // Handle Spotify conversion
             if source == .spotify {
-                await MainActor.run {
-                    if let index = self.activeDownloads.firstIndex(where: { $0.id == downloadID }) {
-                        self.activeDownloads[index].title = "Converting Spotify..."
-                        self.notifyChange()
-                    }
-                }
+                await updateBanner(title: "Converting: \(title)", progress: 0.2)
                 
                 let (convertedURL, trackInfo) = try await self.convertSpotifyToYouTube(spotifyURL: url)
                 finalURL = convertedURL
@@ -331,28 +383,20 @@ class DownloadManager: ObservableObject {
                     finalVideoID = extractedID
                 }
                 
-                // ✅ Update with actual track info from Spotify
+                // Update banner with actual track name from Spotify
                 if let trackInfo = spotifyTrackInfo {
-                    await MainActor.run {
-                        if let index = self.activeDownloads.firstIndex(where: { $0.id == downloadID }) {
-                            self.activeDownloads[index].title = trackInfo
-                            self.notifyChange()
-                        }
-                    }
+                    await updateBanner(title: "Downloading: \(trackInfo)", progress: 0.4)
                 }
+            } else {
+                await updateBanner(title: "Downloading: \(title)", progress: 0.3)
             }
             
-            // ✅ Update progress before download
-            await MainActor.run {
-                if let index = self.activeDownloads.firstIndex(where: { $0.id == downloadID }) {
-                    self.activeDownloads[index].title = source == .spotify && spotifyTrackInfo != nil ? spotifyTrackInfo! : "Downloading..."
-                    self.activeDownloads[index].progress = 0.5
-                    self.notifyChange()
-                }
-            }
-            
+            // Download the audio file
             let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: finalURL, videoID: finalVideoID)
             
+            await updateBanner(title: "Processing: \(spotifyTrackInfo ?? downloadedTitle)", progress: 0.7)
+            
+            // Rename file if Spotify
             var finalFileURL = fileURL
             if source == .spotify, let trackInfo = spotifyTrackInfo {
                 let cleanTrackInfo = trackInfo
@@ -378,37 +422,37 @@ class DownloadManager: ObservableObject {
                 }
             }
             
-            // ✅ CRITICAL: Fetch thumbnail USING THE CORRECT videoID for this specific track
+            await updateBanner(title: "Fetching thumbnail...", progress: 0.85)
+            
+            // Fetch thumbnail for THIS specific file with THIS specific videoID
             let thumbnailPath = await self.fetchThumbnailWithRetries(for: finalFileURL, videoID: finalVideoID, attempts: 5)
             
+            // Create the download object with all the correct, matching data
             let displayName = spotifyTrackInfo ?? downloadedTitle
             let cleanedTitle = self.neutralizeName(displayName)
             
-            // ✅ CRITICAL: Create download with the CORRECT videoID and thumbnail that match THIS track
             let download = Download(
                 name: cleanedTitle,
                 url: finalFileURL,
                 thumbnailPath: thumbnailPath?.path,
-                videoID: finalVideoID,  // ✅ This MUST match the file and thumbnail
+                videoID: finalVideoID,
                 source: source,
                 originalURL: url
             )
             
+            // Remove banner and add to downloads
             await MainActor.run {
                 self.activeDownloads.removeAll { $0.id == downloadID }
                 self.addDownload(download)
             }
             
-            print("✅ [Queue] Successfully downloaded: \(cleanedTitle) (videoID: \(finalVideoID))")
+            print("✅ [Queue] Saved: \(cleanedTitle) (videoID: \(finalVideoID))")
             
         } catch {
-            print("❌ [Queue] Download failed for \(title): \(error)")
-            await MainActor.run {
-                self.activeDownloads.removeAll { $0.id == downloadID }
-            }
+            print("❌ [Queue] Failed: \(title) - \(error)")
+            await removeBanner()
         }
     }
-
 
 
 
@@ -666,131 +710,7 @@ class DownloadManager: ObservableObject {
         return nil
     }
     
-    func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String = "Fetching info") {
-        let activeDownload = ActiveDownload(id: UUID(), videoID: videoID, title: title, progress: 0.0)
-        activeDownloads.append(activeDownload)
 
-        let targetDownloadID = activeDownload.id
-        
-        // Set up callback BEFORE starting download
-        EmbeddedPython.shared.onTitleFetched = { [weak self] callbackVideoID, callbackTitle in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                
-                if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
-                    self.activeDownloads[index].title = callbackTitle
-                    self.activeDownloads[index].progress = 0.5
-                    self.notifyChange()
-                }
-            }
-        }
-        
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self = self else { return }
-            
-            do {
-                // ✅ FIXED: Check if it's a Spotify URL and convert first
-                var finalURL = url
-                var finalVideoID = videoID
-                var spotifyTrackInfo: String? = nil
-                
-                if source == .spotify {
-                    // Update status to show conversion
-                    await MainActor.run {
-                        if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
-                            self.activeDownloads[index].title = "Converting Spotify link..."
-                            self.notifyChange()
-                        }
-                    }
-                    
-                    // Convert Spotify to YouTube using the urllib-based script
-                    let (convertedURL, trackInfo) = try await self.convertSpotifyToYouTube(spotifyURL: url)
-                    finalURL = convertedURL
-                    spotifyTrackInfo = trackInfo
-                    
-                    // Extract YouTube video ID from converted URL
-                    if let extractedID = self.extractYouTubeID(from: finalURL) {
-                        finalVideoID = extractedID
-                    }
-                    
-                    print("✅ [DownloadManager] Converted Spotify to YouTube: \(finalURL)")
-                    if let trackInfo = spotifyTrackInfo {
-                        print("✅ [DownloadManager] Spotify track info: \(trackInfo)")
-                    }
-                    
-                    // Update status
-                    await MainActor.run {
-                        if let index = self.activeDownloads.firstIndex(where: { $0.id == targetDownloadID }) {
-                            self.activeDownloads[index].title = "Downloading from YouTube..."
-                            self.notifyChange()
-                        }
-                    }
-                }
-                
-                // Now proceed with YouTube download
-                let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: finalURL, videoID: finalVideoID)
-                
-                // ✅ NEW: Rename file if it's from Spotify and we have track info
-                var finalFileURL = fileURL
-                if source == .spotify, let trackInfo = spotifyTrackInfo {
-                    // Clean the track info to be filesystem-safe
-                    let cleanTrackInfo = trackInfo
-                        .replacingOccurrences(of: "–", with: "-")  // Replace em-dash with hyphen
-                        .replacingOccurrences(of: "/", with: "-")
-                        .replacingOccurrences(of: ":", with: "-")
-                        .replacingOccurrences(of: "\"", with: "")
-                        .replacingOccurrences(of: "<", with: "")
-                        .replacingOccurrences(of: ">", with: "")
-                        .replacingOccurrences(of: "|", with: "-")
-                        .replacingOccurrences(of: "?", with: "")
-                        .replacingOccurrences(of: "*", with: "")
-                    
-                    let fileExtension = fileURL.pathExtension
-                    let newFileName = "\(cleanTrackInfo).\(fileExtension)"
-                    let newFileURL = fileURL.deletingLastPathComponent().appendingPathComponent(newFileName)
-                    
-                    do {
-                        // Rename the audio file
-                        try FileManager.default.moveItem(at: fileURL, to: newFileURL)
-                        finalFileURL = newFileURL
-                        print("✅ [DownloadManager] Renamed Spotify file to: \(newFileName)")
-                    } catch {
-                        print("⚠️ [DownloadManager] Failed to rename file: \(error.localizedDescription)")
-                        // Continue with original filename if rename fails
-                    }
-                }
-                
-                // Get thumbnail with retries (avoiding var capture in concurrent code)
-                let thumbnailPath = await self.fetchThumbnailWithRetries(for: finalFileURL, videoID: finalVideoID, attempts: 5)
-                
-                // Neutralize the song name to remove formatting characters
-                // Use Spotify track info if available, otherwise use downloaded title
-                let displayName = spotifyTrackInfo ?? downloadedTitle
-                let cleanedTitle = self.neutralizeName(displayName)
-                
-                let download = Download(
-                    name: cleanedTitle,
-                    url: finalFileURL,
-                    thumbnailPath: thumbnailPath?.path,
-                    videoID: finalVideoID,
-                    source: source,  // Keep original source (.spotify) for UI icon
-                    originalURL: url  // Store the original URL
-                )
-
-
-                
-                await MainActor.run {
-                    self.activeDownloads.removeAll { $0.videoID == videoID }
-                    self.addDownload(download)
-                }
-            } catch {
-                print("❌ Background download failed: \(error)")
-                await MainActor.run {
-                    self.activeDownloads.removeAll { $0.videoID == videoID }
-                }
-            }
-        }
-    }
     func renameDownload(_ download: Download, newName: String) {
         guard let index = downloads.firstIndex(where: { $0.id == download.id }) else {
             print("❌ [DownloadManager] Download not found in array")
