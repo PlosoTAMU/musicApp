@@ -30,6 +30,7 @@ class DownloadManager: ObservableObject {
     
     private let downloadsFileURL: URL
     private let musicDirectory: URL
+    private let playlistQueue = PlaylistDownloadQueue()
     
     init() {
         let fileManager = FileManager.default
@@ -253,7 +254,6 @@ class DownloadManager: ObservableObject {
         }
     }
 
-    private let playlistQueue = PlaylistDownloadQueue()
 
     /// Downloads all tracks from a playlist - queues them and processes ONE AT A TIME
     func downloadPlaylist(url: String, source: DownloadSource, playlistID: String) {
