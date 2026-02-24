@@ -166,48 +166,6 @@ class DownloadManager: ObservableObject {
 
     
 
-    // MARK: - Queue Processor
-
-    private func processPlaylistQueue() async {
-        while await playlistQueue.hasWork() {
-            while let track = await playlistQueue.dequeue() {
-                let stats = await playlistQueue.getStats()
-                print("📥 [Queue] Starting download (\(stats.active) active, \(stats.pending) pending): \(track.title)")
-                
-                Task.detached(priority: .userInitiated) { [weak self] in
-                    guard let self = self else {
-                        await self?.playlistQueue.markComplete(videoID: track.videoID)  // ✅ Pass videoID
-                        return
-                    }
-                    
-                    // Check duplicate in completed downloads
-                    if self.findDuplicateByVideoID(videoID: track.videoID, source: track.source) != nil {
-                        print("⏭️ [Queue] Duplicate detected: \(track.title)")
-                        await self.playlistQueue.markComplete(videoID: track.videoID)  // ✅ Pass videoID
-                        return
-                    }
-                    
-                    await self.downloadTrackFromQueue(
-                        url: track.url,
-                        videoID: track.videoID,
-                        source: track.source,
-                        title: track.title
-                    )
-                    
-                    await self.playlistQueue.markComplete(videoID: track.videoID)  // ✅ Pass videoID
-                    let stats = await self.playlistQueue.getStats()
-                    print("✅ [Queue] Download complete (\(stats.active) active, \(stats.pending) pending)")
-                }
-                
-                try? await Task.sleep(nanoseconds: 300_000_000)
-            }
-            
-            try? await Task.sleep(nanoseconds: 500_000_000)
-        }
-        
-        print("✅ [Playlist] All downloads complete")
-    }
-
     // MARK: - Playlist Download Queue (FIXED - Sequential, No Shared Callbacks)
 
     private actor PlaylistDownloadQueue {
