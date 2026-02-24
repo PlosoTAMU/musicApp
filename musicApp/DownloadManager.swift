@@ -304,8 +304,11 @@ class DownloadManager: ObservableObject {
         // Create unique ID for this specific download
         let downloadID = UUID()
         
+        // ✅ CRITICAL: Store the videoID locally so it doesn't get lost
+        let originalVideoID = videoID
+        
         // Create and show the active download banner
-        let activeDownload = ActiveDownload(id: downloadID, videoID: videoID, title: title, progress: 0.0)
+        let activeDownload = ActiveDownload(id: downloadID, videoID: originalVideoID, title: title, progress: 0.0)
         await MainActor.run {
             self.activeDownloads.append(activeDownload)
         }
@@ -330,7 +333,7 @@ class DownloadManager: ObservableObject {
         
         do {
             var finalURL = url
-            var finalVideoID = videoID
+            var finalVideoID = originalVideoID  // ✅ Use the captured original
             var spotifyTrackInfo: String? = nil
             
             // Handle Spotify conversion
@@ -353,8 +356,11 @@ class DownloadManager: ObservableObject {
                 await updateBanner(title: "Downloading: \(title)", progress: 0.3)
             }
             
+            // ✅ CRITICAL: Store finalVideoID before download so it doesn't change
+            let downloadVideoID = finalVideoID
+            
             // Download the audio file
-            let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: finalURL, videoID: finalVideoID)
+            let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: finalURL, videoID: downloadVideoID)
             
             await updateBanner(title: "Processing: \(spotifyTrackInfo ?? downloadedTitle)", progress: 0.7)
             
@@ -379,6 +385,7 @@ class DownloadManager: ObservableObject {
                 do {
                     try FileManager.default.moveItem(at: fileURL, to: newFileURL)
                     finalFileURL = newFileURL
+                    print("✅ [Queue] Renamed file: \(newFileName)")
                 } catch {
                     print("⚠️ [Queue] Failed to rename file: \(error.localizedDescription)")
                 }
@@ -386,18 +393,27 @@ class DownloadManager: ObservableObject {
             
             await updateBanner(title: "Fetching thumbnail...", progress: 0.85)
             
-            // Fetch thumbnail for THIS specific file with THIS specific videoID
-            let thumbnailPath = await self.fetchThumbnailWithRetries(for: finalFileURL, videoID: finalVideoID, attempts: 5)
+            // ✅ CRITICAL: Use the stored downloadVideoID, NOT the original videoID parameter
+            // This ensures we fetch the thumbnail for the CORRECT video (YouTube video after Spotify conversion)
+            print("🖼️ [Queue] Fetching thumbnail for videoID: \(downloadVideoID), file: \(finalFileURL.lastPathComponent)")
+            let thumbnailPath = await self.fetchThumbnailWithRetries(for: finalFileURL, videoID: downloadVideoID, attempts: 5)
+            
+            if thumbnailPath != nil {
+                print("✅ [Queue] Thumbnail fetched successfully")
+            } else {
+                print("⚠️ [Queue] No thumbnail found for videoID: \(downloadVideoID)")
+            }
             
             // Create the download object with all the correct, matching data
             let displayName = spotifyTrackInfo ?? downloadedTitle
             let cleanedTitle = self.neutralizeName(displayName)
             
+            // ✅ CRITICAL: Use downloadVideoID (the actual YouTube video ID) for the Download object
             let download = Download(
                 name: cleanedTitle,
                 url: finalFileURL,
                 thumbnailPath: thumbnailPath?.path,
-                videoID: finalVideoID,
+                videoID: downloadVideoID,  // ✅ Must match the thumbnail's videoID
                 source: source,
                 originalURL: url
             )
@@ -408,7 +424,7 @@ class DownloadManager: ObservableObject {
                 self.addDownload(download)
             }
             
-            print("✅ [Queue] Saved: \(cleanedTitle) (videoID: \(finalVideoID))")
+            print("✅ [Queue] Saved: \(cleanedTitle) (videoID: \(downloadVideoID))")
             
         } catch {
             print("❌ [Queue] Failed: \(title) - \(error)")
