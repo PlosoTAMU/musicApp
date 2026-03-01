@@ -317,24 +317,19 @@ class DownloadManager: ObservableObject {
         do {
             var finalURL = url
             var finalVideoID = originalVideoID  // ✅ Use the captured original
-            var spotifyTrackInfo: String? = nil
             
             // Handle Spotify conversion
             if source == .spotify {
                 await updateBanner(title: "Converting: \(title)", progress: 0.2)
                 
-                let (convertedURL, trackInfo) = try await self.convertSpotifyToYouTube(spotifyURL: url)
+                let (convertedURL, _) = try await self.convertSpotifyToYouTube(spotifyURL: url)
                 finalURL = convertedURL
-                spotifyTrackInfo = trackInfo
                 
                 if let extractedID = self.extractYouTubeID(from: finalURL) {
                     finalVideoID = extractedID
                 }
                 
-                // Update banner with actual track name from Spotify
-                if let trackInfo = spotifyTrackInfo {
-                    await updateBanner(title: "\(trackInfo)", progress: 0.4)
-                }
+                await updateBanner(title: "Downloading...", progress: 0.4)
             } else {
                 await updateBanner(title: "\(title)", progress: 0.3)
             }
@@ -342,45 +337,17 @@ class DownloadManager: ObservableObject {
             // ✅ CRITICAL: Store finalVideoID before download so it doesn't change
             let downloadVideoID = finalVideoID
             
-            // Download the audio file
+            // Download the audio file — yt-dlp gives us the proper title from YouTube
             let (fileURL, downloadedTitle) = try await EmbeddedPython.shared.downloadAudio(url: finalURL, videoID: downloadVideoID)
             
-            await updateBanner(title: "Processing: \(spotifyTrackInfo ?? downloadedTitle)", progress: 0.7)
-            
-            // Rename file if Spotify — use the Spotify title (Artist - Song)
-            var finalFileURL = fileURL
-            if source == .spotify, let trackInfo = spotifyTrackInfo {
-                let cleanTrackInfo = trackInfo
-                    .replacingOccurrences(of: "–", with: "-")    // em-dash
-                    .replacingOccurrences(of: "—", with: "-")    // long em-dash
-                    .replacingOccurrences(of: "/", with: "-")
-                    .replacingOccurrences(of: ":", with: "-")
-                    .replacingOccurrences(of: "\"", with: "")
-                    .replacingOccurrences(of: "<", with: "")
-                    .replacingOccurrences(of: ">", with: "")
-                    .replacingOccurrences(of: "|", with: "-")
-                    .replacingOccurrences(of: "?", with: "")
-                    .replacingOccurrences(of: "*", with: "")
-                
-                let fileExtension = fileURL.pathExtension
-                let newFileName = "\(cleanTrackInfo).\(fileExtension)"
-                let newFileURL = fileURL.deletingLastPathComponent().appendingPathComponent(newFileName)
-                
-                do {
-                    try FileManager.default.moveItem(at: fileURL, to: newFileURL)
-                    finalFileURL = newFileURL
-                    print("✅ [Queue] Renamed file: \(newFileName)")
-                } catch {
-                    print("⚠️ [Queue] Failed to rename file: \(error.localizedDescription)")
-                }
-            }
+            await updateBanner(title: "Processing: \(downloadedTitle)", progress: 0.7)
             
             await updateBanner(title: "Fetching thumbnail...", progress: 0.85)
             
             // ✅ CRITICAL: Use the stored downloadVideoID, NOT the original videoID parameter
             // This ensures we fetch the thumbnail for the CORRECT video (YouTube video after Spotify conversion)
-            print("🖼️ [Queue] Fetching thumbnail for videoID: \(downloadVideoID), file: \(finalFileURL.lastPathComponent)")
-            let thumbnailPath = await self.fetchThumbnailWithRetries(for: finalFileURL, videoID: downloadVideoID, attempts: 5)
+            print("🖼️ [Queue] Fetching thumbnail for videoID: \(downloadVideoID), file: \(fileURL.lastPathComponent)")
+            let thumbnailPath = await self.fetchThumbnailWithRetries(for: fileURL, videoID: downloadVideoID, attempts: 5)
             
             if thumbnailPath != nil {
                 print("✅ [Queue] Thumbnail fetched successfully")
@@ -388,25 +355,13 @@ class DownloadManager: ObservableObject {
                 print("⚠️ [Queue] No thumbnail found for videoID: \(downloadVideoID)")
             }
             
-            // Create the download object with all the correct, matching data
-            // For Spotify: ALWAYS use the Spotify track info (Artist - Song) as the title
-            // This ensures the saved name matches what was searched, not the YouTube video title
-            let displayName: String
-            if source == .spotify, let trackInfo = spotifyTrackInfo {
-                // Spotify oEmbed returns "Song Name by Artist" — normalize the separator to " - "
-                let normalized = trackInfo
-                    .replacingOccurrences(of: " – ", with: " - ")   // em-dash → hyphen
-                    .replacingOccurrences(of: " — ", with: " - ")   // em-dash long → hyphen
-                displayName = normalized
-            } else {
-                displayName = downloadedTitle
-            }
-            let cleanedTitle = self.neutralizeName(displayName)
+            // Always use the YouTube video title (yt-dlp provides it)
+            let cleanedTitle = self.neutralizeName(downloadedTitle)
             
             // ✅ CRITICAL: Use downloadVideoID (the actual YouTube video ID) for the Download object
             let download = Download(
                 name: cleanedTitle,
-                url: finalFileURL,
+                url: fileURL,
                 thumbnailPath: thumbnailPath?.path,
                 videoID: downloadVideoID,  // ✅ Must match the thumbnail's videoID
                 source: source,
@@ -860,7 +815,8 @@ class DownloadManager: ObservableObject {
         }
     }
 
-    // Generate Python script for Spotify conversion
+    // Generate Python script for Spotify → YouTube conversion
+    // Uses oEmbed API for the track title, then searches YouTube
     private func generateSpotifyConversionScript(spotifyURL: String, resultFilePath: String) -> String {
         let cleanURL = spotifyURL.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: "")
         
@@ -870,89 +826,16 @@ class DownloadManager: ObservableObject {
         import requests
         import re
         
-        def get_spotify_track_info(spotify_url):
-            \"\"\"Get song title and artist from Spotify.
-            
-            Strategy:
-            1. Fetch the Spotify track page HTML — it contains meta tags like
-               <meta property="og:title" content="Song Name"> and
-               <meta name="music:musician_description" content="Artist Name">
-               or <title>Song - Artist | Spotify</title>
-            2. Fall back to oEmbed API for just the song title if scraping fails.
-            Returns (title, artist) tuple.
-            \"\"\"
-            title = None
-            artist = None
-            
+        def get_spotify_title(spotify_url):
             try:
-                # First try scraping the track page for structured artist info
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-                    "Accept-Language": "en-US,en;q=0.9"
-                }
-                resp = requests.get(spotify_url, headers=headers, timeout=10)
-                if resp.status_code == 200:
-                    html = resp.text
-                    
-                    # Try <title>Song - artist | Spotify</title>  (most reliable)
-                    title_match = re.search(r'<title>(.+?)\\s*[-\\u2013\\u2014]\\s*(?:song|Song).*?(?:by|\\|)\\s*(.+?)\\s*\\|\\s*Spotify', html)
-                    if not title_match:
-                        # Alternate: <title>Song - Artist | Spotify</title>
-                        title_match = re.search(r'<title>(.+?)\\s*[-\\u2013\\u2014]\\s*(.+?)\\s*\\|\\s*Spotify', html)
-                    if title_match:
-                        title = title_match.group(1).strip()
-                        artist = title_match.group(2).strip()
-                        # Clean "song and lyrics by" prefix
-                        artist = re.sub(r'^(?:song\\s+(?:and\\s+lyrics\\s+)?by\\s+)', '', artist, flags=re.IGNORECASE).strip()
-                    
-                    # If title_match didn't work, try JSON-LD
-                    if not artist:
-                        ld_match = re.search(r'<script[^>]*type="application/ld\\+json"[^>]*>(.+?)</script>', html, re.DOTALL)
-                        if ld_match:
-                            try:
-                                ld = json.loads(ld_match.group(1))
-                                if isinstance(ld, dict):
-                                    title = title or ld.get("name")
-                                    by_artist = ld.get("byArtist")
-                                    if isinstance(by_artist, dict):
-                                        artist = by_artist.get("name")
-                                    elif isinstance(by_artist, list) and by_artist:
-                                        artist = by_artist[0].get("name")
-                            except Exception:
-                                pass
-                    
-                    # Try og:title for the song name if we still don't have it
-                    if not title:
-                        og_match = re.search(r'<meta\\s+property="og:title"\\s+content="([^"]+)"', html)
-                        if og_match:
-                            title = og_match.group(1).strip()
-                    
-                    # Try to find artist from meta description: "Song · Artist · Album · Year"
-                    if not artist:
-                        desc_match = re.search(r'<meta\\s+(?:property="og:description"|name="description")\\s+content="([^"]+)"', html)
-                        if desc_match:
-                            parts = desc_match.group(1).split('\\u00b7')  # · separator
-                            if len(parts) >= 2:
-                                artist = parts[0].strip()
-                                # Sometimes desc is "Artist · Song" or "Song · Artist · Album"
-                                # If first part matches title, artist is second part
-                                if title and parts[0].strip().lower() == title.lower() and len(parts) >= 2:
-                                    artist = parts[1].strip()
+                oembed_url = f"https://open.spotify.com/oembed?url={spotify_url}"
+                response = requests.get(oembed_url, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get("title")
             except Exception as e:
-                print(f"Page scrape failed: {e}")
-            
-            # Fallback: oEmbed for song title only
-            if not title:
-                try:
-                    oembed_url = f"https://open.spotify.com/oembed?url={spotify_url}"
-                    response = requests.get(oembed_url, timeout=10)
-                    if response.status_code == 200:
-                        data = response.json()
-                        title = data.get("title")
-                except Exception as e:
-                    print(f"oEmbed failed: {e}")
-            
-            return title, artist
+                print(f"oEmbed failed: {e}")
+            return None
         
         def search_youtube(query):
             try:
@@ -972,56 +855,30 @@ class DownloadManager: ObservableObject {
                 print(f"Error searching YouTube: {e}")
                 return None
         
-        def spotify_to_youtube(spotify_url):
-            title, artist = get_spotify_track_info(spotify_url)
-            if not title:
-                return None, None, "Could not extract track info from Spotify"
-            
-            # Build the display name: "Artist - Song" if artist is known
-            if artist:
-                track_info = f"{artist} - {title}"
-            else:
-                track_info = title
-            
-            print(f"Found track: {track_info}")
-            
-            # Search YouTube with artist + title for better results
-            search_query = f"{artist} {title}" if artist else title
-            youtube_link = search_youtube(search_query)
-            if not youtube_link:
-                return None, track_info, "Could not find YouTube video for this track"
-            
-            return youtube_link, track_info, None
-        
         # Main execution
         spotify_url = r'''\(cleanURL)'''
         result = {}
         
         try:
-            youtube_url, track_info, error = spotify_to_youtube(spotify_url)
-            if youtube_url:
-                result = {
-                    'success': True,
-                    'youtube_url': youtube_url,
-                    'track_info': track_info
-                }
+            title = get_spotify_title(spotify_url)
+            if not title:
+                result = {'success': False, 'error': 'Could not get track info from Spotify'}
             else:
-                result = {
-                    'success': False,
-                    'error': error or 'Unknown error'
-                }
+                print(f"Found track: {title}")
+                youtube_url = search_youtube(title)
+                if youtube_url:
+                    result = {'success': True, 'youtube_url': youtube_url, 'track_info': title}
+                else:
+                    result = {'success': False, 'error': f'Could not find YouTube video for: {title}'}
         except Exception as e:
-            result = {
-                'success': False,
-                'error': str(e)
-            }
+            result = {'success': False, 'error': str(e)}
         
         with open(r'''\(resultFilePath)''', 'w', encoding='utf-8') as f:
             json.dump(result, f)
         """
     }
 
-    // ✅ ADD: Helper to extract YouTube video ID
+    // Helper to extract YouTube video ID
     private func extractYouTubeID(from urlString: String) -> String? {
         guard let url = URL(string: urlString) else { return nil }
         let host = url.host?.lowercased() ?? ""

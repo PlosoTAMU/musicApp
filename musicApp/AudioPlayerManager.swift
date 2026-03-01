@@ -1132,49 +1132,103 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // Used by hold-to-fast-forward button
     func setTemporarySpeed(_ speed: Double?) {
         temporarySpeedOverride = speed
-        audioQueue.async {
-            guard let timePitch = self.timePitchNode else { return }
+        audioQueue.async { [weak self] in
+            guard let self = self,
+                  let timePitch = self.timePitchNode else { return }
             let targetRate = Float(speed ?? (self.effectsBypass ? 1.0 : self.playbackSpeed))
-            let targetPitch = Float(speed != nil ? (self.effectsBypass ? 0 : self.pitchShift * 100) : (self.effectsBypass ? 0 : self.pitchShift * 100))
+            let targetPitch = self.effectsBypass ? Float(0) : Float(self.pitchShift * 100)
+            
+            // Set overlap high for any speed transition
+            let deviation = abs(targetRate - 1.0)
+            if deviation > 0.3 {
+                timePitch.overlap = 32
+            } else if deviation > 0.1 {
+                timePitch.overlap = 24
+            } else {
+                timePitch.overlap = 16
+            }
+            
+            timePitch.rate = targetRate
+            timePitch.pitch = targetPitch
             
             if speed == nil {
-                // RETURNING to normal: keep overlap HIGH during the transition to
-                // avoid phase artifacts, then lower it after the engine has settled.
-                timePitch.overlap = 32
-                timePitch.rate = targetRate
-                timePitch.pitch = targetPitch
-                
-                // After 150ms the engine has flushed the stretch buffer — now safe
-                // to lower overlap for efficiency.
-                self.audioQueue.asyncAfter(deadline: .now() + 0.15) {
-                    guard self.temporarySpeedOverride == nil else { return } // user pressed again
-                    let deviation = abs(timePitch.rate - 1.0)
-                    if deviation > 0.3 {
-                        timePitch.overlap = 32
-                    } else if deviation > 0.1 {
-                        timePitch.overlap = 24
-                    } else {
-                        timePitch.overlap = 16
-                    }
-                }
-            } else {
-                // ENGAGING fast speed: set high overlap first, then change rate
-                let deviation = abs(targetRate - 1.0)
-                if deviation > 0.3 {
-                    timePitch.overlap = 32
-                } else if deviation > 0.1 {
-                    timePitch.overlap = 24
-                } else {
-                    timePitch.overlap = 16
-                }
-                timePitch.rate = targetRate
-                // Leave pitch at whatever it was
+                // RETURNING to normal speed: the AVAudioUnitTimePitch node has
+                // internal resampling buffers that still hold "stretched" audio.
+                // Flush them by doing a quick stop→reschedule→play on the player
+                // node. This is the same thing pause+play does under the hood.
+                self.flushPlayerFromCurrentPosition()
             }
             
             DispatchQueue.main.async {
                 self.updateNowPlayingInfo()
             }
         }
+    }
+    
+    /// Flush the time-pitch node's internal buffers by stopping the player node,
+    /// rescheduling from the current playback position, and restarting.
+    /// Must be called on audioQueue.
+    private func flushPlayerFromCurrentPosition() {
+        guard let player = self.playerNode,
+              let file = self.audioFile,
+              let track = self.currentTrack else { return }
+        
+        // Capture where we are right now
+        let sampleRate = file.fileFormat.sampleRate
+        let cropStart = track.cropStartTime ?? 0.0
+        let totalFileLength = AVAudioFrameCount(file.length)
+        let cropEnd = track.cropEndTime ?? (Double(totalFileLength) / sampleRate)
+        let absoluteTime = cropStart + self.currentTime
+        let startFrame = AVAudioFramePosition(max(0, absoluteTime) * sampleRate)
+        let cropEndFrame = AVAudioFramePosition(cropEnd * sampleRate)
+        
+        guard startFrame < cropEndFrame else { return }
+        
+        let remainingFrames = AVAudioFrameCount(cropEndFrame - startFrame)
+        
+        // Save session info for the completion handler
+        let sessionID = self.currentPlaybackSessionID
+        let resumeTime = self.currentTime
+        
+        // Stop → reschedule → play (flushes TimePitch internal buffers)
+        player.stop()
+        
+        player.scheduleSegment(file,
+                              startingFrame: startFrame,
+                              frameCount: remainingFrames,
+                              at: nil)
+        
+        // Schedule silence padding + next-track trigger
+        let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
+        if let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                                 frameCapacity: paddingFrames) {
+            silenceBuffer.frameLength = paddingFrames
+            player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
+                guard let self = self else { return }
+                DispatchQueue.main.async {
+                    if self.currentPlaybackSessionID == sessionID &&
+                       !self.isHandlingRouteChange &&
+                       self.isPlaying &&
+                       !self.hasTriggeredNext {
+                        self.hasTriggeredNext = true
+                        self.next()
+                    }
+                }
+            }
+        }
+        
+        self.seekOffset = resumeTime
+        self.hasTriggeredNext = false
+        
+        player.play()
+        
+        // Reinstall visualization tap (player.stop() removes it)
+        if self.isVisualizerVisible {
+            self.resetBeatDetectionState()
+            self.installVisualizationTap()
+        }
+        
+        print("🔄 Flushed TimePitch buffers at \(resumeTime)s")
     }
     
     private func applyPlaybackSpeed() {
@@ -1187,30 +1241,33 @@ class AudioPlayerManager: NSObject, ObservableObject {
             let speed = self.effectsBypass ? Float(1.0) : Float(self.playbackSpeed)
             let pitch = self.effectsBypass ? Float(0) : Float(self.pitchShift * 100)
             
-            // ── Premium time-stretch quality ──
-            // Keep overlap HIGH during the transition to avoid phase artifacts.
-            // Set to 32 before changing rate, then relax after the engine settles.
-            timePitch.overlap = 32
+            let previousRate = timePitch.rate
             
-            // Now apply rate and pitch
+            // Set overlap appropriate for the target speed
+            let deviation = abs(speed - 1.0)
+            if deviation > 0.3 {
+                timePitch.overlap = 32
+            } else if deviation > 0.1 {
+                timePitch.overlap = 24
+            } else {
+                timePitch.overlap = 16
+            }
+            
+            // Apply rate and pitch
             timePitch.rate = speed
             timePitch.pitch = pitch
             
-            // After 150ms the engine has flushed the stretch buffer — safe to lower overlap
-            self.audioQueue.asyncAfter(deadline: .now() + 0.15) {
-                let currentRate = timePitch.rate
-                let deviation = abs(currentRate - 1.0)
-                if deviation > 0.3 {
-                    timePitch.overlap = 32  // Maximum quality for extreme speed changes
-                } else if deviation > 0.1 {
-                    timePitch.overlap = 24  // High quality for moderate changes
-                } else {
-                    timePitch.overlap = 16  // Efficient for near-normal speed
-                }
-            }
-            
             if self.playbackSpeed != 2.0 {
                 self.savedPlaybackSpeed = self.playbackSpeed
+            }
+            
+            // If speed changed significantly while playing, flush the TimePitch
+            // buffers by rescheduling. This prevents the "weird audio" artifacts
+            // that occur because TimePitch's internal resampling buffers still
+            // hold audio processed at the old rate.
+            let speedDelta = abs(previousRate - speed)
+            if speedDelta > 0.15 && self.isPlaying {
+                self.flushPlayerFromCurrentPosition()
             }
             
             // If we crossed the 1.0x threshold, reinstall the tap on the appropriate node

@@ -140,10 +140,14 @@ struct ContentView: View {
                !shareURL.isEmpty {
                 print("📥 [Share] Extracted URL from deep link: \(shareURL)")
                 startDownload(from: shareURL, source: shareURL.contains("spotify") ? .spotify : .youtube)
-            }
-            // Also try draining the App Group queue (works when run from Xcode / properly signed)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.processIncomingShares()
+                // Deep link had the URL — drain the App Group queue WITHOUT downloading
+                // (just discard so it doesn't trigger a second download later)
+                _ = IncomingShareQueue.drain()
+            } else {
+                // Deep link didn't have the URL — fall back to App Group queue
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.processIncomingShares()
+                }
             }
             return
         }
