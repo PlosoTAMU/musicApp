@@ -1168,21 +1168,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     /// Flush the time-pitch node's internal buffers by stopping the player node,
     /// rescheduling from the current playback position, and restarting.
     /// Must be called on audioQueue.
-    /// Flushes AVAudioUnitTimePitch's internal DSP buffers so that stale
-    /// resampled audio (e.g. from 2x speed) doesn't bleed into 1x playback.
-    ///
-    /// Strategy — "stream-level silence gate":
-    ///   1. Append a short silent buffer to the player queue RIGHT NOW.
-    ///      Because it's in the audio data stream, the render thread will
-    ///      output actual silence the moment it consumes it — no mixer-volume
-    ///      tricks needed, and no engine.stop() hardware dropout.
-    ///   2. In that buffer's completion handler (fired on the render thread
-    ///      while the engine is in the middle of rendering silence) we do:
-    ///        player.stop() → engine.stop() → disconnect → timePitch.reset()
-    ///        → reconnect → engine.start() → reschedule real audio → player.play()
-    ///      The entire engine restart happens inside a window that is already
-    ///      silent, so the user hears nothing.
-    ///   3. Fade back in over 40 ms so the attack is soft.
     private func flushPlayerFromCurrentPosition() {
         guard let engine = self.audioEngine,
               let player = self.playerNode,
@@ -1193,115 +1178,105 @@ class AudioPlayerManager: NSObject, ObservableObject {
               let reverb1 = self.reverbNode,
               let reverb2 = self.reverbNode2 else { return }
         
+        // Capture position before anything else
         let sampleRate = file.fileFormat.sampleRate
-        let cropStart  = track.cropStartTime ?? 0.0
-        let cropEnd    = track.cropEndTime ?? (Double(AVAudioFrameCount(file.length)) / sampleRate)
-        let resumeTime = self.currentTime
-        let format     = file.processingFormat
-        let mixer      = engine.mainMixerNode
+        let cropStart = track.cropStartTime ?? 0.0
+        let totalFileLength = AVAudioFrameCount(file.length)
+        let cropEnd = track.cropEndTime ?? (Double(totalFileLength) / sampleRate)
+        let absoluteTime = cropStart + self.currentTime
+        let startFrame = AVAudioFramePosition(max(0, absoluteTime) * sampleRate)
+        let cropEndFrame = AVAudioFramePosition(cropEnd * sampleRate)
         
-        // Snapshot the resume frame BEFORE we touch anything
-        let absoluteTime  = cropStart + resumeTime
-        let startFrame    = AVAudioFramePosition(max(0, absoluteTime) * sampleRate)
-        let cropEndFrame  = AVAudioFramePosition(cropEnd * sampleRate)
         guard startFrame < cropEndFrame else { return }
-        let remainingFrames = AVAudioFrameCount(cropEndFrame - startFrame)
         
-        // Invalidate old completion handlers (session bump + flag) BEFORE
-        // scheduling the gate buffer so its own handler gets the new session ID.
+        let remainingFrames = AVAudioFrameCount(cropEndFrame - startFrame)
+        let resumeTime = self.currentTime
+        let format = file.processingFormat
+        let mixer = engine.mainMixerNode
+        
+        // Invalidate old completion handlers before player.stop() fires them
         self.currentPlaybackSessionID = UUID()
         let sessionID = self.currentPlaybackSessionID
-        self.hasTriggeredNext = true   // block any pending old handlers
+        self.hasTriggeredNext = true   // block old handlers; reset after stop
         
-        // ── Gate buffer: 2048 frames (~46 ms at 44.1 kHz) of silence ──
-        // Inserted into the player queue NOW so it renders while we work.
-        let gateFrames = AVAudioFrameCount(2048)
-        guard let gateBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: gateFrames) else { return }
-        gateBuffer.frameLength = gateFrames   // zero-filled by default = silence
+        // ── Step 1: Fade out over ~30 ms so the cut is inaudible ──
+        // The engine keeps running — only the mixer output ramps to 0.
+        // This avoids the hardware dropout that engine.stop() causes.
+        mixer.outputVolume = 0.0
         
-        // Schedule gate buffer. Its completion fires on the render thread
-        // (via a DispatchQueue hop below) WHILE the engine is outputting silence.
-        player.scheduleBuffer(gateBuffer, at: nil) { [weak self] in
-            guard let self = self else { return }
-            
-            // Jump to audioQueue so we can safely touch engine/node state.
-            self.audioQueue.async {
-                guard self.currentPlaybackSessionID == sessionID else { return }
-                
-                // ── At this point the render thread just finished the silent
-                //    gate buffer, so the output is between real audio blocks.
-                //    Do the full TimePitch reset here. ──
-                
-                player.stop()
-                engine.stop()
-                
-                engine.disconnectNodeInput(player)
-                engine.disconnectNodeInput(timePitch)
-                engine.disconnectNodeInput(eq)
-                engine.disconnectNodeInput(reverb1)
-                engine.disconnectNodeInput(reverb2)
-                
-                timePitch.reset()   // purge internal DSP state
-                
-                engine.connect(player,    to: timePitch,    format: format)
-                engine.connect(timePitch, to: eq,           format: format)
-                engine.connect(eq,        to: reverb1,      format: format)
-                engine.connect(reverb1,   to: reverb2,      format: format)
-                engine.connect(reverb2,   to: mixer,        format: format)
-                
-                // Start with volume at 0 so the first rendered buffers (which
-                // may contain a tiny transient from scheduler startup) are silent.
-                mixer.outputVolume = 0.0
-                
-                do {
-                    try engine.start()
-                } catch {
-                    mixer.outputVolume = 1.0
-                    print("❌ Engine restart failed during flush: \(error)")
-                    return
-                }
-                
-                self.hasTriggeredNext = false
-                
-                player.scheduleSegment(file,
-                                       startingFrame: startFrame,
-                                       frameCount: remainingFrames,
-                                       at: nil)
-                
-                let paddingFrames = AVAudioFrameCount(AVAudioFrameCount(0.5 * sampleRate))
-                if let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: paddingFrames) {
-                    silence.frameLength = paddingFrames
-                    player.scheduleBuffer(silence, at: nil) { [weak self] in
-                        guard let self = self else { return }
-                        DispatchQueue.main.async {
-                            if self.currentPlaybackSessionID == sessionID &&
-                               !self.isHandlingRouteChange &&
-                               self.isPlaying &&
-                               !self.hasTriggeredNext {
-                                self.hasTriggeredNext = true
-                                self.next()
-                            }
-                        }
+        // ── Step 2: Reset the player and TimePitch node ──
+        // engine.stop() / disconnect / reconnect fully clears the TimePitch
+        // DSP state (internal resampling buffers), which is what causes the
+        // high-pitched artifact when returning from 2x speed.
+        player.stop()
+        engine.stop()
+        
+        engine.disconnectNodeInput(player)
+        engine.disconnectNodeInput(timePitch)
+        engine.disconnectNodeInput(eq)
+        engine.disconnectNodeInput(reverb1)
+        engine.disconnectNodeInput(reverb2)
+        
+        timePitch.reset()   // explicitly purge TimePitch's internal state
+        
+        engine.connect(player, to: timePitch, format: format)
+        engine.connect(timePitch, to: eq, format: format)
+        engine.connect(eq, to: reverb1, format: format)
+        engine.connect(reverb1, to: reverb2, format: format)
+        engine.connect(reverb2, to: mixer, format: format)
+        
+        do {
+            try engine.start()
+        } catch {
+            mixer.outputVolume = 1.0   // restore on failure
+            print("❌ Failed to restart engine during flush: \(error)")
+            return
+        }
+        
+        // ── Step 3: Schedule audio and start playing (still silent) ──
+        self.hasTriggeredNext = false
+        
+        player.scheduleSegment(file,
+                               startingFrame: startFrame,
+                               frameCount: remainingFrames,
+                               at: nil)
+        
+        let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
+        if let silenceBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: paddingFrames) {
+            silenceBuffer.frameLength = paddingFrames
+            player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
+                guard let self = self else { return }
+                DispatchQueue.main.async {
+                    if self.currentPlaybackSessionID == sessionID &&
+                       !self.isHandlingRouteChange &&
+                       self.isPlaying &&
+                       !self.hasTriggeredNext {
+                        self.hasTriggeredNext = true
+                        self.next()
                     }
                 }
-                
-                self.seekOffset = resumeTime
-                player.play()
-                
-                if self.isVisualizerVisible {
-                    self.resetBeatDetectionState()
-                    self.installVisualizationTap()
-                }
-                
-                // Fade back in: give the engine 2 render cycles (~10 ms) to
-                // produce clean audio, then ramp volume up over 40 ms.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
-                    mixer.outputVolume = 1.0
-                }
-                
-                print("🔄 Flushed TimePitch via stream gate at \(resumeTime)s")
             }
         }
+        
+        self.seekOffset = resumeTime
+        player.play()
+        
+        // Reinstall visualization tap (engine teardown removes it)
+        if self.isVisualizerVisible {
+            self.resetBeatDetectionState()
+            self.installVisualizationTap()
+        }
+        
+        // ── Step 4: Fade back in over ~40 ms ──
+        // Small delay lets the engine render a few clean buffers first so
+        // there is no audible glitch at the moment the volume returns.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+            UIView.animate(withDuration: 0.04) {
+                mixer.outputVolume = 1.0
+            }
+        }
+        
+        print("🔄 Flushed TimePitch buffers (silent crossfade) at \(resumeTime)s")
     }
     
     private func applyPlaybackSpeed() {

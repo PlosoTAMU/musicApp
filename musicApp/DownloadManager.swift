@@ -320,7 +320,7 @@ class DownloadManager: ObservableObject {
             
             // Handle Spotify conversion
             if source == .spotify {
-                await updateBanner(title: "Converting: \(title)", progress: 0.2)
+                await updateBanner(title: "\(title)", progress: 0.2)
                 
                 let (convertedURL, _) = try await self.convertSpotifyToYouTube(spotifyURL: url)
                 finalURL = convertedURL
