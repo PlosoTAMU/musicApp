@@ -550,8 +550,6 @@ class DownloadManager: ObservableObject {
     }
 
     private func generateSpotifyPlaylistScript(playlistID: String, isAlbum: Bool, resultFilePath: String) -> String {
-        let endpoint = isAlbum ? "album" : "playlist"
-        
         return """
         import json
         import re
@@ -559,102 +557,61 @@ class DownloadManager: ObservableObject {
 
         def get_spotify_playlist_tracks(playlist_id, is_album):
             try:
-                session = requests.Session()
-                session.headers.update({
+                # Use the Spotify EMBED endpoint — it's fully public (designed for
+                # iframes on any website) and returns ALL tracks in a JSON blob
+                # inside a <script id="__NEXT_DATA__"> tag. No auth needed.
+                endpoint = "album" if is_album else "playlist"
+                url = f"https://open.spotify.com/embed/{endpoint}/{playlist_id}"
+
+                headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept-Language": "en-US,en;q=0.9",
-                })
-
-                # ── Step 1: Get an anonymous access token from Spotify ──
-                # Spotify's public token endpoint doesn't require auth
-                token = None
-
-                # Try the public token endpoint first (most reliable)
-                try:
-                    token_resp = session.get("https://open.spotify.com/get_access_token?reason=transport&productType=web_player", timeout=15)
-                    if token_resp.status_code == 200:
-                        token_json = token_resp.json()
-                        token = token_json.get("accessToken")
-                except Exception:
-                    pass
-
-                if not token:
-                    # Fallback: scrape token from the playlist page HTML
-                    endpoint = "album" if is_album else "playlist"
-                    page_url = f"https://open.spotify.com/{endpoint}/{playlist_id}"
-                    page_resp = session.get(page_url, timeout=15)
-                    if page_resp.status_code == 200:
-                        # Token is embedded in the page as accessToken:"..."
-                        token_match = re.search(r'"accessToken":"([^"]+)"', page_resp.text)
-                        if token_match:
-                            token = token_match.group(1)
-
-                if not token:
-                    return None, "Could not get Spotify access token"
-
-                # ── Step 2: Fetch tracks via Spotify's Web API ──
-                api_headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json",
                 }
 
+                resp = requests.get(url, headers=headers, timeout=30)
+                if resp.status_code != 200:
+                    return None, f"Spotify embed returned HTTP {resp.status_code}"
+
+                html = resp.text
+
+                # Extract the __NEXT_DATA__ JSON blob
+                match = re.search(r'<script\\s+id="__NEXT_DATA__"[^>]*>(.+?)</script>', html, re.DOTALL)
+                if not match:
+                    return None, "Could not find __NEXT_DATA__ in embed page"
+
+                data = json.loads(match.group(1))
+
+                # Navigate to the track list inside the JSON structure
+                # Structure: props -> pageProps -> state -> data -> entity -> trackList
+                try:
+                    entity = data["props"]["pageProps"]["state"]["data"]["entity"]
+                except (KeyError, TypeError):
+                    return None, "Unexpected embed JSON structure"
+
+                track_list = entity.get("trackList", [])
+                if not track_list:
+                    return None, f"Embed returned 0 tracks"
+
                 tracks = []
-                
-                if is_album:
-                    # Album endpoint: paginated, 50 per page
-                    offset = 0
-                    limit = 50
-                    while True:
-                        api_url = f"https://api.spotify.com/v1/albums/{playlist_id}/tracks?offset={offset}&limit={limit}"
-                        resp = session.get(api_url, headers=api_headers, timeout=15)
-                        if resp.status_code != 200:
-                            if not tracks:
-                                return None, f"Spotify API error {resp.status_code}: {resp.text[:200]}"
-                            break
-                        data = resp.json()
-                        items = data.get("items", [])
-                        if not items:
-                            break
-                        for item in items:
-                            track_id = item.get("id")
-                            name = item.get("name", "Unknown")
-                            artists = ", ".join(a.get("name", "") for a in item.get("artists", []))
-                            title = f"{artists} - {name}" if artists else name
-                            if track_id:
-                                tracks.append({"track_id": track_id, "title": title})
-                        if not data.get("next"):
-                            break
-                        offset += limit
-                else:
-                    # Playlist endpoint: paginated, 100 per page
-                    offset = 0
-                    limit = 100
-                    while True:
-                        api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?offset={offset}&limit={limit}&fields=items(track(id,name,artists(name))),next"
-                        resp = session.get(api_url, headers=api_headers, timeout=15)
-                        if resp.status_code != 200:
-                            if not tracks:
-                                return None, f"Spotify API error {resp.status_code}: {resp.text[:200]}"
-                            break
-                        data = resp.json()
-                        items = data.get("items", [])
-                        if not items:
-                            break
-                        for item in items:
-                            track = item.get("track")
-                            if not track or not track.get("id"):
-                                continue
-                            track_id = track["id"]
-                            name = track.get("name", "Unknown")
-                            artists = ", ".join(a.get("name", "") for a in track.get("artists", []))
-                            title = f"{artists} - {name}" if artists else name
-                            tracks.append({"track_id": track_id, "title": title})
-                        if not data.get("next"):
-                            break
-                        offset += limit
+                seen = set()
+                for item in track_list:
+                    uri = item.get("uri", "")
+                    # uri format: spotify:track:XXXXXXXXXXXXXXXXXXXX
+                    parts = uri.split(":")
+                    if len(parts) != 3 or parts[1] != "track":
+                        continue
+                    track_id = parts[2]
+                    if track_id in seen:
+                        continue
+                    seen.add(track_id)
+
+                    title = item.get("title", "Unknown")
+                    subtitle = item.get("subtitle", "")
+                    display = f"{subtitle} - {title}" if subtitle else title
+                    tracks.append({"track_id": track_id, "title": display})
 
                 if not tracks:
-                    return None, "No tracks found via Spotify API"
+                    return None, "Parsed embed JSON but found no tracks"
 
                 return tracks, None
 
