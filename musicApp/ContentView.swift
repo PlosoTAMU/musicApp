@@ -129,18 +129,20 @@ struct ContentView: View {
         
         let urlString = url.absoluteString
         
-        // Handle custom scheme (from Share Extension) - drain the queue immediately
+        // Handle custom scheme (from Share Extension)
+        // e.g. musicApp://import?url=https://www.youtube.com/watch?v=xxx
         if url.scheme == "musicApp" || url.scheme == "pulsor" {
-            // Also check if the URL itself carries the track as a query param (belt-and-suspenders)
+            // Extract the actual YouTube/Spotify URL directly from the deep link query param
+            // This works even when App Groups are broken (sideloaded builds)
             if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
                let shareURL = components.queryItems?.first(where: { $0.name == "url" })?.value,
                !shareURL.isEmpty {
-                // Enqueue it (in case the app group write raced with the open)
-                IncomingShareQueue.enqueue(shareURL)
+                print("📥 [Share] Extracted URL from deep link: \(shareURL)")
+                startDownload(from: shareURL, source: shareURL.contains("spotify") ? .spotify : .youtube)
             }
-            // Now drain everything
+            // Also try draining the App Group queue (works when run from Xcode / properly signed)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                processIncomingShares()
+                self.processIncomingShares()
             }
             return
         }
