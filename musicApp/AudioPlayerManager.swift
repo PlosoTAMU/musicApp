@@ -1169,9 +1169,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
     /// rescheduling from the current playback position, and restarting.
     /// Must be called on audioQueue.
     private func flushPlayerFromCurrentPosition() {
-        guard let player = self.playerNode,
+        guard let engine = self.audioEngine,
+              let player = self.playerNode,
               let file = self.audioFile,
-              let track = self.currentTrack else { return }
+              let track = self.currentTrack,
+              let timePitch = self.timePitchNode,
+              let eq = self.eqNode,
+              let reverb1 = self.reverbNode,
+              let reverb2 = self.reverbNode2 else { return }
         
         // Capture where we are right now
         let sampleRate = file.fileFormat.sampleRate
@@ -1187,6 +1192,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let remainingFrames = AVAudioFrameCount(cropEndFrame - startFrame)
         
         let resumeTime = self.currentTime
+        let format = file.processingFormat
         
         // Bump the session ID BEFORE stopping, so that the old completion
         // handler (which captured the previous sessionID) will see a mismatch
@@ -1198,8 +1204,34 @@ class AudioPlayerManager: NSObject, ObservableObject {
         // against the old handler (which checks this flag).
         self.hasTriggeredNext = true
         
-        // Stop → reschedule → play (flushes TimePitch internal buffers)
+        // ── Full engine teardown: this is the ONLY way to flush the internal
+        //    DSP buffers inside AVAudioUnitTimePitch. Just calling player.stop()
+        //    is not enough — the TimePitch node retains resampled audio from the
+        //    previous rate, causing high-pitched/warped playback. ──
         player.stop()
+        engine.stop()
+        
+        engine.disconnectNodeInput(player)
+        engine.disconnectNodeInput(timePitch)
+        engine.disconnectNodeInput(eq)
+        engine.disconnectNodeInput(reverb1)
+        engine.disconnectNodeInput(reverb2)
+        
+        // Also explicitly reset the TimePitch node's internal state
+        timePitch.reset()
+        
+        engine.connect(player, to: timePitch, format: format)
+        engine.connect(timePitch, to: eq, format: format)
+        engine.connect(eq, to: reverb1, format: format)
+        engine.connect(reverb1, to: reverb2, format: format)
+        engine.connect(reverb2, to: engine.mainMixerNode, format: format)
+        
+        do {
+            try engine.start()
+        } catch {
+            print("❌ Failed to restart engine during flush: \(error)")
+            return
+        }
         
         // Now that old handlers are invalidated, allow next() for the new schedule
         self.hasTriggeredNext = false
@@ -1232,13 +1264,13 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         player.play()
         
-        // Reinstall visualization tap (player.stop() removes it)
+        // Reinstall visualization tap (engine teardown removes it)
         if self.isVisualizerVisible {
             self.resetBeatDetectionState()
             self.installVisualizationTap()
         }
         
-        print("🔄 Flushed TimePitch buffers at \(resumeTime)s")
+        print("🔄 Flushed TimePitch buffers (full engine reset) at \(resumeTime)s")
     }
     
     private func applyPlaybackSpeed() {

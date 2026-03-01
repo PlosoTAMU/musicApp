@@ -329,7 +329,7 @@ class DownloadManager: ObservableObject {
                     finalVideoID = extractedID
                 }
                 
-                await updateBanner(title: "Downloading...", progress: 0.4)
+                await updateBanner(title: "Downloading", progress: 0.4)
             } else {
                 await updateBanner(title: "\(title)", progress: 0.3)
             }
@@ -342,7 +342,7 @@ class DownloadManager: ObservableObject {
             
             await updateBanner(title: "Processing: \(downloadedTitle)", progress: 0.7)
             
-            await updateBanner(title: "Fetching thumbnail...", progress: 0.85)
+            await updateBanner(title: "Fetching thumbnail", progress: 0.85)
             
             // ✅ CRITICAL: Use the stored downloadVideoID, NOT the original videoID parameter
             // This ensures we fetch the thumbnail for the CORRECT video (YouTube video after Spotify conversion)
