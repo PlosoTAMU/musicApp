@@ -323,13 +323,17 @@ class DownloadManager: ObservableObject {
         do {
             var finalURL = url
             var finalVideoID = originalVideoID  // ✅ Use the captured original
+            var spotifyTitle: String? = nil
+            var youtubeSearchQuery: String? = nil
             
             // Handle Spotify conversion
             if source == .spotify {
                 await updateBanner(title: "\(title)", progress: 0.2)
                 
-                let (convertedURL, _) = try await self.convertSpotifyToYouTube(spotifyURL: url)
+                let (convertedURL, trackInfo, searchQuery) = try await self.convertSpotifyToYouTube(spotifyURL: url)
                 finalURL = convertedURL
+                spotifyTitle = trackInfo
+                youtubeSearchQuery = searchQuery
                 
                 if let extractedID = self.extractYouTubeID(from: finalURL) {
                     finalVideoID = extractedID
@@ -371,7 +375,10 @@ class DownloadManager: ObservableObject {
                 thumbnailPath: thumbnailPath?.path,
                 videoID: downloadVideoID,  // ✅ Must match the thumbnail's videoID
                 source: source,
-                originalURL: url
+                originalURL: url,
+                spotifyTitle: spotifyTitle,
+                youtubeSearchQuery: youtubeSearchQuery ?? (source == .youtube ? title : nil),
+                youtubeURL: finalURL
             )
             
             // Remove banner and add to downloads
@@ -804,7 +811,7 @@ class DownloadManager: ObservableObject {
     }
 
     // ✅ ADD: Helper method to convert Spotify to YouTube
-    private func convertSpotifyToYouTube(spotifyURL: String) async throws -> (youtubeURL: String, trackInfo: String?) {
+    private func convertSpotifyToYouTube(spotifyURL: String) async throws -> (youtubeURL: String, trackInfo: String?, searchQuery: String?) {
         return try await withCheckedThrowingContinuation { continuation in
             let resultFilePath = NSTemporaryDirectory() + "spotify_result_\(UUID().uuidString).json"
             
@@ -834,7 +841,8 @@ class DownloadManager: ObservableObject {
                 }
                 
                 let trackInfo = json["track_info"] as? String
-                continuation.resume(returning: (youtubeURL, trackInfo))
+                let searchQuery = json["search_query"] as? String
+                continuation.resume(returning: (youtubeURL, trackInfo, searchQuery))
             }
         }
     }
@@ -891,7 +899,7 @@ class DownloadManager: ObservableObject {
                 print(f"Found track: {title}")
                 youtube_url = search_youtube(title)
                 if youtube_url:
-                    result = {'success': True, 'youtube_url': youtube_url, 'track_info': title}
+                    result = {'success': True, 'youtube_url': youtube_url, 'track_info': title, 'search_query': title}
                 else:
                     result = {'success': False, 'error': f'Could not find YouTube video for: {title}'}
         except Exception as e:

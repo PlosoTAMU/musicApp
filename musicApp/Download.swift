@@ -17,6 +17,10 @@ struct Download: Identifiable, Codable {
     var cropStartTime: Double?
     var cropEndTime: Double?
     var pendingDeletion: Bool = false
+    // Behind-the-scenes metadata shown in Song Info
+    var spotifyTitle: String?       // Title returned by Spotify oEmbed (Spotify tracks only)
+    var youtubeSearchQuery: String? // Query used to find the YouTube video
+    var youtubeURL: String?         // Final YouTube URL that was downloaded
     
     // ⚡ PERF: Cache the thumbnails directory path once instead of calling
     // FileManager.default.urls(for:in:) on every row render in the list
@@ -32,7 +36,7 @@ struct Download: Identifiable, Codable {
         return (Download.thumbnailsDirectory as NSString).appendingPathComponent(justFilename)
     }
     
-    init(id: UUID = UUID(), name: String, url: URL, thumbnailPath: String? = nil, videoID: String? = nil, source: DownloadSource = .youtube, originalURL: String? = nil, cropStartTime: Double? = nil, cropEndTime: Double? = nil) {
+    init(id: UUID = UUID(), name: String, url: URL, thumbnailPath: String? = nil, videoID: String? = nil, source: DownloadSource = .youtube, originalURL: String? = nil, cropStartTime: Double? = nil, cropEndTime: Double? = nil, spotifyTitle: String? = nil, youtubeSearchQuery: String? = nil, youtubeURL: String? = nil) {
         self.id = id
         self.name = name
         self.url = url
@@ -47,6 +51,9 @@ struct Download: Identifiable, Codable {
         self.cropStartTime = cropStartTime
         self.cropEndTime = cropEndTime
         self.pendingDeletion = false
+        self.spotifyTitle = spotifyTitle
+        self.youtubeSearchQuery = youtubeSearchQuery
+        self.youtubeURL = youtubeURL
     }
 }
 

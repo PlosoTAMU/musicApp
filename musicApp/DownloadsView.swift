@@ -76,6 +76,16 @@ struct DownloadsView: View {
                 Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
             }
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        Text("Downloads")
+                            .font(.headline)
+                        Text("\(downloadManager.downloads.filter { !$0.pendingDeletion }.count) songs")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
                         showYouTubeDownload = true
@@ -140,6 +150,7 @@ struct DownloadRow: View {
     
     @State private var showRenameAlert = false
     @State private var newName: String = ""
+    @State private var showSongInfo = false
     
     private var isCurrentlyPlaying: Bool {
         audioPlayer.currentTrack?.id == download.id
@@ -194,6 +205,12 @@ struct DownloadRow: View {
                 handleTap()
             }
             .contextMenu {
+                Button {
+                    showSongInfo = true
+                } label: {
+                    Label("Song Info", systemImage: "info.circle")
+                }
+                
                 Button {
                     newName = download.name
                     showRenameAlert = true
@@ -250,6 +267,9 @@ struct DownloadRow: View {
         } message: {
             Text("Enter a new name for this song")
         }
+        .sheet(isPresented: $showSongInfo) {
+            SongInfoSheet(download: download)
+        }
     }
     
     private func handleTap() {
@@ -282,5 +302,77 @@ struct DownloadRow: View {
         case .spotify: return "Spotify"
         case .folder: return "Files"
         }
+    }
+}
+
+// MARK: - Song Info Sheet
+
+struct SongInfoSheet: View {
+    let download: Download
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationView {
+            List {
+                Section("Display") {
+                    InfoRow(label: "Title", value: download.name)
+                    InfoRow(label: "Source", value: download.source.rawValue.capitalized)
+                }
+                
+                if download.source == .spotify {
+                    Section("Spotify") {
+                        InfoRow(label: "Original URL", value: download.originalURL ?? "—")
+                        InfoRow(label: "Spotify Title", value: download.spotifyTitle ?? "—")
+                        InfoRow(label: "YouTube Search Query", value: download.youtubeSearchQuery ?? "—")
+                    }
+                    Section("YouTube") {
+                        InfoRow(label: "YouTube URL", value: download.youtubeURL ?? "—")
+                        InfoRow(label: "YouTube Video ID", value: download.videoID ?? "—")
+                    }
+                } else {
+                    Section("YouTube") {
+                        InfoRow(label: "URL", value: download.originalURL ?? download.youtubeURL ?? "—")
+                        InfoRow(label: "Video ID", value: download.videoID ?? "—")
+                    }
+                }
+                
+                Section("File") {
+                    InfoRow(label: "Filename", value: download.url.lastPathComponent)
+                    InfoRow(label: "File Path", value: download.url.path)
+                }
+                
+                if download.cropStartTime != nil || download.cropEndTime != nil {
+                    Section("Crop") {
+                        InfoRow(label: "Start", value: download.cropStartTime.map { String(format: "%.2fs", $0) } ?? "—")
+                        InfoRow(label: "End", value: download.cropEndTime.map { String(format: "%.2fs", $0) } ?? "—")
+                    }
+                }
+            }
+            .navigationTitle("Song Info")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct InfoRow: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.footnote)
+                .foregroundColor(.primary)
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 2)
     }
 }
