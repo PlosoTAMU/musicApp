@@ -981,8 +981,29 @@ class DownloadManager: ObservableObject {
     // MARK: - Start Background Download (single track entry point)
 
     func startBackgroundDownload(url: String, videoID: String, source: DownloadSource, title: String) {
-        // Check playlist URLs and route to playlist downloader
-        if let (detectedSource, playlistID, isPlaylist) = detectPlaylist(from: url), isPlaylist {
+        // Only treat as a playlist if there's NO specific video/track ID in the URL.
+        // YouTube: has `list=` but NOT `v=` → it's a bare playlist link
+        // Spotify: has /playlist/ or /album/ but NOT /track/ → it's a playlist link
+        let isBarePlaylst: Bool = {
+            guard let u = URL(string: url),
+                  let comps = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return false }
+            let host = u.host?.lowercased() ?? ""
+            if host.contains("youtube.com") || host.contains("youtu.be") {
+                let hasVideo = comps.queryItems?.contains(where: { $0.name == "v" }) == true
+                let hasList  = comps.queryItems?.contains(where: { $0.name == "list" }) == true
+                return hasList && !hasVideo   // bare playlist only
+            }
+            if host.contains("spotify.com") {
+                let path = u.pathComponents
+                let isTrack = path.contains("track")
+                let isList  = path.contains("playlist") || path.contains("album")
+                return isList && !isTrack     // bare playlist/album only
+            }
+            return false
+        }()
+
+        if isBarePlaylst,
+           let (detectedSource, playlistID, _) = detectPlaylist(from: url) {
             downloadPlaylist(url: url, source: detectedSource, playlistID: playlistID)
             return
         }
