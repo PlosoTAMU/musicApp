@@ -54,10 +54,6 @@ class DownloadManager: ObservableObject {
         validateAndFixThumbnails()
     }
     
-    func getMusicDirectory() -> URL {
-        return musicDirectory
-    }
-    
     // Neutralize song names by removing formatting characters
     func neutralizeName(_ name: String) -> String {
         var cleaned = name
@@ -189,14 +185,6 @@ class DownloadManager: ObservableObject {
             return track
         }
         
-        func isEmpty() -> Bool {
-            return pendingTracks.isEmpty
-        }
-        
-        func hasWork() -> Bool {
-            return !pendingTracks.isEmpty || isProcessing
-        }
-        
         func setProcessing(_ value: Bool) {
             isProcessing = value
         }
@@ -209,11 +197,6 @@ class DownloadManager: ObservableObject {
             return pendingTracks.count
         }
         
-        func clear() {
-            pendingTracks.removeAll()
-            downloadedVideoIDs.removeAll()
-            isProcessing = false
-        }
     }
 
 
@@ -877,7 +860,7 @@ class DownloadManager: ObservableObject {
         }
     }
 
-    // ✅ ADD: Generate Python script for Spotify conversion (using urllib - no dependencies)
+    // Generate Python script for Spotify conversion
     private func generateSpotifyConversionScript(spotifyURL: String, resultFilePath: String) -> String {
         let cleanURL = spotifyURL.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: "")
         
@@ -888,17 +871,88 @@ class DownloadManager: ObservableObject {
         import re
         
         def get_spotify_track_info(spotify_url):
+            \"\"\"Get song title and artist from Spotify.
+            
+            Strategy:
+            1. Fetch the Spotify track page HTML — it contains meta tags like
+               <meta property="og:title" content="Song Name"> and
+               <meta name="music:musician_description" content="Artist Name">
+               or <title>Song - Artist | Spotify</title>
+            2. Fall back to oEmbed API for just the song title if scraping fails.
+            Returns (title, artist) tuple.
+            \"\"\"
+            title = None
+            artist = None
+            
             try:
-                oembed_url = f"https://open.spotify.com/oembed?url={spotify_url}"
-                response = requests.get(oembed_url, timeout=10)
-                if response.status_code != 200:
-                    return None
-                data = response.json()
-                title = data.get("title")  # format: "Track Name – Artist Name"
-                return title
+                # First try scraping the track page for structured artist info
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+                    "Accept-Language": "en-US,en;q=0.9"
+                }
+                resp = requests.get(spotify_url, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    html = resp.text
+                    
+                    # Try <title>Song - artist | Spotify</title>  (most reliable)
+                    title_match = re.search(r'<title>(.+?)\\s*[-\\u2013\\u2014]\\s*(?:song|Song).*?(?:by|\\|)\\s*(.+?)\\s*\\|\\s*Spotify', html)
+                    if not title_match:
+                        # Alternate: <title>Song - Artist | Spotify</title>
+                        title_match = re.search(r'<title>(.+?)\\s*[-\\u2013\\u2014]\\s*(.+?)\\s*\\|\\s*Spotify', html)
+                    if title_match:
+                        title = title_match.group(1).strip()
+                        artist = title_match.group(2).strip()
+                        # Clean "song and lyrics by" prefix
+                        artist = re.sub(r'^(?:song\\s+(?:and\\s+lyrics\\s+)?by\\s+)', '', artist, flags=re.IGNORECASE).strip()
+                    
+                    # If title_match didn't work, try JSON-LD
+                    if not artist:
+                        ld_match = re.search(r'<script[^>]*type="application/ld\\+json"[^>]*>(.+?)</script>', html, re.DOTALL)
+                        if ld_match:
+                            try:
+                                ld = json.loads(ld_match.group(1))
+                                if isinstance(ld, dict):
+                                    title = title or ld.get("name")
+                                    by_artist = ld.get("byArtist")
+                                    if isinstance(by_artist, dict):
+                                        artist = by_artist.get("name")
+                                    elif isinstance(by_artist, list) and by_artist:
+                                        artist = by_artist[0].get("name")
+                            except Exception:
+                                pass
+                    
+                    # Try og:title for the song name if we still don't have it
+                    if not title:
+                        og_match = re.search(r'<meta\\s+property="og:title"\\s+content="([^"]+)"', html)
+                        if og_match:
+                            title = og_match.group(1).strip()
+                    
+                    # Try to find artist from meta description: "Song · Artist · Album · Year"
+                    if not artist:
+                        desc_match = re.search(r'<meta\\s+(?:property="og:description"|name="description")\\s+content="([^"]+)"', html)
+                        if desc_match:
+                            parts = desc_match.group(1).split('\\u00b7')  # · separator
+                            if len(parts) >= 2:
+                                artist = parts[0].strip()
+                                # Sometimes desc is "Artist · Song" or "Song · Artist · Album"
+                                # If first part matches title, artist is second part
+                                if title and parts[0].strip().lower() == title.lower() and len(parts) >= 2:
+                                    artist = parts[1].strip()
             except Exception as e:
-                print(f"Error getting Spotify info: {e}")
-                return None
+                print(f"Page scrape failed: {e}")
+            
+            # Fallback: oEmbed for song title only
+            if not title:
+                try:
+                    oembed_url = f"https://open.spotify.com/oembed?url={spotify_url}"
+                    response = requests.get(oembed_url, timeout=10)
+                    if response.status_code == 200:
+                        data = response.json()
+                        title = data.get("title")
+                except Exception as e:
+                    print(f"oEmbed failed: {e}")
+            
+            return title, artist
         
         def search_youtube(query):
             try:
@@ -910,7 +964,6 @@ class DownloadManager: ObservableObject {
                 if response.status_code != 200:
                     return None
                 
-                # Find video IDs in the response
                 video_ids = re.findall(r"watch\\?v=(\\S{11})", response.text)
                 if video_ids:
                     return f"https://www.youtube.com/watch?v={video_ids[0]}"
@@ -920,13 +973,21 @@ class DownloadManager: ObservableObject {
                 return None
         
         def spotify_to_youtube(spotify_url):
-            track_info = get_spotify_track_info(spotify_url)
-            if not track_info:
+            title, artist = get_spotify_track_info(spotify_url)
+            if not title:
                 return None, None, "Could not extract track info from Spotify"
+            
+            # Build the display name: "Artist - Song" if artist is known
+            if artist:
+                track_info = f"{artist} - {title}"
+            else:
+                track_info = title
             
             print(f"Found track: {track_info}")
             
-            youtube_link = search_youtube(track_info)
+            # Search YouTube with artist + title for better results
+            search_query = f"{artist} {title}" if artist else title
+            youtube_link = search_youtube(search_query)
             if not youtube_link:
                 return None, track_info, "Could not find YouTube video for this track"
             
@@ -979,14 +1040,6 @@ class DownloadManager: ObservableObject {
         }
         
         return nil
-    }
-
-    private func getWaveformURL(for videoID: String) -> URL {
-        let waveformsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Waveforms", isDirectory: true)
-        
-        try? FileManager.default.createDirectory(at: waveformsDir, withIntermediateDirectories: true)
-        return waveformsDir.appendingPathComponent("\(videoID).waveform")
     }
     
     // MARK: - Start Background Download (single track entry point)
@@ -1085,19 +1138,6 @@ class DownloadManager: ObservableObject {
         downloads.append(finalDownload)
         saveDownloads()
         notifyChange()
-    }
-    
-    func getThumbnailFullPath(for download: Download) -> String? {
-        guard let thumbnailFilename = download.thumbnailPath else { return nil }
-        
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let thumbnailsDir = documentsPath.appendingPathComponent("Thumbnails", isDirectory: true)
-        let fullPath = thumbnailsDir.appendingPathComponent(thumbnailFilename).path
-        
-        if FileManager.default.fileExists(atPath: fullPath) {
-            return fullPath
-        }
-        return nil
     }
 
     func markForDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
@@ -1234,25 +1274,6 @@ class DownloadManager: ObservableObject {
         print("✅ [Duplicate] No duplicate found for videoID: \(videoID)")
         return nil
     }
-    
-    // ✅ ADD THIS METHOD
-    func getDownloadedFileURL(for videoID: String) -> URL? {
-        let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        
-        // Check common audio file extensions
-        let extensions = ["m4a", "mp3", "wav", "aac"]
-        
-        for ext in extensions {
-            let fileURL = documentsDir.appendingPathComponent("\(videoID).\(ext)")
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                return fileURL
-            }
-        }
-        
-        // Search through downloads array instead
-        return downloads.first(where: { $0.url.lastPathComponent.contains(videoID) })?.url
-    }
-    
     
     private func saveDownloads() {
         PerformanceMonitor.shared.start("DownloadManager_Save")

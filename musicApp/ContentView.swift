@@ -351,7 +351,6 @@ struct MiniPlayerBar: View {
                 .frame(height: 0.5),
             alignment: .top
         )
-        .padding(.bottom, 49)
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             updateBackgroundImage()
         }

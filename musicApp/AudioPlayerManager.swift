@@ -1134,17 +1134,43 @@ class AudioPlayerManager: NSObject, ObservableObject {
         temporarySpeedOverride = speed
         audioQueue.async {
             guard let timePitch = self.timePitchNode else { return }
-            let rate = Float(speed ?? (self.effectsBypass ? 1.0 : self.playbackSpeed))
-            let deviation = abs(rate - 1.0)
-            if deviation > 0.3 {
+            let targetRate = Float(speed ?? (self.effectsBypass ? 1.0 : self.playbackSpeed))
+            let targetPitch = Float(speed != nil ? (self.effectsBypass ? 0 : self.pitchShift * 100) : (self.effectsBypass ? 0 : self.pitchShift * 100))
+            
+            if speed == nil {
+                // RETURNING to normal: keep overlap HIGH during the transition to
+                // avoid phase artifacts, then lower it after the engine has settled.
                 timePitch.overlap = 32
-            } else if deviation > 0.1 {
-                timePitch.overlap = 24
+                timePitch.rate = targetRate
+                timePitch.pitch = targetPitch
+                
+                // After 150ms the engine has flushed the stretch buffer — now safe
+                // to lower overlap for efficiency.
+                self.audioQueue.asyncAfter(deadline: .now() + 0.15) {
+                    guard self.temporarySpeedOverride == nil else { return } // user pressed again
+                    let deviation = abs(timePitch.rate - 1.0)
+                    if deviation > 0.3 {
+                        timePitch.overlap = 32
+                    } else if deviation > 0.1 {
+                        timePitch.overlap = 24
+                    } else {
+                        timePitch.overlap = 16
+                    }
+                }
             } else {
-                timePitch.overlap = 16
+                // ENGAGING fast speed: set high overlap first, then change rate
+                let deviation = abs(targetRate - 1.0)
+                if deviation > 0.3 {
+                    timePitch.overlap = 32
+                } else if deviation > 0.1 {
+                    timePitch.overlap = 24
+                } else {
+                    timePitch.overlap = 16
+                }
+                timePitch.rate = targetRate
+                // Leave pitch at whatever it was
             }
-            timePitch.rate = rate
-            // Don't touch pitch — leave it at whatever it was
+            
             DispatchQueue.main.async {
                 self.updateNowPlayingInfo()
             }
@@ -1162,21 +1188,26 @@ class AudioPlayerManager: NSObject, ObservableObject {
             let pitch = self.effectsBypass ? Float(0) : Float(self.pitchShift * 100)
             
             // ── Premium time-stretch quality ──
-            // Higher overlap = cleaner stretching with fewer phase artifacts.
-            // Scale dynamically: extreme speeds need even more overlap to stay clean.
-            // IMPORTANT: Set overlap BEFORE changing rate/pitch to avoid artifacts
-            let deviation = abs(speed - 1.0)
-            if deviation > 0.3 {
-                timePitch.overlap = 32  // Maximum quality for extreme speed changes
-            } else if deviation > 0.1 {
-                timePitch.overlap = 24  // High quality for moderate changes
-            } else {
-                timePitch.overlap = 16  // Efficient for near-normal speed
-            }
+            // Keep overlap HIGH during the transition to avoid phase artifacts.
+            // Set to 32 before changing rate, then relax after the engine settles.
+            timePitch.overlap = 32
             
-            // Now apply rate and pitch with proper overlap already configured
+            // Now apply rate and pitch
             timePitch.rate = speed
             timePitch.pitch = pitch
+            
+            // After 150ms the engine has flushed the stretch buffer — safe to lower overlap
+            self.audioQueue.asyncAfter(deadline: .now() + 0.15) {
+                let currentRate = timePitch.rate
+                let deviation = abs(currentRate - 1.0)
+                if deviation > 0.3 {
+                    timePitch.overlap = 32  // Maximum quality for extreme speed changes
+                } else if deviation > 0.1 {
+                    timePitch.overlap = 24  // High quality for moderate changes
+                } else {
+                    timePitch.overlap = 16  // Efficient for near-normal speed
+                }
+            }
             
             if self.playbackSpeed != 2.0 {
                 self.savedPlaybackSpeed = self.playbackSpeed
@@ -1400,23 +1431,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    func playNext(_ track: Track) {
-        DispatchQueue.main.async {
-            self.queue.insert(track, at: 0)
-        
-            // ✅ AUTO-DISABLE: Disable loop when playing next
-            if self.isLoopEnabled {
-                self.isLoopEnabled = false
-                print("🔁 [AudioPlayer] Loop disabled - song queued to play next")
-            }
-            
-            if self.currentTrack == nil {
-                let firstTrack = self.queue.removeFirst()
-                self.play(firstTrack)
-            }
-        }
-    }
-    
     func removeFromQueue(at offsets: IndexSet) {
         DispatchQueue.main.async {
             self.queue.remove(atOffsets: offsets)
@@ -1426,13 +1440,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func moveInQueue(from source: IndexSet, to destination: Int) {
         DispatchQueue.main.async {
             self.queue.move(fromOffsets: source, toOffset: destination)
-        }
-    }
-    
-    func clearQueue() {
-        DispatchQueue.main.async {
-            self.queue.removeAll()
-            self.previousQueue.removeAll()
         }
     }
     
@@ -1466,18 +1473,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         isPlaylistMode = false
         play(track)
-    }
-    
-
-    
-    func pauseTimeUpdates() {
-        stopTimeUpdates()
-    }
-    
-    func resumeTimeUpdates() {
-        if isPlaying {
-            startTimeUpdates()
-        }
     }
     
     @objc private func updateTime() {
