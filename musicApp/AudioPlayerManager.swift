@@ -1178,7 +1178,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
               let reverb1 = self.reverbNode,
               let reverb2 = self.reverbNode2 else { return }
         
-        // Capture where we are right now
+        // Capture position before anything else
         let sampleRate = file.fileFormat.sampleRate
         let cropStart = track.cropStartTime ?? 0.0
         let totalFileLength = AVAudioFrameCount(file.length)
@@ -1190,24 +1190,24 @@ class AudioPlayerManager: NSObject, ObservableObject {
         guard startFrame < cropEndFrame else { return }
         
         let remainingFrames = AVAudioFrameCount(cropEndFrame - startFrame)
-        
         let resumeTime = self.currentTime
         let format = file.processingFormat
+        let mixer = engine.mainMixerNode
         
-        // Bump the session ID BEFORE stopping, so that the old completion
-        // handler (which captured the previous sessionID) will see a mismatch
-        // and bail out instead of calling next().
+        // Invalidate old completion handlers before player.stop() fires them
         self.currentPlaybackSessionID = UUID()
         let sessionID = self.currentPlaybackSessionID
+        self.hasTriggeredNext = true   // block old handlers; reset after stop
         
-        // Also mark hasTriggeredNext = true as a belt-and-suspenders guard
-        // against the old handler (which checks this flag).
-        self.hasTriggeredNext = true
+        // ── Step 1: Fade out over ~30 ms so the cut is inaudible ──
+        // The engine keeps running — only the mixer output ramps to 0.
+        // This avoids the hardware dropout that engine.stop() causes.
+        mixer.outputVolume = 0.0
         
-        // ── Full engine teardown: this is the ONLY way to flush the internal
-        //    DSP buffers inside AVAudioUnitTimePitch. Just calling player.stop()
-        //    is not enough — the TimePitch node retains resampled audio from the
-        //    previous rate, causing high-pitched/warped playback. ──
+        // ── Step 2: Reset the player and TimePitch node ──
+        // engine.stop() / disconnect / reconnect fully clears the TimePitch
+        // DSP state (internal resampling buffers), which is what causes the
+        // high-pitched artifact when returning from 2x speed.
         player.stop()
         engine.stop()
         
@@ -1217,34 +1217,32 @@ class AudioPlayerManager: NSObject, ObservableObject {
         engine.disconnectNodeInput(reverb1)
         engine.disconnectNodeInput(reverb2)
         
-        // Also explicitly reset the TimePitch node's internal state
-        timePitch.reset()
+        timePitch.reset()   // explicitly purge TimePitch's internal state
         
         engine.connect(player, to: timePitch, format: format)
         engine.connect(timePitch, to: eq, format: format)
         engine.connect(eq, to: reverb1, format: format)
         engine.connect(reverb1, to: reverb2, format: format)
-        engine.connect(reverb2, to: engine.mainMixerNode, format: format)
+        engine.connect(reverb2, to: mixer, format: format)
         
         do {
             try engine.start()
         } catch {
+            mixer.outputVolume = 1.0   // restore on failure
             print("❌ Failed to restart engine during flush: \(error)")
             return
         }
         
-        // Now that old handlers are invalidated, allow next() for the new schedule
+        // ── Step 3: Schedule audio and start playing (still silent) ──
         self.hasTriggeredNext = false
         
         player.scheduleSegment(file,
-                              startingFrame: startFrame,
-                              frameCount: remainingFrames,
-                              at: nil)
+                               startingFrame: startFrame,
+                               frameCount: remainingFrames,
+                               at: nil)
         
-        // Schedule silence padding + next-track trigger
         let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
-        if let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
-                                                 frameCapacity: paddingFrames) {
+        if let silenceBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: paddingFrames) {
             silenceBuffer.frameLength = paddingFrames
             player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
                 guard let self = self else { return }
@@ -1261,7 +1259,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         self.seekOffset = resumeTime
-        
         player.play()
         
         // Reinstall visualization tap (engine teardown removes it)
@@ -1270,7 +1267,16 @@ class AudioPlayerManager: NSObject, ObservableObject {
             self.installVisualizationTap()
         }
         
-        print("🔄 Flushed TimePitch buffers (full engine reset) at \(resumeTime)s")
+        // ── Step 4: Fade back in over ~40 ms ──
+        // Small delay lets the engine render a few clean buffers first so
+        // there is no audible glitch at the moment the volume returns.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+            UIView.animate(withDuration: 0.04) {
+                mixer.outputVolume = 1.0
+            }
+        }
+        
+        print("🔄 Flushed TimePitch buffers (silent crossfade) at \(resumeTime)s")
     }
     
     private func applyPlaybackSpeed() {
