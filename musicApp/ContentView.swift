@@ -129,9 +129,19 @@ struct ContentView: View {
         
         let urlString = url.absoluteString
         
-        // Handle custom scheme (from Share Extension) - don't process, let queue drain handle it
+        // Handle custom scheme (from Share Extension) - drain the queue immediately
         if url.scheme == "musicApp" || url.scheme == "pulsor" {
-            print("📥 Deep link detected, queue will be processed on appear")
+            // Also check if the URL itself carries the track as a query param (belt-and-suspenders)
+            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+               let shareURL = components.queryItems?.first(where: { $0.name == "url" })?.value,
+               !shareURL.isEmpty {
+                // Enqueue it (in case the app group write raced with the open)
+                IncomingShareQueue.enqueue(shareURL)
+            }
+            // Now drain everything
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                processIncomingShares()
+            }
             return
         }
         
