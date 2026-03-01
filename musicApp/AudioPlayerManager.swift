@@ -1186,12 +1186,23 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         let remainingFrames = AVAudioFrameCount(cropEndFrame - startFrame)
         
-        // Save session info for the completion handler
-        let sessionID = self.currentPlaybackSessionID
         let resumeTime = self.currentTime
+        
+        // Bump the session ID BEFORE stopping, so that the old completion
+        // handler (which captured the previous sessionID) will see a mismatch
+        // and bail out instead of calling next().
+        self.currentPlaybackSessionID = UUID()
+        let sessionID = self.currentPlaybackSessionID
+        
+        // Also mark hasTriggeredNext = true as a belt-and-suspenders guard
+        // against the old handler (which checks this flag).
+        self.hasTriggeredNext = true
         
         // Stop → reschedule → play (flushes TimePitch internal buffers)
         player.stop()
+        
+        // Now that old handlers are invalidated, allow next() for the new schedule
+        self.hasTriggeredNext = false
         
         player.scheduleSegment(file,
                               startingFrame: startFrame,
@@ -1218,7 +1229,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         self.seekOffset = resumeTime
-        self.hasTriggeredNext = false
         
         player.play()
         

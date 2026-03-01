@@ -10,6 +10,10 @@ struct ContentView: View {
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
+    /// Set to true while a deep-link URL is being handled so that
+    /// `processIncomingShares()` (triggered by onAppear / willEnterForeground)
+    /// does not start a duplicate download from the App Group queue.
+    @State private var handlingDeepLink = false
     
     var body: some View {
         PerformanceMonitor.shared.recordViewUpdate("ContentView")
@@ -86,8 +90,13 @@ struct ContentView: View {
             // Set up the reference so DownloadManager can update playing tracks
             downloadManager.audioPlayer = audioPlayer
             
-            
-            processIncomingShares()
+            // Delay so that onOpenURL (which may fire right after onAppear on a
+            // cold launch via deep link) can set handlingDeepLink = true first.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if !handlingDeepLink {
+                    processIncomingShares()
+                }
+            }
             
             // FIXED: Close now playing when playback ends
             audioPlayer.onPlaybackEnded = {
@@ -95,11 +104,24 @@ struct ContentView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
-            processIncomingShares()
+            // Delay slightly so that onOpenURL (which fires in the same run-loop
+            // cycle) can set handlingDeepLink = true first.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if !handlingDeepLink {
+                    processIncomingShares()
+                }
+            }
         }
         .onOpenURL { url in
+            // Mark immediately so concurrent processIncomingShares() calls bail out
+            handlingDeepLink = true
             print("📥 App opened with URL: \(url)")
             handleIncomingURL(url)
+            // Reset the flag after a short window so future foreground events
+            // can still process the queue normally
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                handlingDeepLink = false
+            }
         }
 
         
