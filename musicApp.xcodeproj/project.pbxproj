@@ -147,11 +147,6 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		BF60863A2F53D4F200A3187D /* testme */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = testme;
-			sourceTree = "<group>";
-		};
 		BFDA0F4F2F2D70B9008E3F67 /* ShareToPulsor */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -241,7 +236,6 @@
 				BFFDD6042F1C478D0032409D /* musicAppTests */,
 				BFFDD60E2F1C478D0032409D /* musicAppUITests */,
 				BFDA0F4F2F2D70B9008E3F67 /* ShareToPulsor */,
-				BF60863A2F53D4F200A3187D /* testme */,
 				BFFDD5F02F1C47850032409D /* Products */,
 				BF5782102F1ECD7E0056E8CB /* ffmpegkit.xcframework */,
 				BF5782112F1ECD7E0056E8CB /* libavcodec.xcframework */,
