@@ -10,6 +10,7 @@ class DownloadManager: ObservableObject {
         }
     }
     @Published var activeDownloads: [ActiveDownload] = []
+    @Published var failedDownloads: [FailedDownload] = []
     private var deletionTimers: [UUID: Timer] = [:]
     private let timerLock = NSLock()
     private var updateDebounceTimer: Timer?
@@ -253,6 +254,8 @@ class DownloadManager: ObservableObject {
         guard await !playlistQueue.isCurrentlyProcessing() else { return }
         await playlistQueue.setProcessing(true)
         
+        let failedCountBefore = failedDownloads.count
+        
         defer {
             Task { await playlistQueue.setProcessing(false) }
         }
@@ -274,11 +277,14 @@ class DownloadManager: ObservableObject {
                 source: track.source,
                 title: track.title
             )
-            
-            print("✅ [Queue] Completed: \(track.title)")
         }
         
-        print("✅ [Playlist] All downloads complete")
+        let newFailures = failedDownloads.count - failedCountBefore
+        if newFailures > 0 {
+            print("⚠️ [Playlist] Finished with \(newFailures) failed track(s)")
+        } else {
+            print("✅ [Playlist] All downloads complete")
+        }
     }
 
     // MARK: - Download Single Track (Self-Contained, No Shared Callbacks)
@@ -378,6 +384,16 @@ class DownloadManager: ObservableObject {
             
         } catch {
             print("❌ [Queue] Failed: \(title) - \(error)")
+            let failed = FailedDownload(
+                title: title,
+                url: url,
+                source: source,
+                error: error.localizedDescription,
+                timestamp: Date()
+            )
+            await MainActor.run {
+                self.failedDownloads.append(failed)
+            }
             await removeBanner()
         }
     }

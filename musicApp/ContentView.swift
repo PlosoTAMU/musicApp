@@ -58,6 +58,11 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 Spacer()
                 
+                if !downloadManager.failedDownloads.isEmpty {
+                    FailedDownloadsBanner(downloadManager: downloadManager)
+                        .padding(.bottom, 8)
+                }
+                
                 if !downloadManager.activeDownloads.isEmpty {
                     DownloadBanner(downloadManager: downloadManager)
                         .padding(.bottom, 8)
@@ -1316,6 +1321,69 @@ struct DownloadBanner: View {
             }
             .padding(.horizontal, 16)
         }
+    }
+}
+
+struct FailedDownloadsBanner: View {
+    @ObservedObject var downloadManager: DownloadManager
+    @State private var expanded = false
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            // Header — tap to expand/collapse
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                    .font(.subheadline)
+                
+                Text("\(downloadManager.failedDownloads.count) download\(downloadManager.failedDownloads.count == 1 ? "" : "s") failed")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                // Expand / collapse chevron
+                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                // Dismiss all
+                Button {
+                    withAnimation { downloadManager.failedDownloads.removeAll() }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation { expanded.toggle() } }
+            
+            // Expanded detail list
+            if expanded {
+                VStack(spacing: 6) {
+                    ForEach(downloadManager.failedDownloads) { failed in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(failed.title)
+                                .font(.caption.weight(.medium))
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            Text(failed.error)
+                                .font(.caption2)
+                                .foregroundColor(.red.opacity(0.9))
+                                .lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.1), radius: 5, y: 2)
+        .padding(.horizontal, 16)
     }
 }
 

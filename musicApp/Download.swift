@@ -61,3 +61,12 @@ struct ActiveDownload: Identifiable, Equatable {
         lhs.id == rhs.id && lhs.videoID == rhs.videoID && lhs.title == rhs.title && lhs.progress == rhs.progress
     }
 }
+
+struct FailedDownload: Identifiable {
+    let id = UUID()
+    let title: String
+    let url: String
+    let source: DownloadSource
+    let error: String
+    let timestamp: Date
+}
