@@ -63,6 +63,7 @@ struct ContentView: View {
                     MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
                 }
             }
+            .padding(.bottom, 49) // Account for tab bar height
         }
         .fullScreenCover(isPresented: $showNowPlaying) {
             NowPlayingView(
@@ -926,7 +927,6 @@ struct FastForwardButton: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @State private var isLongPressing = false
     @State private var pressTimer: Timer?
-    @State private var speedBeforeFF: Double = 1.0
     
     var body: some View {
         Image("forward")
@@ -940,8 +940,7 @@ struct FastForwardButton: View {
                         if pressTimer == nil {
                             pressTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
                                 isLongPressing = true
-                                speedBeforeFF = audioPlayer.playbackSpeed
-                                audioPlayer.playbackSpeed = 2.0
+                                audioPlayer.setTemporarySpeed(2.0)
                             }
                         }
                     }
@@ -950,7 +949,7 @@ struct FastForwardButton: View {
                         pressTimer = nil
                         
                         if isLongPressing {
-                            audioPlayer.playbackSpeed = speedBeforeFF
+                            audioPlayer.setTemporarySpeed(nil)
                             isLongPressing = false
                         } else {
                             audioPlayer.skip(seconds: 10)

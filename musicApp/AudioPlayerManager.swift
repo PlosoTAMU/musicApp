@@ -75,8 +75,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // Computed property that returns the actual effective playback speed
     // (accounts for bypass - when bypassed, speed is always 1.0)
     var effectivePlaybackSpeed: Double {
+        if temporarySpeedOverride != nil { return temporarySpeedOverride! }
         return effectsBypass ? 1.0 : playbackSpeed
     }
+    
+    // Temporary speed override for hold-to-fast-forward (works even with DJ mode off)
+    var temporarySpeedOverride: Double? = nil
     
     // ✅ NEW: Store settings per track
     private var trackSettings: [UUID: TrackSettings] = [:]
@@ -1121,6 +1125,29 @@ class AudioPlayerManager: NSObject, ObservableObject {
             }
             
             print("🌊 Reverb: hall=\(reverb1.wetDryMix)%, plate=\(reverb2.wetDryMix)% (user: \(amount)%)")
+        }
+    }
+    
+    // Force a temporary speed override that works regardless of effects bypass state
+    // Used by hold-to-fast-forward button
+    func setTemporarySpeed(_ speed: Double?) {
+        temporarySpeedOverride = speed
+        audioQueue.async {
+            guard let timePitch = self.timePitchNode else { return }
+            let rate = Float(speed ?? (self.effectsBypass ? 1.0 : self.playbackSpeed))
+            let deviation = abs(rate - 1.0)
+            if deviation > 0.3 {
+                timePitch.overlap = 32
+            } else if deviation > 0.1 {
+                timePitch.overlap = 24
+            } else {
+                timePitch.overlap = 16
+            }
+            timePitch.rate = rate
+            // Don't touch pitch — leave it at whatever it was
+            DispatchQueue.main.async {
+                self.updateNowPlayingInfo()
+            }
         }
     }
     

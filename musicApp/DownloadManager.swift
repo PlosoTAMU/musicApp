@@ -350,10 +350,10 @@ class DownloadManager: ObservableObject {
                 
                 // Update banner with actual track name from Spotify
                 if let trackInfo = spotifyTrackInfo {
-                    await updateBanner(title: "Downloading: \(trackInfo)", progress: 0.4)
+                    await updateBanner(title: "\(trackInfo)", progress: 0.4)
                 }
             } else {
-                await updateBanner(title: "Downloading: \(title)", progress: 0.3)
+                await updateBanner(title: "\(title)", progress: 0.3)
             }
             
             // ✅ CRITICAL: Store finalVideoID before download so it doesn't change
@@ -364,11 +364,12 @@ class DownloadManager: ObservableObject {
             
             await updateBanner(title: "Processing: \(spotifyTrackInfo ?? downloadedTitle)", progress: 0.7)
             
-            // Rename file if Spotify
+            // Rename file if Spotify — use the Spotify title (Artist - Song)
             var finalFileURL = fileURL
             if source == .spotify, let trackInfo = spotifyTrackInfo {
                 let cleanTrackInfo = trackInfo
-                    .replacingOccurrences(of: "–", with: "-")
+                    .replacingOccurrences(of: "–", with: "-")    // em-dash
+                    .replacingOccurrences(of: "—", with: "-")    // long em-dash
                     .replacingOccurrences(of: "/", with: "-")
                     .replacingOccurrences(of: ":", with: "-")
                     .replacingOccurrences(of: "\"", with: "")
@@ -405,7 +406,18 @@ class DownloadManager: ObservableObject {
             }
             
             // Create the download object with all the correct, matching data
-            let displayName = spotifyTrackInfo ?? downloadedTitle
+            // For Spotify: ALWAYS use the Spotify track info (Artist - Song) as the title
+            // This ensures the saved name matches what was searched, not the YouTube video title
+            let displayName: String
+            if source == .spotify, let trackInfo = spotifyTrackInfo {
+                // Spotify oEmbed returns "Song Name by Artist" — normalize the separator to " - "
+                let normalized = trackInfo
+                    .replacingOccurrences(of: " – ", with: " - ")   // em-dash → hyphen
+                    .replacingOccurrences(of: " — ", with: " - ")   // em-dash long → hyphen
+                displayName = normalized
+            } else {
+                displayName = downloadedTitle
+            }
             let cleanedTitle = self.neutralizeName(displayName)
             
             // ✅ CRITICAL: Use downloadVideoID (the actual YouTube video ID) for the Download object
@@ -910,24 +922,23 @@ class DownloadManager: ObservableObject {
         def spotify_to_youtube(spotify_url):
             track_info = get_spotify_track_info(spotify_url)
             if not track_info:
-                return None, "Could not extract track info from Spotify"
+                return None, None, "Could not extract track info from Spotify"
             
             print(f"Found track: {track_info}")
             
             youtube_link = search_youtube(track_info)
             if not youtube_link:
-                return None, "Could not find YouTube video for this track"
+                return None, track_info, "Could not find YouTube video for this track"
             
-            return youtube_link, None
+            return youtube_link, track_info, None
         
         # Main execution
         spotify_url = r'''\(cleanURL)'''
         result = {}
         
         try:
-            youtube_url, error = spotify_to_youtube(spotify_url)
+            youtube_url, track_info, error = spotify_to_youtube(spotify_url)
             if youtube_url:
-                track_info = get_spotify_track_info(spotify_url)
                 result = {
                     'success': True,
                     'youtube_url': youtube_url,
