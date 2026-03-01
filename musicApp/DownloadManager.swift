@@ -534,6 +534,9 @@ class DownloadManager: ObservableObject {
                     return
                 }
                 
+                let apiCount = json["count"] as? Int ?? -1
+                print("📊 [Spotify API] Returned \(apiCount) tracks, parsed \(tracksArray.count) entries")
+                
                 let tracks = tracksArray.compactMap { track -> (videoID: String, title: String, url: String)? in
                     guard let trackID = track["track_id"],
                         let title = track["title"] else { return nil }
@@ -556,57 +559,105 @@ class DownloadManager: ObservableObject {
 
         def get_spotify_playlist_tracks(playlist_id, is_album):
             try:
-                endpoint = "album" if is_album else "playlist"
-                url = f"https://open.spotify.com/{endpoint}/{playlist_id}"
-                
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept-Language": "en-US,en;q=0.9"
+                session = requests.Session()
+                session.headers.update({
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9",
+                })
+
+                # ── Step 1: Get an anonymous access token from Spotify ──
+                # Spotify's public token endpoint doesn't require auth
+                token = None
+
+                # Try the public token endpoint first (most reliable)
+                try:
+                    token_resp = session.get("https://open.spotify.com/get_access_token?reason=transport&productType=web_player", timeout=15)
+                    if token_resp.status_code == 200:
+                        token_json = token_resp.json()
+                        token = token_json.get("accessToken")
+                except Exception:
+                    pass
+
+                if not token:
+                    # Fallback: scrape token from the playlist page HTML
+                    endpoint = "album" if is_album else "playlist"
+                    page_url = f"https://open.spotify.com/{endpoint}/{playlist_id}"
+                    page_resp = session.get(page_url, timeout=15)
+                    if page_resp.status_code == 200:
+                        # Token is embedded in the page as accessToken:"..."
+                        token_match = re.search(r'"accessToken":"([^"]+)"', page_resp.text)
+                        if token_match:
+                            token = token_match.group(1)
+
+                if not token:
+                    return None, "Could not get Spotify access token"
+
+                # ── Step 2: Fetch tracks via Spotify's Web API ──
+                api_headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
                 }
-                
-                response = requests.get(url, headers=headers, timeout=30)
-                if response.status_code != 200:
-                    return None, f"HTTP {response.status_code}"
-                
-                html = response.text
+
                 tracks = []
                 
-                # Try to extract from embedded JSON data
-                # Spotify embeds track data in script tags
-                script_pattern = r'<script[^>]*>\\s*Spotify\\s*=\\s*({.*?});?\\s*</script>'
-                
-                # Alternative: look for track URIs and names in the HTML
-                # Pattern for track IDs
-                track_ids = re.findall(r'spotify:track:([a-zA-Z0-9]{22})', html)
-                
-                # Try to get titles from meta tags or other sources
-                title_pattern = r'"name":"([^"]+)"[^}]*"uri":"spotify:track:([a-zA-Z0-9]{22})"'
-                title_matches = re.findall(title_pattern, html)
-                
-                if title_matches:
-                    seen = set()
-                    for title, track_id in title_matches:
-                        if track_id not in seen:
-                            seen.add(track_id)
+                if is_album:
+                    # Album endpoint: paginated, 50 per page
+                    offset = 0
+                    limit = 50
+                    while True:
+                        api_url = f"https://api.spotify.com/v1/albums/{playlist_id}/tracks?offset={offset}&limit={limit}"
+                        resp = session.get(api_url, headers=api_headers, timeout=15)
+                        if resp.status_code != 200:
+                            if not tracks:
+                                return None, f"Spotify API error {resp.status_code}: {resp.text[:200]}"
+                            break
+                        data = resp.json()
+                        items = data.get("items", [])
+                        if not items:
+                            break
+                        for item in items:
+                            track_id = item.get("id")
+                            name = item.get("name", "Unknown")
+                            artists = ", ".join(a.get("name", "") for a in item.get("artists", []))
+                            title = f"{artists} - {name}" if artists else name
+                            if track_id:
+                                tracks.append({"track_id": track_id, "title": title})
+                        if not data.get("next"):
+                            break
+                        offset += limit
+                else:
+                    # Playlist endpoint: paginated, 100 per page
+                    offset = 0
+                    limit = 100
+                    while True:
+                        api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?offset={offset}&limit={limit}&fields=items(track(id,name,artists(name))),next"
+                        resp = session.get(api_url, headers=api_headers, timeout=15)
+                        if resp.status_code != 200:
+                            if not tracks:
+                                return None, f"Spotify API error {resp.status_code}: {resp.text[:200]}"
+                            break
+                        data = resp.json()
+                        items = data.get("items", [])
+                        if not items:
+                            break
+                        for item in items:
+                            track = item.get("track")
+                            if not track or not track.get("id"):
+                                continue
+                            track_id = track["id"]
+                            name = track.get("name", "Unknown")
+                            artists = ", ".join(a.get("name", "") for a in track.get("artists", []))
+                            title = f"{artists} - {name}" if artists else name
                             tracks.append({"track_id": track_id, "title": title})
-                elif track_ids:
-                    # Fallback: just use track IDs
-                    seen = set()
-                    for i, track_id in enumerate(track_ids):
-                        if track_id not in seen:
-                            seen.add(track_id)
-                            tracks.append({"track_id": track_id, "title": f"Track {i+1}"})
-                
+                        if not data.get("next"):
+                            break
+                        offset += limit
+
                 if not tracks:
-                    # Try oembed API for basic info
-                    oembed_url = f"https://open.spotify.com/oembed?url={url}"
-                    oembed_resp = requests.get(oembed_url, timeout=10)
-                    if oembed_resp.status_code == 200:
-                        return None, "Playlist found but couldn't extract individual tracks. Try sharing individual songs."
-                    return None, "No tracks found in playlist"
-                
+                    return None, "No tracks found via Spotify API"
+
                 return tracks, None
-                
+
             except Exception as e:
                 return None, str(e)
 
@@ -616,7 +667,7 @@ class DownloadManager: ObservableObject {
 
         tracks, error = get_spotify_playlist_tracks(playlist_id, is_album)
         if tracks:
-            result = {"success": True, "tracks": tracks}
+            result = {"success": True, "tracks": tracks, "count": len(tracks)}
         else:
             result = {"success": False, "error": error or "Failed to fetch playlist"}
 
