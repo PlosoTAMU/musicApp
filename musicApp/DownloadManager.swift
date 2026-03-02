@@ -53,6 +53,8 @@ class DownloadManager: ObservableObject {
         loadDownloads()
         // FIXED: Validate and fix thumbnails on boot
         validateAndFixThumbnails()
+        // ⚠️ TEMPORARY: delete ThumbnailCleanup_DELETEME.swift after one launch
+        oneTimeThumbnailPurge()
     }
     
     // Neutralize song names by removing formatting characters
@@ -1076,11 +1078,11 @@ class DownloadManager: ObservableObject {
             print("❌ [DownloadManager] Failed to delete audio file: \(error)")
         }
         
-        if let thumbPath = download.thumbnailPath {
+        if let thumbPath = download.resolvedThumbnailPath {
             do {
                 if FileManager.default.fileExists(atPath: thumbPath) {
                     try FileManager.default.removeItem(atPath: thumbPath)
-                    print("✅ [DownloadManager] Deleted thumbnail: \(thumbPath)")
+                    print("✅ [DownloadManager] Deleted thumbnail: \((thumbPath as NSString).lastPathComponent)")
                 }
             } catch {
                 print("❌ [DownloadManager] Failed to delete thumbnail: \(error)")
@@ -1427,7 +1429,47 @@ class DownloadManager: ObservableObject {
         if needsSave {
             saveDownloads()
         }
+        
+        // Purge orphaned thumbnails (thumbnails with no matching audio file)
+        purgeOrphanedThumbnails()
+        
         print("✅ [DownloadManager] Thumbnail validation complete")
+    }
+    
+    private func purgeOrphanedThumbnails() {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let thumbnailsDir = documentsPath.appendingPathComponent("Thumbnails")
+        
+        guard let thumbnailFiles = try? FileManager.default.contentsOfDirectory(
+            at: thumbnailsDir,
+            includingPropertiesForKeys: nil
+        ) else { return }
+        
+        // Build set of all thumbnail filenames that belong to a known download
+        let knownThumbnailFilenames = Set(
+            downloads.compactMap { $0.thumbnailPath }
+                     .map { ($0 as NSString).lastPathComponent }
+        )
+        
+        var deletedCount = 0
+        for thumbnailFile in thumbnailFiles {
+            let filename = thumbnailFile.lastPathComponent
+            if !knownThumbnailFilenames.contains(filename) {
+                do {
+                    try FileManager.default.removeItem(at: thumbnailFile)
+                    deletedCount += 1
+                    print("🗑️ [DownloadManager] Purged orphaned thumbnail: \(filename)")
+                } catch {
+                    print("❌ [DownloadManager] Failed to purge thumbnail \(filename): \(error)")
+                }
+            }
+        }
+        
+        if deletedCount > 0 {
+            print("✅ [DownloadManager] Purged \(deletedCount) orphaned thumbnail(s)")
+        } else {
+            print("✅ [DownloadManager] No orphaned thumbnails found")
+        }
     }
     
     private func getMetadataFileURL() -> URL {
