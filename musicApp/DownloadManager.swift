@@ -53,8 +53,6 @@ class DownloadManager: ObservableObject {
         loadDownloads()
         // FIXED: Validate and fix thumbnails on boot
         validateAndFixThumbnails()
-        // ⚠️ TEMPORARY: delete ThumbnailCleanup_DELETEME.swift after one launch
-        oneTimeThumbnailPurge()
     }
     
     // Neutralize song names by removing formatting characters
