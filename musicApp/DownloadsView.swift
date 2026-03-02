@@ -7,6 +7,8 @@ struct DownloadsView: View {
     @Binding var showYouTubeDownload: Bool
     @State private var showAddToPlaylist: Download?
     @State private var searchText = ""
+    @State private var hasCurrentTrack = false
+    @State private var hasActiveDownload = false
     
     var filteredDownloads: [Download] {
         if searchText.isEmpty {
@@ -20,8 +22,30 @@ struct DownloadsView: View {
     
     var body: some View {
         NavigationView {
-            List {
-                ForEach(filteredDownloads) { download in
+            VStack(spacing: 0) {
+                // Always-visible search bar
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("Search downloads", text: $searchText)
+                        .autocorrectionDisabled()
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding(8)
+                .background(Color(.systemGray6))
+                .cornerRadius(10)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+
+                List {
+                    ForEach(filteredDownloads) { download in
                     DownloadRow(
                         download: download,
                         audioPlayer: audioPlayer,
@@ -70,10 +94,17 @@ struct DownloadsView: View {
             .scrollContentBackground(.hidden)
             .background(Color.black)
             .scrollIndicators(.visible)
-            .searchable(text: $searchText, prompt: "Search downloads")
+            } // end VStack
+            .background(Color.black)
             .navigationTitle("Downloads")
-            .safeAreaInset(edge: .bottom) {  // ✅ ADD THIS
-                Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
+            .safeAreaInset(edge: .bottom) {
+                Color.clear.frame(height: hasCurrentTrack ? (hasActiveDownload ? 130 : 65) : (hasActiveDownload ? 65 : 0))
+            }
+            .onReceive(audioPlayer.$currentTrack) { track in
+                hasCurrentTrack = track != nil
+            }
+            .onReceive(downloadManager.$activeDownloads) { active in
+                hasActiveDownload = !active.isEmpty
             }
             .toolbar {
                 ToolbarItem(placement: .principal) {
