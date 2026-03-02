@@ -60,6 +60,14 @@ class PlaylistManager: ObservableObject {
         savePlaylists()
     }
     
+    func renamePlaylist(_ playlist: Playlist, newName: String) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        playlists[index].name = trimmed
+        savePlaylists()
+    }
+    
     func getTracks(for playlist: Playlist, from downloadManager: DownloadManager) -> [Download] {
         playlist.trackIDs.compactMap { downloadManager.getDownload(byID: $0) }
     }

@@ -9,6 +9,8 @@ struct PlaylistsView: View {
     @State private var refreshID = UUID()
     @State private var cachedDurations: [UUID: TimeInterval] = [:]
     @State private var hasCurrentTrack = false
+    @State private var renamingPlaylist: Playlist? = nil
+    @State private var renameText: String = ""
     
     var body: some View {
         NavigationView {
@@ -40,6 +42,21 @@ struct PlaylistsView: View {
                             }
                         }
                     }
+                    .contextMenu {
+                        Button {
+                            renameText = playlist.name
+                            renamingPlaylist = playlist
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+                        Button(role: .destructive) {
+                            playlistManager.deletePlaylist(playlist)
+                            refreshID = UUID()
+                            computeDurationsAsync()
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                 }
                 .onDelete(perform: deletePlaylists)
             }
@@ -68,6 +85,22 @@ struct PlaylistsView: View {
             }
             .onReceive(audioPlayer.$currentTrack) { track in
                 hasCurrentTrack = track != nil
+            }
+            .alert("Rename Playlist", isPresented: Binding(
+                get: { renamingPlaylist != nil },
+                set: { if !$0 { renamingPlaylist = nil } }
+            )) {
+                TextField("Playlist name", text: $renameText)
+                Button("Rename") {
+                    if let playlist = renamingPlaylist {
+                        playlistManager.renamePlaylist(playlist, newName: renameText)
+                        refreshID = UUID()
+                    }
+                    renamingPlaylist = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    renamingPlaylist = nil
+                }
             }
         }
         .sheet(isPresented: $showCreatePlaylist) {
