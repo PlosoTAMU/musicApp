@@ -400,6 +400,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func setupRemoteControls() {
         let commandCenter = MPRemoteCommandCenter.shared()
         
+        // Enable previous/next track (shows « and »)
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.nextTrackCommand.isEnabled = true
+        commandCenter.previousTrackCommand.isEnabled = true
+        
         commandCenter.playCommand.addTarget { [weak self] _ in
             self?.resume()
             return .success
@@ -420,6 +426,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             return .success
         }
         
+        commandCenter.changePlaybackPositionCommand.isEnabled = true
         commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
             if let event = event as? MPChangePlaybackPositionCommandEvent {
                 self?.seek(to: event.positionTime)
@@ -428,19 +435,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
             return .commandFailed
         }
         
-        commandCenter.skipForwardCommand.isEnabled = true
-        commandCenter.skipForwardCommand.preferredIntervals = [10]
-        commandCenter.skipForwardCommand.addTarget { [weak self] _ in
-            self?.skip(seconds: 10)
-            return .success
-        }
-        
-        commandCenter.skipBackwardCommand.isEnabled = true
-        commandCenter.skipBackwardCommand.preferredIntervals = [10]
-        commandCenter.skipBackwardCommand.addTarget { [weak self] _ in
-            self?.skip(seconds: -10)
-            return .success
-        }
+        // Disable +10/-10 so iOS shows « » instead
+        commandCenter.skipForwardCommand.isEnabled = false
+        commandCenter.skipBackwardCommand.isEnabled = false
     }
     
     private func setupInterruptionHandling() {
