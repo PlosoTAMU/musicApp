@@ -71,6 +71,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
             applyPlaybackSpeed()
         }
     }
+
+    /// Timestamp of when the current track was last paused (for auto-restart logic)
+    private var lastPausedAt: Date? = nil
+
+    /// If paused longer than this, restart the song from the beginning
+    private let autoRestartThreshold: TimeInterval = 60.0 // 1 minute
     
     // Computed property that returns the actual effective playback speed
     // (accounts for bypass - when bypassed, speed is always 1.0)
@@ -639,6 +645,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         currentPlaybackSessionID = UUID()
         let sessionID = currentPlaybackSessionID
         hasTriggeredNext = false  // ✅ RESET: New track, allow next() to be triggered again
+        lastPausedAt = nil  // ✅ Reset pause timestamp on new play
     
         // ✅ FIX: Reset visualization IMMEDIATELY and SYNCHRONOUSLY
         // This ensures UI shows zero before any async work happens
@@ -786,6 +793,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func pause() {
         savedCurrentTime = currentTime
         needsReschedule = true
+        lastPausedAt = Date() // ✅ Track when we paused
         
         audioQueue.async {
             self.playerNode?.pause()
@@ -800,10 +808,21 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     func resume() {
         guard let track = currentTrack,
-              let trackURL = currentTrackURL ?? track.resolvedURL() else {
+            let trackURL = currentTrackURL ?? track.resolvedURL() else {
             print("❌ No track to resume")
             return
         }
+        
+        // ✅ NEW: If paused for more than 1 minute, restart from the beginning
+        if let pausedAt = lastPausedAt {
+            let elapsed = Date().timeIntervalSince(pausedAt)
+            if elapsed > autoRestartThreshold {
+                print("⏪ [AudioPlayer] Paused for \(Int(elapsed))s (>\(Int(autoRestartThreshold))s), restarting from beginning")
+                savedCurrentTime = 0
+                needsReschedule = true
+            }
+        }
+        lastPausedAt = nil // ✅ Clear — we're no longer paused
         
         audioQueue.async { [weak self] in
             guard let self = self else { return }
@@ -1529,6 +1548,33 @@ class AudioPlayerManager: NSObject, ObservableObject {
                     let firstTrack = self.queue.removeFirst()
                     self.play(firstTrack)
                 }
+            }
+        }
+    }
+
+    /// Queue an entire playlist's tracks without interrupting current playback.
+    /// If nothing is playing, starts the first track immediately.
+    func queuePlaylist(_ tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+        
+        DispatchQueue.main.async {
+            // ✅ AUTO-DISABLE: Disable loop when queueing a playlist
+            if self.isLoopEnabled {
+                self.isLoopEnabled = false
+                print("🔁 [AudioPlayer] Loop disabled - playlist queued")
+            }
+            
+            if self.currentTrack == nil {
+                // Nothing playing — start the first track, queue the rest
+                let first = tracks[0]
+                let rest = Array(tracks.dropFirst())
+                self.queue.append(contentsOf: rest)
+                self.play(first)
+                print("📋 [AudioPlayer] Queued \(tracks.count) tracks (started first)")
+            } else {
+                // Something is playing — just append all to queue
+                self.queue.append(contentsOf: tracks)
+                print("📋 [AudioPlayer] Queued \(tracks.count) tracks behind current playback")
             }
         }
     }

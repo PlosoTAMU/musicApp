@@ -110,6 +110,25 @@ struct PlaylistDetailView: View {
                         .background(Color.green)
                         .cornerRadius(8)
                     }
+                    
+                    // ✅ NEW: Queue All button
+                    Button {
+                        let tracks = self.tracks.map { download in
+                            Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
+                        }
+                        audioPlayer.queuePlaylist(tracks)
+                    } label: {
+                        HStack {
+                            Image(systemName: "text.line.last.and.arrowtriangle.forward")
+                            Text("Queue")
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(Color.orange)
+                        .cornerRadius(8)
+                    }
                 }
                 
                 Text("\(tracks.count) songs • \(formatDuration(totalDuration))")
