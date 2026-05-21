@@ -74,7 +74,7 @@ struct PlaylistDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
-                HStack(spacing: 16) {
+                HStack(spacing: 12) {
                     Button {
                         let tracks = self.tracks.map { download in
                             Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
@@ -110,25 +110,24 @@ struct PlaylistDetailView: View {
                         .background(Color.green)
                         .cornerRadius(8)
                     }
-                    
-                    // ✅ NEW: Queue All button
-                    Button {
-                        let tracks = self.tracks.map { download in
-                            Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
-                        }
-                        audioPlayer.queuePlaylist(tracks)
-                    } label: {
-                        HStack {
-                            Image(systemName: "text.line.last.and.arrowtriangle.forward")
-                            Text("Queue")
-                        }
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(Color.orange)
-                        .cornerRadius(8)
+                }
+                
+                Button {
+                    let tracks = self.tracks.map { download in
+                        Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
                     }
+                    audioPlayer.queuePlaylist(tracks)
+                } label: {
+                    HStack {
+                        Image(systemName: "text.line.last.and.arrowtriangle.forward")
+                        Text("Queue All")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.orange)
+                    .cornerRadius(8)
                 }
                 
                 Text("\(tracks.count) songs • \(formatDuration(totalDuration))")
