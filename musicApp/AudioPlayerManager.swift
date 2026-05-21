@@ -1554,28 +1554,55 @@ class AudioPlayerManager: NSObject, ObservableObject {
 
     /// Queue an entire playlist's tracks without interrupting current playback.
     /// If nothing is playing, starts the first track immediately.
-    func queuePlaylist(_ tracks: [Track]) {
+    func queuePlaylist(_ tracks: [Track], shuffle: Bool = false) {
         guard !tracks.isEmpty else { return }
         
+        let orderedTracks = shuffle ? tracks.shuffled() : tracks
+        
         DispatchQueue.main.async {
-            // ✅ AUTO-DISABLE: Disable loop when queueing a playlist
             if self.isLoopEnabled {
                 self.isLoopEnabled = false
                 print("🔁 [AudioPlayer] Loop disabled - playlist queued")
             }
             
             if self.currentTrack == nil {
-                // Nothing playing — start the first track, queue the rest
-                let first = tracks[0]
-                let rest = Array(tracks.dropFirst())
+                let first = orderedTracks[0]
+                let rest = Array(orderedTracks.dropFirst())
                 self.queue.append(contentsOf: rest)
                 self.play(first)
-                print("📋 [AudioPlayer] Queued \(tracks.count) tracks (started first)")
+                print("📋 [AudioPlayer] Queued \(orderedTracks.count) tracks (started first, shuffle: \(shuffle))")
             } else {
-                // Something is playing — just append all to queue
-                self.queue.append(contentsOf: tracks)
-                print("📋 [AudioPlayer] Queued \(tracks.count) tracks behind current playback")
+                self.queue.append(contentsOf: orderedTracks)
+                print("📋 [AudioPlayer] Queued \(orderedTracks.count) tracks (shuffle: \(shuffle))")
             }
+        }
+    }
+    /// Moves the given tracks to the front of the queue and immediately starts playing the first one.
+    func injectAtFrontOfQueue(_ tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+        
+        DispatchQueue.main.async {
+            if self.isLoopEnabled {
+                self.isLoopEnabled = false
+                print("🔁 [AudioPlayer] Loop disabled - playlist injected")
+            }
+            
+            // Remove these tracks from wherever they currently sit in the queue
+            let trackIDs = Set(tracks.map { $0.id })
+            self.queue.removeAll { trackIDs.contains($0.id) }
+            
+            // Put current track into previous queue
+            if let current = self.currentTrack {
+                self.previousQueue.append(current)
+            }
+            
+            // First track plays now, rest go to front of queue
+            let first = tracks[0]
+            let rest = Array(tracks.dropFirst())
+            self.queue.insert(contentsOf: rest, at: 0)
+            self.play(first)
+            
+            print("⚡ [AudioPlayer] Injected \(tracks.count) tracks at front of queue (playing now)")
         }
     }
     

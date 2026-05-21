@@ -74,61 +74,11 @@ struct PlaylistDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
-                HStack(spacing: 12) {
-                    Button {
-                        let tracks = self.tracks.map { download in
-                            Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
-                        }
-                        audioPlayer.loadPlaylist(tracks, shuffle: false)
-                    } label: {
-                        HStack {
-                            Image(systemName: "play.fill")
-                            Text("Play All")
-                        }
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(Color.blue)
-                        .cornerRadius(8)
-                    }
-                    
-                    Button {
-                        let tracks = self.tracks.map { download in
-                            Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
-                        }
-                        audioPlayer.loadPlaylist(tracks, shuffle: true)
-                    } label: {
-                        HStack {
-                            Image(systemName: "shuffle")
-                            Text("Shuffle")
-                        }
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(Color.green)
-                        .cornerRadius(8)
-                    }
-                }
-                
-                Button {
-                    let tracks = self.tracks.map { download in
-                        Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
-                    }
-                    audioPlayer.queuePlaylist(tracks)
-                } label: {
-                    HStack {
-                        Image(systemName: "text.line.last.and.arrowtriangle.forward")
-                        Text("Queue All")
-                    }
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color.orange)
-                    .cornerRadius(8)
-                }
+                PlaylistActionButtons(
+                    tracks: tracks,
+                    playlistName: playlist.name,
+                    audioPlayer: audioPlayer
+                )
                 
                 Text("\(tracks.count) songs • \(formatDuration(totalDuration))")
                     .font(.caption)
@@ -386,6 +336,131 @@ struct PlaylistSongRow: View {
         .background(Color.black)
         .swipeToQueue {
             onQueue()
+        }
+    }
+}
+
+struct PlaylistActionButtons: View {
+    let tracks: [Download]
+    let playlistName: String
+    let audioPlayer: AudioPlayerManager
+    
+    @State private var playConfirmPending = false
+    @State private var shuffleConfirmPending = false
+    @State private var playTimer: Timer?
+    @State private var shuffleTimer: Timer?
+    @State private var queuedPlayTracks: [Track] = []
+    @State private var queuedShuffleTracks: [Track] = []
+    
+    private func makeTracks(shuffle: Bool) -> [Track] {
+        let mapped = tracks.map { download in
+            Track(
+                id: download.id,
+                name: download.name,
+                url: download.url,
+                folderName: playlistName,
+                cropStartTime: download.cropStartTime,
+                cropEndTime: download.cropEndTime
+            )
+        }
+        return shuffle ? mapped.shuffled() : mapped
+    }
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // PLAY / PLAY NOW button
+            Button {
+                if playConfirmPending {
+                    // Second tap — inject at front and play immediately
+                    playTimer?.invalidate()
+                    playTimer = nil
+                    audioPlayer.injectAtFrontOfQueue(queuedPlayTracks)
+                    playConfirmPending = false
+                    queuedPlayTracks = []
+                } else {
+                    // First tap — queue the playlist
+                    let t = makeTracks(shuffle: false)
+                    queuedPlayTracks = t
+                    audioPlayer.queuePlaylist(t, shuffle: false)
+                    playConfirmPending = true
+                    
+                    // Reset shuffle state if active
+                    if shuffleConfirmPending {
+                        shuffleTimer?.invalidate()
+                        shuffleTimer = nil
+                        shuffleConfirmPending = false
+                        queuedShuffleTracks = []
+                    }
+                    
+                    // 2-second timeout
+                    playTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { _ in
+                        playConfirmPending = false
+                        queuedPlayTracks = []
+                    }
+                }
+            } label: {
+                HStack {
+                    Image(systemName: playConfirmPending ? "play.circle.fill" : "play.fill")
+                    Text(playConfirmPending ? "Play Now?" : "Play")
+                }
+                .font(.subheadline)
+                .fontWeight(playConfirmPending ? .bold : .regular)
+                .foregroundColor(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(playConfirmPending ? Color.orange : Color.blue)
+                .cornerRadius(8)
+                .animation(.easeInOut(duration: 0.15), value: playConfirmPending)
+            }
+            
+            // SHUFFLE / SHUFFLE NOW button
+            Button {
+                if shuffleConfirmPending {
+                    // Second tap — inject at front and play immediately
+                    shuffleTimer?.invalidate()
+                    shuffleTimer = nil
+                    audioPlayer.injectAtFrontOfQueue(queuedShuffleTracks)
+                    shuffleConfirmPending = false
+                    queuedShuffleTracks = []
+                } else {
+                    // First tap — queue the shuffled playlist
+                    let t = makeTracks(shuffle: true)
+                    queuedShuffleTracks = t
+                    audioPlayer.queuePlaylist(t, shuffle: false) // already shuffled
+                    shuffleConfirmPending = true
+                    
+                    // Reset play state if active
+                    if playConfirmPending {
+                        playTimer?.invalidate()
+                        playTimer = nil
+                        playConfirmPending = false
+                        queuedPlayTracks = []
+                    }
+                    
+                    // 2-second timeout
+                    shuffleTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { _ in
+                        shuffleConfirmPending = false
+                        queuedShuffleTracks = []
+                    }
+                }
+            } label: {
+                HStack {
+                    Image(systemName: shuffleConfirmPending ? "shuffle.circle.fill" : "shuffle")
+                    Text(shuffleConfirmPending ? "Shuffle Now?" : "Shuffle")
+                }
+                .font(.subheadline)
+                .fontWeight(shuffleConfirmPending ? .bold : .regular)
+                .foregroundColor(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(shuffleConfirmPending ? Color.orange : Color.green)
+                .cornerRadius(8)
+                .animation(.easeInOut(duration: 0.15), value: shuffleConfirmPending)
+            }
+        }
+        .onDisappear {
+            playTimer?.invalidate()
+            shuffleTimer?.invalidate()
         }
     }
 }
