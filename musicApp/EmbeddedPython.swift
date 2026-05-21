@@ -146,13 +146,13 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
                     // FIXED: Start title monitoring
                     self?.startTitleMonitoring(videoID: videoID)
                     
-                    self?.updateStatus("Downloading...")
+                    self?.updateStatus("Downloading")
                     self?.updateProgress(0.1)
                     
                     // Python downloads the file - FIXED: callback updates banner immediately when title is known
                     let (downloadedURL, title, thumbnailURL) = try self?.runYtdlp(url: url, videoID: videoID, outputDir: outputDir.path) ?? (URL(fileURLWithPath: ""), "", nil)
                     
-                    self?.updateStatus("Download complete, compressing...")
+                    self?.updateStatus("Download complete, compressing")
                     self?.updateProgress(0.7)
                     
                     // Stop progress monitoring
@@ -162,7 +162,7 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
                     self?.stopTitleMonitoring()
                     
                     // Compress it with proper naming
-                    print("📄 [downloadAudio] Compressing audio...")
+                    print("📄 [downloadAudio] Compressing audio")
                     let compressedURL = (try? self?.compressAudio(inputURL: downloadedURL, title: title, outputDir: outputDir)) ?? downloadedURL
                     
                     self?.updateProgress(0.9)
@@ -301,7 +301,7 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
                     updateProgress(0.1 + progress * 0.6) // Scale to 10-70% range
                     
                     let sizeMB = Double(fileSize) / 1_000_000
-                    updateStatus(String(format: "Downloading... %.1f MB", sizeMB))
+                    updateStatus(String(format: "Downloading %.1f MB", sizeMB))
                 }
             }
         } catch {

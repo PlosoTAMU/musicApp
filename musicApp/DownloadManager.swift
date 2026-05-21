@@ -5,20 +5,21 @@ import AVFoundation
 class DownloadManager: ObservableObject {
     @Published var downloads: [Download] = [] {
         didSet {
-            // ✅ PERFORMANCE: Cache sorted downloads instead of re-sorting on every access
             _sortedDownloadsCache = nil
         }
     }
     @Published var activeDownloads: [ActiveDownload] = []
     @Published var failedDownloads: [FailedDownload] = []
+    
+    // NEW: most recently completed download for UI prompt
+    @Published var completedDownloadForPlaylistPrompt: Download? = nil
+    
     private var deletionTimers: [UUID: Timer] = [:]
     private let timerLock = NSLock()
     private var updateDebounceTimer: Timer?
     
-    // Reference to AudioPlayerManager to update playing tracks
     weak var audioPlayer: AudioPlayerManager?
     
-    // ✅ PERFORMANCE: Cached sorted downloads
     private var _sortedDownloadsCache: [Download]?
     var sortedDownloads: [Download] {
         if let cached = _sortedDownloadsCache {
@@ -51,7 +52,6 @@ class DownloadManager: ObservableObject {
         print("📂 Music directory: \(musicDirectory.path)")
         
         loadDownloads()
-        // FIXED: Validate and fix thumbnails on boot
         validateAndFixThumbnails()
     }
     
@@ -385,6 +385,7 @@ class DownloadManager: ObservableObject {
             await MainActor.run {
                 self.activeDownloads.removeAll { $0.id == downloadID }
                 self.addDownload(download)
+                self.completedDownloadForPlaylistPrompt = download  // Set the completed download for the playlist prompt
             }
             
             print("✅ [Queue] Saved: \(cleanedTitle) (videoID: \(downloadVideoID))")

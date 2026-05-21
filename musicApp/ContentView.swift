@@ -14,6 +14,8 @@ struct ContentView: View {
     /// `processIncomingShares()` (triggered by onAppear / willEnterForeground)
     /// does not start a duplicate download from the App Group queue.
     @State private var handlingDeepLink = false
+
+    @State private var playlistPromptDownload: Download?
     
     var body: some View {
         PerformanceMonitor.shared.recordViewUpdate("ContentView")
@@ -89,6 +91,17 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showYouTubeDownload) {
             YouTubeDownloadView(downloadManager: downloadManager)
+        }
+        // NEW: auto-show add-to-playlist sheet after download completes
+        .sheet(item: $playlistPromptDownload) { download in
+            AddToPlaylistSheet(
+                download: download,
+                playlistManager: playlistManager,
+                onDismiss: {
+                    playlistPromptDownload = nil
+                    downloadManager.completedDownloadForPlaylistPrompt = nil
+                }
+            )
         }
         // FIXED: Close now playing when playback ends
         .onAppear {
@@ -200,7 +213,7 @@ struct ContentView: View {
                 url: urlString,
                 videoID: videoID,
                 source: detectedSource,
-                title: detectedSource == .spotify ? "Converting Spotify..." : "Downloading..."
+                title: detectedSource == .spotify ? "Converting Spotify" : "Downloading"
             )
         } else {
             print("⚠️ Skipping duplicate: \(videoID)")
@@ -233,7 +246,7 @@ struct ContentView: View {
                 url: urlString,
                 videoID: videoID,
                 source: source,
-                title: source == .spotify ? "Converting Spotify..." : "Downloading..."
+                title: source == .spotify ? "Converting Spotify" : "Downloading"
             )
         }
     }
