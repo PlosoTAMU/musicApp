@@ -385,102 +385,108 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
     }
     
     private func downloadThumbnail(url: String, for filename: String) {
-        guard let thumbnailURL = URL(string: url) else { return }
-        
         let thumbnailsDir = getThumbnailsDirectory()
-        try? FileManager.default.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
-        
         let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
         
+        // Already exists and is valid?
         if FileManager.default.fileExists(atPath: savePath.path),
-        let _ = UIImage(contentsOfFile: savePath.path) {
-            print("✅ [Thumbnail] Already exists: \(savePath.lastPathComponent)")
+        let img = UIImage(contentsOfFile: savePath.path),
+        img.size.width > 150 && img.size.height > 150 {
+            print("✅ [Thumbnail] Already exists and valid: \(savePath.lastPathComponent)")
             return
         }
         
+        // Extract video ID from the audio filename
+        // Filename format is typically "{videoID}.m4a" so thumbnail save is "{videoID}.m4a.jpg"
+        // We need to get just the videoID part
+        let audioFilename = filename // e.g. "dQw4w9WgXcQ.m4a"
+        let videoID = (audioFilename as NSString).deletingPathExtension // e.g. "dQw4w9WgXcQ"
+        
         Task {
-            // Try up to 3 times
-            for attempt in 1...3 {
-                do {
-                    let (data, response) = try await URLSession.shared.data(from: thumbnailURL)
-                    
-                    guard let httpResponse = response as? HTTPURLResponse,
-                        httpResponse.statusCode == 200,
-                        let _ = UIImage(data: data) else {
-                        if attempt == 3 {
-                            print("❌ [Thumbnail] Invalid image data after \(attempt) attempts")
-                            tryFallbackThumbnail(for: filename, originalURL: url)
+            // Build URL list: yt-dlp's URL first (highest quality, possibly signed), then static fallbacks
+            var allURLs: [String] = []
+            
+            if !url.isEmpty, let _ = URL(string: url) {
+                allURLs.append(url)
+            }
+            
+            if !videoID.isEmpty {
+                allURLs.append(contentsOf: [
+                    "https://img.youtube.com/vi/\(videoID)/maxresdefault.jpg",
+                    "https://img.youtube.com/vi/\(videoID)/sddefault.jpg",
+                    "https://img.youtube.com/vi/\(videoID)/hqdefault.jpg",
+                    "https://i.ytimg.com/vi/\(videoID)/hqdefault.jpg",
+                    "https://img.youtube.com/vi/\(videoID)/mqdefault.jpg",
+                    "https://i.ytimg.com/vi/\(videoID)/0.jpg",
+                    "https://i.ytimg.com/vi/\(videoID)/0.jpg",
+                    "https://img.youtube.com/vi/\(videoID)/default.jpg",
+                ])
+            }
+            
+            let minFileSize = 5_000       // 5KB — placeholders are ~1-2KB
+            let minWidth: CGFloat = 200
+            let minHeight: CGFloat = 150
+            
+            for urlString in allURLs {
+                guard let fetchURL = URL(string: urlString) else { continue }
+                
+                for attempt in 1...2 {
+                    do {
+                        let (data, response) = try await URLSession.shared.data(from: fetchURL)
+                        
+                        guard let httpResponse = response as? HTTPURLResponse,
+                            httpResponse.statusCode == 200 else {
+                            break // This URL doesn't exist, try next quality
+                        }
+                        
+                        // Skip tiny placeholder images
+                        guard data.count >= minFileSize else {
+                            print("⚠️ [Thumbnail] Placeholder (\(data.count) bytes), skipping: \(urlString)")
+                            break
+                        }
+                        
+                        // Validate it's a real image with acceptable dimensions
+                        guard let image = UIImage(data: data),
+                            image.size.width >= minWidth,
+                            image.size.height >= minHeight else {
+                            print("⚠️ [Thumbnail] Too small or invalid, skipping: \(urlString)")
+                            break
+                        }
+                        
+                        // Convert to JPEG for consistency
+                        let saveData: Data
+                        if let jpegData = image.jpegData(compressionQuality: 0.92) {
+                            saveData = jpegData
                         } else {
-                            print("⚠️ [Thumbnail] Attempt \(attempt) failed, retrying...")
-                            try? await Task.sleep(nanoseconds: 1_000_000_000)
+                            saveData = data
+                        }
+                        
+                        try saveData.write(to: savePath, options: .atomic)
+                        
+                        // Verify the saved file
+                        if let _ = UIImage(contentsOfFile: savePath.path) {
+                            print("✅ [Thumbnail] Saved \(Int(image.size.width))x\(Int(image.size.height)) (\(saveData.count / 1024)KB) from: \(urlString)")
+                            return
+                        } else {
+                            try? FileManager.default.removeItem(at: savePath)
+                            continue // retry
+                        }
+                        
+                    } catch {
+                        if attempt < 2 {
+                            try? await Task.sleep(nanoseconds: 500_000_000)
                             continue
                         }
-                        return
-                    }
-                    
-                    try data.write(to: savePath, options: .atomic)
-                    
-                    if let _ = UIImage(contentsOfFile: savePath.path) {
-                        print("✅ [Thumbnail] Saved and verified on attempt \(attempt): \(savePath.lastPathComponent)")
-                        return
-                    } else {
-                        if attempt == 3 {
-                            print("⚠️ [Thumbnail] Saved but unreadable after \(attempt) attempts")
-                            try? FileManager.default.removeItem(at: savePath)
-                            tryFallbackThumbnail(for: filename, originalURL: url)
-                        } else {
-                            try? FileManager.default.removeItem(at: savePath)
-                            try? await Task.sleep(nanoseconds: 1_000_000_000)
-                            continue
-                        }
-                    }
-                } catch {
-                    if attempt == 3 {
-                        print("❌ [Thumbnail] Failed after \(attempt) attempts: \(error)")
-                        tryFallbackThumbnail(for: filename, originalURL: url)
-                    } else {
-                        print("⚠️ [Thumbnail] Attempt \(attempt) failed, retrying...")
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        break // move to next URL
                     }
                 }
             }
+            
+            print("❌ [Thumbnail] ALL URLs failed for: \(filename)")
         }
     }
     
-    private func tryFallbackThumbnail(for filename: String, originalURL: String) {
-        // Extract video ID from filename or URL
-        let components = filename.components(separatedBy: ".")
-        guard components.count > 0 else { return }
-        let videoID = components[0]
-        
-        // Try different thumbnail qualities
-        let fallbackURLs = [
-            "https://img.youtube.com/vi/\(videoID)/maxresdefault.jpg",
-            "https://img.youtube.com/vi/\(videoID)/hqdefault.jpg",
-            "https://img.youtube.com/vi/\(videoID)/mqdefault.jpg",
-            "https://img.youtube.com/vi/\(videoID)/default.jpg"
-        ]
-        
-        Task {
-            for fallbackURL in fallbackURLs {
-                do {
-                    let url = URL(string: fallbackURL)!
-                    let (data, _) = try await URLSession.shared.data(from: url)
-                    
-                    if let _ = UIImage(data: data) {
-                        let thumbnailsDir = getThumbnailsDirectory()
-                        let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
-                        try data.write(to: savePath, options: .atomic)
-                        print("✅ [Thumbnail] Saved fallback: \(savePath.lastPathComponent)")
-                        return
-                    }
-                } catch {
-                    continue
-                }
-            }
-            print("❌ [Thumbnail] All fallback attempts failed for: \(filename)")
-        }
-    }
+    
     
     private func loadMetadata() -> [String: [String: String]] {
         let metadataURL = getMetadataFileURL()
@@ -740,13 +746,79 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
     }
 
     func ensureThumbnail(for fileURL: URL, videoID: String) {
-        let thumbnailPath = getThumbnailPath(for: fileURL)
+        guard !videoID.isEmpty else { return }
         
-        // If thumbnail doesn't exist, try to re-download it
-        if thumbnailPath == nil, !videoID.isEmpty {
-            let thumbnailURL = "https://img.youtube.com/vi/\(videoID)/maxresdefault.jpg"
-            let filename = fileURL.lastPathComponent
-            downloadThumbnail(url: thumbnailURL, for: filename)
+        // If thumbnail already exists and is valid, skip
+        if let existingPath = getThumbnailPath(for: fileURL) {
+            if let img = UIImage(contentsOfFile: existingPath.path),
+            img.size.width > 150 {
+                return
+            }
+        }
+        
+        let filename = fileURL.lastPathComponent
+        let thumbnailsDir = getThumbnailsDirectory()
+        let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+        
+        Task {
+            let thumbnailURLs: [String] = [
+                "https://img.youtube.com/vi/\(videoID)/maxresdefault.jpg",
+                "https://img.youtube.com/vi/\(videoID)/sddefault.jpg",
+                "https://img.youtube.com/vi/\(videoID)/hqdefault.jpg",
+                "https://i.ytimg.com/vi/\(videoID)/hqdefault.jpg",
+                "https://img.youtube.com/vi/\(videoID)/mqdefault.jpg",
+                "https://i.ytimg.com/vi/\(videoID)/0.jpg",
+                "https://img.youtube.com/vi/\(videoID)/default.jpg",
+            ]
+            
+            let minFileSize = 5_000
+            let minWidth: CGFloat = 200
+            let minHeight: CGFloat = 150
+            
+            for urlString in thumbnailURLs {
+                guard let url = URL(string: urlString) else { continue }
+                
+                for attempt in 1...2 {
+                    do {
+                        let (data, response) = try await URLSession.shared.data(from: url)
+                        
+                        guard let httpResponse = response as? HTTPURLResponse,
+                            httpResponse.statusCode == 200,
+                            data.count >= minFileSize,
+                            let image = UIImage(data: data),
+                            image.size.width >= minWidth,
+                            image.size.height >= minHeight else {
+                            break // try next URL
+                        }
+                        
+                        // Convert to JPEG
+                        let saveData: Data
+                        if let jpegData = image.jpegData(compressionQuality: 0.92) {
+                            saveData = jpegData
+                        } else {
+                            saveData = data
+                        }
+                        
+                        try saveData.write(to: savePath, options: .atomic)
+                        
+                        if let _ = UIImage(contentsOfFile: savePath.path) {
+                            print("✅ [ensureThumbnail] Saved for \(videoID): \(Int(image.size.width))x\(Int(image.size.height))")
+                            return
+                        } else {
+                            try? FileManager.default.removeItem(at: savePath)
+                            continue
+                        }
+                    } catch {
+                        if attempt < 2 {
+                            try? await Task.sleep(nanoseconds: 500_000_000)
+                            continue
+                        }
+                        break
+                    }
+                }
+            }
+            
+            print("❌ [ensureThumbnail] All URLs failed for videoID: \(videoID)")
         }
     }
     

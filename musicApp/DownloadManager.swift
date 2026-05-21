@@ -665,24 +665,208 @@ class DownloadManager: ObservableObject {
     }
     
     // Helper function to fetch thumbnail with retries (Swift 6 concurrency-safe)
+    /// Guaranteed thumbnail fetch — tries every known YouTube thumbnail URL quality
+    /// Returns the saved thumbnail file URL, or nil only if the video truly has no thumbnail.
     private func fetchThumbnailWithRetries(for fileURL: URL, videoID: String, attempts: Int) async -> URL? {
-        // Try to get existing thumbnail with retries
-        for attempt in 1...attempts {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            if let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: fileURL) {
-                return thumbnailPath
+        guard !videoID.isEmpty else { return nil }
+        
+        let filename = fileURL.lastPathComponent
+        let thumbnailsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Thumbnails", isDirectory: true)
+        try? FileManager.default.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
+        let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+        
+        // If already exists and is valid, return immediately
+        if FileManager.default.fileExists(atPath: savePath.path),
+        let img = UIImage(contentsOfFile: savePath.path),
+        img.size.width > 150 && img.size.height > 150 {
+            return savePath
+        }
+        
+        // All possible thumbnail URLs in quality order
+        let thumbnailURLs: [String] = [
+            "https://img.youtube.com/vi/\(videoID)/maxresdefault.jpg",
+            "https://img.youtube.com/vi/\(videoID)/sddefault.jpg",
+            "https://img.youtube.com/vi/\(videoID)/hqdefault.jpg",
+            "https://i.ytimg.com/vi/\(videoID)/maxresdefault.jpg",
+            "https://i.ytimg.com/vi/\(videoID)/sddefault.jpg",
+            "https://i.ytimg.com/vi/\(videoID)/hqdefault.jpg",
+            "https://img.youtube.com/vi/\(videoID)/mqdefault.jpg",
+            "https://i.ytimg.com/vi/\(videoID)/mqdefault.jpg",
+            "https://img.youtube.com/vi/\(videoID)/0.jpg",
+            "https://i.ytimg.com/vi/\(videoID)/0.jpg",
+            "https://img.youtube.com/vi/\(videoID)/default.jpg",
+        ]
+        
+        let minFileSize = 5_000       // 5KB (placeholders are ~1-2KB)
+        let minWidth: CGFloat = 200
+        let minHeight: CGFloat = 150
+        
+        for urlString in thumbnailURLs {
+            guard let url = URL(string: urlString) else { continue }
+            
+            // Try each URL with up to 2 network attempts
+            for networkAttempt in 1...2 {
+                do {
+                    let (data, response) = try await URLSession.shared.data(from: url)
+                    
+                    guard let httpResponse = response as? HTTPURLResponse else { continue }
+                    
+                    // Non-200 = this quality doesn't exist
+                    guard httpResponse.statusCode == 200 else {
+                        break // try next URL
+                    }
+                    
+                    // Skip tiny placeholder images
+                    guard data.count >= minFileSize else {
+                        print("⚠️ [Thumbnail] Placeholder (\(data.count) bytes): \(urlString)")
+                        break // try next quality
+                    }
+                    
+                    // Validate dimensions
+                    guard let image = UIImage(data: data),
+                        image.size.width >= minWidth,
+                        image.size.height >= minHeight else {
+                        print("⚠️ [Thumbnail] Too small from: \(urlString)")
+                        break // placeholder, try next
+                    }
+                    
+                    // Convert to JPEG for consistent format
+                    let saveData: Data
+                    if let jpegData = image.jpegData(compressionQuality: 0.92) {
+                        saveData = jpegData
+                    } else {
+                        saveData = data
+                    }
+                    
+                    // Save atomically
+                    try saveData.write(to: savePath, options: .atomic)
+                    
+                    // Verify readable
+                    if let _ = UIImage(contentsOfFile: savePath.path) {
+                        print("✅ [Thumbnail] Saved \(Int(image.size.width))x\(Int(image.size.height)) (\(saveData.count / 1024)KB) from: \(urlString)")
+                        return savePath
+                    } else {
+                        try? FileManager.default.removeItem(at: savePath)
+                        continue // retry write
+                    }
+                    
+                } catch {
+                    if networkAttempt < 2 {
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        continue
+                    }
+                    break // move to next URL
+                }
             }
-            print("🔄 Thumbnail check \(attempt)/\(attempts)")
         }
         
-        // If not found and we have a videoID, generate it
-        if !videoID.isEmpty {
-            EmbeddedPython.shared.ensureThumbnail(for: fileURL, videoID: videoID)
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            return EmbeddedPython.shared.getThumbnailPath(for: fileURL)
+        // Last resort: yt-dlp extraction for edge cases (age-restricted, signed URLs)
+        print("⚠️ [Thumbnail] All direct URLs failed for \(videoID), trying yt-dlp...")
+        
+        if let ytdlpResult = await fetchThumbnailViaYtdlp(videoID: videoID, savePath: savePath) {
+            return ytdlpResult
         }
         
+        print("❌ [Thumbnail] ALL methods failed for videoID: \(videoID)")
         return nil
+    }
+
+    /// Last-resort: Use yt-dlp to extract the actual thumbnail URL (handles signed/age-restricted)
+    private func fetchThumbnailViaYtdlp(videoID: String, savePath: URL) async -> URL? {
+        return await withCheckedContinuation { continuation in
+            let resultFilePath = NSTemporaryDirectory() + "thumb_\(videoID)_\(UUID().uuidString).json"
+            
+            let script = """
+            import json
+            import yt_dlp
+            
+            result = {}
+            try:
+                ydl_opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'skip_download': True,
+                    'noplaylist': True,
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['ios', 'android'],
+                        }
+                    },
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(f'https://www.youtube.com/watch?v=\(videoID)', download=False)
+                    thumbnails = info.get('thumbnails', [])
+                    
+                    # Prefer jpg/png over webp
+                    jpg_thumbnails = [t for t in thumbnails if t.get('url', '').split('?')[0].endswith(('.jpg', '.png'))]
+                    if not jpg_thumbnails:
+                        jpg_thumbnails = thumbnails
+                    
+                    # Sort by resolution descending
+                    jpg_thumbnails.sort(key=lambda t: t.get('width', 0) * t.get('height', 0), reverse=True)
+                    
+                    if jpg_thumbnails:
+                        result = {'success': True, 'url': jpg_thumbnails[0]['url']}
+                    else:
+                        result = {'success': False, 'error': 'No thumbnails found'}
+            except Exception as e:
+                result = {'success': False, 'error': str(e)}
+            
+            with open(r'''\(resultFilePath)''', 'w', encoding='utf-8') as f:
+                json.dump(result, f)
+            """
+            
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard EmbeddedPython.shared.executePythonScript(script) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                defer { try? FileManager.default.removeItem(atPath: resultFilePath) }
+                
+                guard let jsonData = try? Data(contentsOf: URL(fileURLWithPath: resultFilePath)),
+                    let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                    let success = json["success"] as? Bool, success,
+                    let thumbnailURLString = json["url"] as? String,
+                    let thumbnailURL = URL(string: thumbnailURLString) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                // Download the thumbnail from the extracted URL
+                Task {
+                    do {
+                        let (data, response) = try await URLSession.shared.data(from: thumbnailURL)
+                        
+                        guard let httpResponse = response as? HTTPURLResponse,
+                            httpResponse.statusCode == 200,
+                            data.count > 5000,
+                            let image = UIImage(data: data),
+                            image.size.width >= 150 else {
+                            continuation.resume(returning: nil)
+                            return
+                        }
+                        
+                        // Convert to JPEG
+                        let saveData: Data
+                        if let jpegData = image.jpegData(compressionQuality: 0.92) {
+                            saveData = jpegData
+                        } else {
+                            saveData = data
+                        }
+                        
+                        try saveData.write(to: savePath, options: .atomic)
+                        print("✅ [Thumbnail] Saved via yt-dlp: \(Int(image.size.width))x\(Int(image.size.height))")
+                        continuation.resume(returning: savePath)
+                    } catch {
+                        print("❌ [Thumbnail] yt-dlp URL download failed: \(error)")
+                        continuation.resume(returning: nil)
+                    }
+                }
+            }
+        }
     }
     
 
