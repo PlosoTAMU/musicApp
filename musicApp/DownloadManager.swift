@@ -13,6 +13,8 @@ class DownloadManager: ObservableObject {
     
     // NEW: most recently completed download for UI prompt
     @Published var completedDownloadForPlaylistPrompt: Download? = nil
+
+    private var isBatchDownloading = false
     
     private var deletionTimers: [UUID: Timer] = [:]
     private let timerLock = NSLock()
@@ -256,8 +258,14 @@ class DownloadManager: ObservableObject {
         
         let failedCountBefore = failedDownloads.count
         
+        // Suppress per-track playlist prompts during batch
+        await MainActor.run { self.isBatchDownloading = true }
+        
         defer {
-            Task { await playlistQueue.setProcessing(false) }
+            Task {
+                await self.playlistQueue.setProcessing(false)
+                await MainActor.run { self.isBatchDownloading = false }
+            }
         }
         
         while let track = await playlistQueue.dequeue() {
@@ -385,9 +393,16 @@ class DownloadManager: ObservableObject {
             await MainActor.run {
                 self.activeDownloads.removeAll { $0.id == downloadID }
                 self.addDownload(download)
-                self.completedDownloadForPlaylistPrompt = download  // Set the completed download for the playlist prompt
+                
+                // Prompt user to add to playlist (only for single downloads, not batch)
+                if !self.isBatchDownloading {
+                    // Small delay to let any dismissing sheets finish
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        self.completedDownloadForPlaylistPrompt = download
+                    }
+                }
             }
-            
+
             print("✅ [Queue] Saved: \(cleanedTitle) (videoID: \(downloadVideoID))")
             
         } catch {

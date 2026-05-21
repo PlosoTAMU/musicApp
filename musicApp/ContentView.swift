@@ -10,12 +10,10 @@ struct ContentView: View {
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
-    /// Set to true while a deep-link URL is being handled so that
-    /// `processIncomingShares()` (triggered by onAppear / willEnterForeground)
-    /// does not start a duplicate download from the App Group queue.
     @State private var handlingDeepLink = false
-
-    @State private var playlistPromptDownload: Download?
+    
+    // ✅ NEW: For post-download playlist prompt
+    @State private var playlistPromptDownload: Download? = nil
     
     var body: some View {
         PerformanceMonitor.shared.recordViewUpdate("ContentView")
@@ -74,7 +72,7 @@ struct ContentView: View {
                     MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
                 }
             }
-            .padding(.bottom, 49) // Account for tab bar height
+            .padding(.bottom, 49)
         }
         .fullScreenCover(isPresented: $showNowPlaying) {
             NowPlayingView(
@@ -92,57 +90,57 @@ struct ContentView: View {
         .sheet(isPresented: $showYouTubeDownload) {
             YouTubeDownloadView(downloadManager: downloadManager)
         }
-        // NEW: auto-show add-to-playlist sheet after download completes
+        // ✅ NEW: Auto-prompt to add completed download to playlist
         .sheet(item: $playlistPromptDownload) { download in
             AddToPlaylistSheet(
                 download: download,
                 playlistManager: playlistManager,
                 onDismiss: {
                     playlistPromptDownload = nil
-                    downloadManager.completedDownloadForPlaylistPrompt = nil
                 }
             )
         }
-        // FIXED: Close now playing when playback ends
         .onAppear {
-            // Set up the reference so DownloadManager can update playing tracks
             downloadManager.audioPlayer = audioPlayer
             
-            // Delay so that onOpenURL (which may fire right after onAppear on a
-            // cold launch via deep link) can set handlingDeepLink = true first.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if !handlingDeepLink {
                     processIncomingShares()
                 }
             }
             
-            // FIXED: Close now playing when playback ends
             audioPlayer.onPlaybackEnded = {
                 showNowPlaying = false
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
-            // Delay slightly so that onOpenURL (which fires in the same run-loop
-            // cycle) can set handlingDeepLink = true first.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if !handlingDeepLink {
                     processIncomingShares()
                 }
             }
         }
+        // ✅ NEW: Listen for completed downloads and show prompt
+        .onChange(of: downloadManager.completedDownloadForPlaylistPrompt?.id) { newID in
+            guard newID != nil,
+                  let download = downloadManager.completedDownloadForPlaylistPrompt else { return }
+            
+            // Only show if no other sheet is currently presented
+            if !showFolderPicker && !showYouTubeDownload && !showNowPlaying {
+                playlistPromptDownload = download
+            }
+            
+            // Clear the trigger so it can fire again for the next download
+            downloadManager.completedDownloadForPlaylistPrompt = nil
+        }
         .onOpenURL { url in
-            // Mark immediately so concurrent processIncomingShares() calls bail out
             handlingDeepLink = true
             print("📥 App opened with URL: \(url)")
             handleIncomingURL(url)
-            // Reset the flag after a short window so future foreground events
-            // can still process the queue normally
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 handlingDeepLink = false
             }
         }
-
-        
     }
 
     // ✅ ADD: FPS tracking with CADisplayLink
