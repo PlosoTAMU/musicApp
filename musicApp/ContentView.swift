@@ -1437,19 +1437,25 @@ struct PulsingThumbnailView: View {
         .background(
             GeometryReader { geo in
                 Color.clear
-                    .onAppear {
-                        // Report center ONCE on layout — scaleEffect doesn't move the center
-                        let frame = geo.frame(in: .global)
-                        onThumbnailCenterChanged?(CGPoint(x: frame.midX, y: frame.midY))
-                    }
+                    .preference(key: ThumbnailCenterKey.self, value: geo.frame(in: .global))
             }
         )
+        .onPreferenceChange(ThumbnailCenterKey.self) { frame in
+            onThumbnailCenterChanged?(CGPoint(x: frame.midX, y: frame.midY))
+        }
         .onTapGesture {
             onTap?()
         }
     }
 }
 
+// Preference key for continuous center tracking
+struct ThumbnailCenterKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
 
 // MARK: - Edge Visualizer (Beat-synced with dynamic range)
 struct EdgeVisualizerView: View {

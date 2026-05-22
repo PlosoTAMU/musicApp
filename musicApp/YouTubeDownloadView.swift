@@ -77,6 +77,7 @@ struct YouTubeDownloadView: View {
         }
     }
     
+    
     private func checkClipboardAndStart() {
         guard UIPasteboard.general.hasURLs || UIPasteboard.general.hasStrings else {
             errorMessage = "No URL found in clipboard"
@@ -84,14 +85,15 @@ struct YouTubeDownloadView: View {
         }
         
         guard let clipboardString = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !clipboardString.isEmpty else {
+            !clipboardString.isEmpty else {
             errorMessage = "Clipboard is empty"
             return
         }
         
-        // ✅ NEW: Check if it's a playlist first
-        if let playlistInfo = downloadManager.detectPlaylist(from: clipboardString) {
-            // It's a playlist!
+        // ✅ FIX: Only treat as playlist if it's a BARE playlist link
+        // (has list= but NOT v= for YouTube, or /playlist/ but NOT /track/ for Spotify)
+        if isBarePlaylistURL(clipboardString),
+        let playlistInfo = downloadManager.detectPlaylist(from: clipboardString) {
             downloadManager.downloadPlaylist(
                 url: clipboardString,
                 source: playlistInfo.source,
@@ -101,7 +103,7 @@ struct YouTubeDownloadView: View {
             return
         }
         
-        // Single track download (existing logic)
+        // Single track download
         guard let (source, videoID) = detectSourceAndExtractID(from: clipboardString) else {
             errorMessage = "Invalid URL format.\nPlease copy a valid YouTube or Spotify link."
             return
@@ -121,6 +123,33 @@ struct YouTubeDownloadView: View {
         
         dismiss()
     }
+
+    /// Returns true only if the URL is a bare playlist/album link with NO specific video/track
+    private func isBarePlaylistURL(_ urlString: String) -> Bool {
+        guard let url = URL(string: urlString),
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+        let host = url.host?.lowercased() ?? ""
+        
+        // YouTube: has list= but NOT v= → bare playlist
+        if host.contains("youtube.com") || host.contains("youtu.be") {
+            let hasVideo = components.queryItems?.contains(where: { $0.name == "v" }) == true
+            let hasList = components.queryItems?.contains(where: { $0.name == "list" }) == true
+            return hasList && !hasVideo
+        }
+        
+        // Spotify: has /playlist/ or /album/ but NOT /track/
+        if host.contains("spotify.com") {
+            let path = url.pathComponents
+            let isTrack = path.contains("track")
+            let isList = path.contains("playlist") || path.contains("album")
+            return isList && !isTrack
+        }
+        
+        return false
+    }
+
     private func detectSourceAndExtractID(from urlString: String) -> (DownloadSource, String)? {
         guard let url = URL(string: urlString) else { return nil }
         let host = url.host?.lowercased() ?? ""
