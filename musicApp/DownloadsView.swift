@@ -1,4 +1,5 @@
 import SwiftUI
+
 struct DownloadsView: View {
     @ObservedObject var downloadManager: DownloadManager
     @ObservedObject var playlistManager: PlaylistManager
@@ -22,80 +23,57 @@ struct DownloadsView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Always-visible search bar
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    TextField("Search downloads", text: $searchText)
-                        .autocorrectionDisabled()
-                    if !searchText.isEmpty {
-                        Button {
-                            searchText = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
+            ZStack {
+                AppBackground()
+                
+                VStack(spacing: 0) {
+                    // Always-visible search bar
+                    ThemedSearchField(placeholder: "Search downloads", text: $searchText)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                    
+                    List {
+                        ForEach(filteredDownloads) { download in
+                            DownloadRow(
+                                download: download,
+                                audioPlayer: audioPlayer,
+                                onAddToPlaylist: {
+                                    showAddToPlaylist = download
+                                },
+                                onDelete: {
+                                    downloadManager.markForDeletion(download) { deletedDownload in
+                                        if audioPlayer.currentTrack?.id == deletedDownload.id {
+                                            audioPlayer.stop()
+                                        }
+                                        playlistManager.removeFromAllPlaylists(deletedDownload.id)
+                                    }
+                                },
+                                onRename: { newName in
+                                    downloadManager.renameDownload(download, newName: newName)
+                                    // Force refresh to show new name immediately
+                                    downloadManager.objectWillChange.send()
+                                },
+                                onRedownload: {
+                                    downloadManager.redownload(download) {
+                                        // Old song is being deleted, update UI if needed
+                                        if audioPlayer.currentTrack?.id == download.id {
+                                            audioPlayer.stop()
+                                        }
+                                        playlistManager.removeFromAllPlaylists(download.id)
+                                    }
+                                }
+                            )
+                            .opacity(download.pendingDeletion ? 0.55 : 1.0)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                         }
                     }
-                }
-                .padding(8)
-                .background(Color(.systemGray6))
-                .cornerRadius(10)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-
-                List {
-                    ForEach(filteredDownloads) { download in
-                    DownloadRow(
-                        download: download,
-                        audioPlayer: audioPlayer,
-                        onAddToPlaylist: {
-                            showAddToPlaylist = download
-                        },
-                        onDelete: {
-                            downloadManager.markForDeletion(download) { deletedDownload in
-                                if audioPlayer.currentTrack?.id == deletedDownload.id {
-                                    audioPlayer.stop()
-                                }
-                                playlistManager.removeFromAllPlaylists(deletedDownload.id)
-                            }
-                        },
-                        onRename: { newName in
-                            downloadManager.renameDownload(download, newName: newName)
-                            // ✅ Force refresh to show new name immediately
-                            downloadManager.objectWillChange.send()
-                        },
-                        onRedownload: {
-                            downloadManager.redownload(download) {
-                                // ✅ Old song is being deleted, update UI if needed
-                                if audioPlayer.currentTrack?.id == download.id {
-                                    audioPlayer.stop()
-                                }
-                                playlistManager.removeFromAllPlaylists(download.id)
-                            }
-                        }
-                    )
-                    .opacity(download.pendingDeletion ? 0.5 : 1.0)
-                    .overlay(
-                        download.pendingDeletion ?
-                        HStack {
-                            Spacer()
-                            Text("Tap trash to undo (5s)")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                                .padding(.trailing, 8)
-                        } : nil
-                    )
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                    .listRowBackground(Color.black)
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .scrollIndicators(.visible)
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(Color.black)
-            .scrollIndicators(.visible)
-            } // end VStack
-            .background(Color.black)
             .navigationTitle("Downloads")
             .safeAreaInset(edge: .bottom) {
                 Color.clear.frame(height: hasCurrentTrack ? (hasActiveDownload ? 130 : 65) : (hasActiveDownload ? 65 : 0))
@@ -110,10 +88,11 @@ struct DownloadsView: View {
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 1) {
                         Text("Downloads")
-                            .font(.headline)
+                            .font(Theme.title(17))
+                            .foregroundColor(Theme.bone)
                         Text("\(downloadManager.downloads.filter { !$0.pendingDeletion }.count) songs")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .font(Theme.caption(11))
+                            .foregroundColor(Theme.boneDim)
                     }
                 }
                 
@@ -122,6 +101,8 @@ struct DownloadsView: View {
                         showYouTubeDownload = true
                     } label: {
                         Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(Theme.emberLight)
                     }
                 }
                 
@@ -130,6 +111,8 @@ struct DownloadsView: View {
                         showFolderPicker = true
                     } label: {
                         Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(Theme.emberLight)
                     }
                 }
             }
@@ -140,33 +123,6 @@ struct DownloadsView: View {
                 playlistManager: playlistManager,
                 onDismiss: { showAddToPlaylist = nil }
             )
-        }
-    }
-    
-    // ✅ ADD: Helper method to handle redownload
-    private func handleRedownload(_ download: Download) {
-        guard let videoID = download.videoID,
-              let originalURL = constructURL(from: videoID, source: download.source) else {
-            return
-        }
-        
-        downloadManager.startBackgroundDownload(
-            url: originalURL,
-            videoID: videoID,
-            source: download.source,
-            title: "Redownloading..."
-        )
-    }
-    
-    // ✅ ADD: Helper to reconstruct URL from videoID
-    private func constructURL(from videoID: String, source: DownloadSource) -> String? {
-        switch source {
-        case .youtube:
-            return "https://www.youtube.com/watch?v=\(videoID)"
-        case .spotify:
-            return "https://open.spotify.com/track/\(videoID)"
-        case .folder:
-            return nil
         }
     }
 }
@@ -187,8 +143,6 @@ struct DownloadRow: View {
         audioPlayer.currentTrack?.id == download.id
     }
     
-    // In DownloadsView.txt, update DownloadRow body:
-
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
@@ -196,37 +150,39 @@ struct DownloadRow: View {
                     AsyncThumbnailView(
                         thumbnailPath: download.resolvedThumbnailPath,
                         size: 48,
-                        cornerRadius: 8,
+                        cornerRadius: 10,
                         grayscale: download.pendingDeletion
                     )
                     
-                    // ✅ Play/Pause icon overlay (already correct)
+                    // Pause icon overlay while this track is playing
                     if isCurrentlyPlaying && audioPlayer.isPlaying {
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 10)
                             .fill(Color.black.opacity(0.4))
                             .frame(width: 48, height: 48)
                         Image(systemName: "pause.fill")
-                            .foregroundColor(.white)
+                            .foregroundColor(Theme.bone)
                             .font(.system(size: 14))
                     }
                 }
                 .frame(width: 48, height: 48)
                 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(download.name)
-                        .font(.body)
-                        .fontWeight(isCurrentlyPlaying ? .bold : .regular)
-                        .italic(isCurrentlyPlaying)
-                        .foregroundColor(download.pendingDeletion ? .gray : (isCurrentlyPlaying ? .blue : .primary))  // ✅ Blue when playing
+                        .font(Theme.body(15, weight: isCurrentlyPlaying ? .bold : .medium))
+                        .foregroundColor(
+                            download.pendingDeletion
+                                ? Theme.boneFaint
+                                : (isCurrentlyPlaying ? Theme.emberLight : Theme.bone)
+                        )
                         .lineLimit(1)
                     
-                    HStack(spacing: 4) {
-                        Image(systemName: sourceIcon(for: download.source))
-                            .font(.system(size: 8))
-                        Text(download.source.rawValue.capitalized)
-                            .font(.system(size: 10))
+                    if download.pendingDeletion {
+                        Text("Tap to undo (5s)")
+                            .font(Theme.caption(10, weight: .semibold))
+                            .foregroundColor(Theme.emberLight)
+                    } else {
+                        SourceChip(source: download.source)
                     }
-                    .foregroundColor(.secondary)
                 }
                 
                 Spacer()
@@ -258,32 +214,30 @@ struct DownloadRow: View {
                 }
             }
             
-            // ✅ ADDED: Volume icon when playing
+            // Animated EQ bars while this track is playing
             if isCurrentlyPlaying && audioPlayer.isPlaying {
-                Image(systemName: "speaker.wave.2.fill")
-                    .foregroundColor(.blue)
-                    .font(.body)
+                EQIndicator()
             }
             
             if !download.pendingDeletion {
                 Button(action: onAddToPlaylist) {
                     Image(systemName: "plus.circle")
-                        .font(.title3)
-                        .foregroundColor(.blue)
+                        .font(.system(size: 19, weight: .medium))
+                        .foregroundColor(Theme.emberLight)
                 }
                 .buttonStyle(.plain)
             }
             
             Button(action: onDelete) {
                 Image(systemName: download.pendingDeletion ? "arrow.uturn.backward.circle.fill" : "trash")
-                    .font(.body)
-                    .foregroundColor(download.pendingDeletion ? .orange : .red)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(download.pendingDeletion ? Theme.emberLight : Theme.danger)
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color.black)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .surfaceCard()
         .swipeToQueue {
             let folderName = folderName(for: download.source)
             let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
@@ -319,14 +273,6 @@ struct DownloadRow: View {
         }
     }
     
-    private func sourceIcon(for source: DownloadSource) -> String {
-        switch source {
-        case .youtube: return "play.rectangle.fill"
-        case .spotify: return "music.note"
-        case .folder: return "folder.fill"
-        }
-    }
-    
     private func folderName(for source: DownloadSource) -> String {
         switch source {
         case .youtube: return "YouTube"
@@ -344,46 +290,59 @@ struct SongInfoSheet: View {
     
     var body: some View {
         NavigationView {
-            List {
-                Section("Display") {
-                    InfoRow(label: "Title", value: download.name)
-                    InfoRow(label: "Source", value: download.source.rawValue.capitalized)
-                }
+            ZStack {
+                AppBackground()
                 
-                if download.source == .spotify {
-                    Section("Spotify") {
-                        InfoRow(label: "Original URL", value: download.originalURL ?? "—")
-                        InfoRow(label: "Spotify Title", value: download.spotifyTitle ?? "—")
-                        InfoRow(label: "YouTube Search Query", value: download.youtubeSearchQuery ?? "—")
+                List {
+                    Section(header: SectionEyebrow("Display")) {
+                        InfoRow(label: "Title", value: download.name)
+                        InfoRow(label: "Source", value: download.source.rawValue.capitalized)
                     }
-                    Section("YouTube") {
-                        InfoRow(label: "YouTube URL", value: download.youtubeURL ?? "—")
-                        InfoRow(label: "YouTube Video ID", value: download.videoID ?? "—")
+                    .listRowBackground(Theme.smoke)
+                    
+                    if download.source == .spotify {
+                        Section(header: SectionEyebrow("Spotify")) {
+                            InfoRow(label: "Original URL", value: download.originalURL ?? "—")
+                            InfoRow(label: "Spotify Title", value: download.spotifyTitle ?? "—")
+                            InfoRow(label: "YouTube Search Query", value: download.youtubeSearchQuery ?? "—")
+                        }
+                        .listRowBackground(Theme.smoke)
+                        Section(header: SectionEyebrow("YouTube")) {
+                            InfoRow(label: "YouTube URL", value: download.youtubeURL ?? "—")
+                            InfoRow(label: "YouTube Video ID", value: download.videoID ?? "—")
+                        }
+                        .listRowBackground(Theme.smoke)
+                    } else {
+                        Section(header: SectionEyebrow("YouTube")) {
+                            InfoRow(label: "URL", value: download.originalURL ?? download.youtubeURL ?? "—")
+                            InfoRow(label: "Video ID", value: download.videoID ?? "—")
+                        }
+                        .listRowBackground(Theme.smoke)
                     }
-                } else {
-                    Section("YouTube") {
-                        InfoRow(label: "URL", value: download.originalURL ?? download.youtubeURL ?? "—")
-                        InfoRow(label: "Video ID", value: download.videoID ?? "—")
+                    
+                    Section(header: SectionEyebrow("File")) {
+                        InfoRow(label: "Filename", value: download.url.lastPathComponent)
+                        InfoRow(label: "File Path", value: download.url.path)
+                    }
+                    .listRowBackground(Theme.smoke)
+                    
+                    if download.cropStartTime != nil || download.cropEndTime != nil {
+                        Section(header: SectionEyebrow("Crop")) {
+                            InfoRow(label: "Start", value: download.cropStartTime.map { String(format: "%.2fs", $0) } ?? "—")
+                            InfoRow(label: "End", value: download.cropEndTime.map { String(format: "%.2fs", $0) } ?? "—")
+                        }
+                        .listRowBackground(Theme.smoke)
                     }
                 }
-                
-                Section("File") {
-                    InfoRow(label: "Filename", value: download.url.lastPathComponent)
-                    InfoRow(label: "File Path", value: download.url.path)
-                }
-                
-                if download.cropStartTime != nil || download.cropEndTime != nil {
-                    Section("Crop") {
-                        InfoRow(label: "Start", value: download.cropStartTime.map { String(format: "%.2fs", $0) } ?? "—")
-                        InfoRow(label: "End", value: download.cropEndTime.map { String(format: "%.2fs", $0) } ?? "—")
-                    }
-                }
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("Song Info")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
+                        .font(Theme.body(15, weight: .semibold))
+                        .foregroundColor(Theme.emberLight)
                 }
             }
         }
@@ -397,11 +356,11 @@ struct InfoRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(Theme.caption(11))
+                .foregroundColor(Theme.boneDim)
             Text(value)
-                .font(.footnote)
-                .foregroundColor(.primary)
+                .font(Theme.body(13))
+                .foregroundColor(Theme.bone)
                 .textSelection(.enabled)
         }
         .padding(.vertical, 2)

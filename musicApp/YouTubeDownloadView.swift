@@ -4,42 +4,60 @@ struct YouTubeDownloadView: View {
     @ObservedObject var downloadManager: DownloadManager
     @State private var errorMessage: String?
     @State private var hasProcessed = false
-    @State private var isPlaylist = false
-    @State private var playlistTrackCount: Int?
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
-                if let error = errorMessage {
-                    VStack(spacing: 16) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 60))
-                            .foregroundColor(.orange)
-                        
-                        Text(error)
-                            .foregroundColor(.red)
-                            .font(.body)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                        
-                        Button("OK") {
-                            dismiss()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .padding(.top)
-                    }
-                    .padding(.top, 40)
-                } else {
-                    ProgressView()
-                        .padding(.top, 40)
-                    Text("Checking...")
-                        .foregroundColor(.secondary)
-                }
+            ZStack {
+                AppBackground()
                 
-                Spacer()
+                VStack(spacing: 20) {
+                    if let error = errorMessage {
+                        VStack(spacing: 16) {
+                            ZStack {
+                                Circle()
+                                    .fill(Theme.smokeRaised)
+                                    .frame(width: 84, height: 84)
+                                    .overlay(Circle().strokeBorder(Theme.seam, lineWidth: 1))
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 32, weight: .medium))
+                                    .foregroundColor(Theme.emberLight)
+                            }
+                            
+                            Text(error)
+                                .font(Theme.body(15))
+                                .foregroundColor(Theme.bone)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                            
+                            Button {
+                                dismiss()
+                            } label: {
+                                Text("OK")
+                                    .font(Theme.body(15, weight: .bold))
+                                    .foregroundColor(Theme.ink)
+                                    .padding(.horizontal, 36)
+                                    .padding(.vertical, 11)
+                                    .background(Capsule().fill(Theme.emberGradient))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top)
+                        }
+                        .padding(.top, 40)
+                    } else {
+                        ProgressView()
+                            .tint(Theme.emberLight)
+                            .padding(.top, 40)
+                        Text("CHECKING CLIPBOARD")
+                            .font(Theme.eyebrowFont)
+                            .tracking(1.5)
+                            .foregroundColor(Theme.boneDim)
+                    }
+                    
+                    Spacer()
+                }
+                .padding(.top, 20)
             }
-            .padding(.top, 20)
             .navigationTitle("Download")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -47,6 +65,8 @@ struct YouTubeDownloadView: View {
                     Button("Close") {
                         dismiss()
                     }
+                    .font(Theme.body(15, weight: .semibold))
+                    .foregroundColor(Theme.emberLight)
                 }
             }
             .onAppear {
@@ -90,7 +110,7 @@ struct YouTubeDownloadView: View {
             return
         }
         
-        // ✅ FIX: Only treat as playlist if it's a BARE playlist link
+        // Only treat as playlist if it's a BARE playlist link
         // (has list= but NOT v= for YouTube, or /playlist/ but NOT /track/ for Spotify)
         if isBarePlaylistURL(clipboardString),
         let playlistInfo = downloadManager.detectPlaylist(from: clipboardString) {

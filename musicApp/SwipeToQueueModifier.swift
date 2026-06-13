@@ -11,17 +11,17 @@ struct SwipeToQueueModifier: ViewModifier {
     
     func body(content: Content) -> some View {
         ZStack(alignment: .leading) {
-            // Queue indicator background
+            // Queue indicator background (mint = queue semantics)
             if offset > 5 {
                 HStack {
                     Spacer()
                     VStack(spacing: 4) {
                         Image(systemName: "text.line.first.and.arrowtriangle.forward")
-                            .font(.system(size: 22))
-                            .foregroundColor(Color(red: 0.6, green: 1.0, blue: 0.6))
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundColor(Theme.mint)
                         Text("Add to Queue")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(Color(red: 0.6, green: 1.0, blue: 0.6))
+                            .font(Theme.caption(11, weight: .semibold))
+                            .foregroundColor(Theme.mint)
                     }
                     .frame(width: 100)
                     .padding(.trailing, 8)
@@ -29,7 +29,10 @@ struct SwipeToQueueModifier: ViewModifier {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(
                     LinearGradient(
-                        colors: [Color(red: 0.0, green: 0.4, blue: 0.0), Color(red: 0.0, green: 0.5, blue: 0.0)],
+                        colors: [
+                            Color(red: 0.05, green: 0.22, blue: 0.15),
+                            Color(red: 0.07, green: 0.30, blue: 0.20)
+                        ],
                         startPoint: .leading,
                         endPoint: .trailing
                     )
@@ -43,17 +46,18 @@ struct SwipeToQueueModifier: ViewModifier {
             if showQueueAdded {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
+                        .foregroundColor(Theme.mint)
                     Text("Queued")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.green)
+                        .font(Theme.body(14, weight: .semibold))
+                        .foregroundColor(Theme.mint)
                 }
                 .padding(.leading, 12)
                 .transition(.opacity)
             }
         }
-        .clipped()
+        // Clip to the same rounded shape as the card rows so the mint
+        // panel never pokes out past the row corners.
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
     
     private var swipeGesture: some Gesture {

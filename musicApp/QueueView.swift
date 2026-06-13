@@ -6,75 +6,55 @@ struct QueueView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                if audioPlayer.currentTrack != nil {
-                    HStack(spacing: 8) {
-                        Image(systemName: audioPlayer.isPlaylistMode ? "music.note.list" : "line.3.horizontal")
-                            .foregroundColor(.blue)
-                            .font(.caption)
-                        Text(audioPlayer.isPlaylistMode ? "Playing from Playlist" : "Playing from Queue")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        if audioPlayer.isPlaylistMode {
-                            Text("\(audioPlayer.upNextTracks.count + 1) songs")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        } else {
-                            Text("\(audioPlayer.previousQueue.count + 1 + audioPlayer.queue.count) songs")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.gray.opacity(0.1))
-                }
+            ZStack {
+                AppBackground()
                 
-                if audioPlayer.currentTrack == nil && audioPlayer.previousQueue.isEmpty {
-                    VStack(spacing: 16) {
-                        Spacer()
-                        Image(systemName: "music.note.list")
-                            .font(.system(size: 60))
-                            .foregroundColor(.gray.opacity(0.5))
-                        Text("No song playing")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                        Text("Play a song or swipe right on any track to add it to the queue")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                        Spacer()
-                    }
-                } else if audioPlayer.currentTrack == nil && !audioPlayer.previousQueue.isEmpty {
-                    // Show only previous songs when playback has ended
-                    List {
-                        Section(header: Text("Previously Played")) {
-                            ForEach(audioPlayer.previousQueue) { track in
-                                QueueTrackRow(
-                                    track: track,
-                                    downloadManager: downloadManager,
-                                    isPlaying: false,
-                                    isPrevious: true,
-                                    audioPlayer: audioPlayer
-                                )
-                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                                .listRowBackground(Color.clear)
+                VStack(spacing: 0) {
+                    // Status strip — what the player is currently drawing from
+                    if audioPlayer.currentTrack != nil {
+                        HStack(spacing: 8) {
+                            Image(systemName: audioPlayer.isPlaylistMode ? "music.note.list" : "line.3.horizontal")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(Theme.emberLight)
+                            
+                            Text(audioPlayer.isPlaylistMode ? "PLAYING FROM PLAYLIST" : "PLAYING FROM QUEUE")
+                                .font(Theme.eyebrowFont)
+                                .tracking(1.5)
+                                .foregroundColor(Theme.boneDim)
+                            
+                            Spacer()
+                            
+                            if audioPlayer.isPlaylistMode {
+                                Text("\(audioPlayer.upNextTracks.count + 1) songs")
+                                    .font(Theme.caption(11))
+                                    .foregroundColor(Theme.boneFaint)
+                            } else {
+                                Text("\(audioPlayer.previousQueue.count + 1 + audioPlayer.queue.count) songs")
+                                    .font(Theme.caption(11))
+                                    .foregroundColor(Theme.boneFaint)
                             }
                         }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .surfaceCard(corner: 12)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 6)
                     }
-                    .listStyle(.insetGrouped)
-                    .scrollContentBackground(.hidden)
-                    .scrollIndicators(.visible)
-                } else {
-                    List {
-                        // FIXED: Show previous songs
-                        if !audioPlayer.previousQueue.isEmpty {
-                            Section(header: Text("Previous")) {
-                                // FIXED: Show in normal order (most recent at bottom)
+                    
+                    if audioPlayer.currentTrack == nil && audioPlayer.previousQueue.isEmpty {
+                        VStack {
+                            Spacer()
+                            EmptyStateView(
+                                icon: "music.note.list",
+                                title: "No song playing",
+                                message: "Play a song or swipe right on any track to add it to the queue"
+                            )
+                            Spacer()
+                        }
+                    } else if audioPlayer.currentTrack == nil && !audioPlayer.previousQueue.isEmpty {
+                        // Show only previous songs when playback has ended
+                        List {
+                            Section(header: SectionEyebrow("Previously Played")) {
                                 ForEach(audioPlayer.previousQueue) { track in
                                     QueueTrackRow(
                                         track: track,
@@ -83,128 +63,156 @@ struct QueueView: View {
                                         isPrevious: true,
                                         audioPlayer: audioPlayer
                                     )
-                                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                                    .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
                                     .listRowBackground(Color.clear)
+                                    .listRowSeparator(.hidden)
                                 }
                             }
                         }
-                        
-                        // Current track
-                        Section(header: HStack {
-                            Text("Now Playing")
-                            Spacer()
-                            if audioPlayer.isPlaying {
-                                HStack(spacing: 4) {
-                                    Circle()
-                                        .fill(Color.green)
-                                        .frame(width: 6, height: 6)
-                                    Text("Playing")
-                                        .font(.caption2)
-                                        .foregroundColor(.green)
-                                }
-                            }
-                        }) {
-                            QueueTrackRow(
-                                track: audioPlayer.currentTrack!,
-                                downloadManager: downloadManager,
-                                isPlaying: true,
-                                isPrevious: false,
-                                audioPlayer: audioPlayer
-                            )
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                            .listRowBackground(Color.clear)
-                        }
-                        
-                        // Up next
-                        if audioPlayer.isPlaylistMode {
-                            // Show queued songs first (user-added)
-                            if !audioPlayer.queue.isEmpty {
-                                Section(header: Text("Up Next")) {
-                                    ForEach(audioPlayer.queue) { track in
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .scrollIndicators(.visible)
+                    } else {
+                        List {
+                            // Previous songs (most recent at bottom)
+                            if !audioPlayer.previousQueue.isEmpty {
+                                Section(header: SectionEyebrow("Previous")) {
+                                    ForEach(audioPlayer.previousQueue) { track in
                                         QueueTrackRow(
                                             track: track,
                                             downloadManager: downloadManager,
                                             isPlaying: false,
-                                            isPrevious: false,
+                                            isPrevious: true,
                                             audioPlayer: audioPlayer
                                         )
-                                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                                        .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
                                         .listRowBackground(Color.clear)
-                                    }
-                                    .onMove { source, destination in
-                                        audioPlayer.moveInQueue(from: source, to: destination)
-                                    }
-                                    .onDelete { offsets in
-                                        audioPlayer.removeFromQueue(at: offsets)
+                                        .listRowSeparator(.hidden)
                                     }
                                 }
                             }
                             
-                            // Then show remaining playlist tracks
-                            let playlistUpNext = audioPlayer.playlistUpNextTracks
-                            if !playlistUpNext.isEmpty {
-                                Section(header: Text("Up Next from Playlist")) {
-                                    ForEach(Array(playlistUpNext.enumerated()), id: \.element.id) { index, track in
-                                        QueueTrackRow(
-                                            track: track,
-                                            downloadManager: downloadManager,
-                                            isPlaying: false,
-                                            isPrevious: false,
-                                            audioPlayer: audioPlayer
-                                        )
-                                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                                        .listRowBackground(Color.clear)
+                            // Current track
+                            Section(header: HStack {
+                                SectionEyebrow("Now Playing")
+                                if audioPlayer.isPlaying {
+                                    HStack(spacing: 4) {
+                                        Circle()
+                                            .fill(Theme.emberLight)
+                                            .frame(width: 6, height: 6)
+                                        Text("LIVE")
+                                            .font(Theme.eyebrowFont)
+                                            .tracking(1.5)
+                                            .foregroundColor(Theme.emberLight)
                                     }
                                 }
-                            }
-                        } else {
-                            if !audioPlayer.queue.isEmpty {
-                                Section(header: Text("Up Next")) {
-                                    ForEach(audioPlayer.queue) { track in
-                                        QueueTrackRow(
-                                            track: track,
-                                            downloadManager: downloadManager,
-                                            isPlaying: false,
-                                            isPrevious: false,
-                                            audioPlayer: audioPlayer
-                                        )
-                                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                                        .listRowBackground(Color.clear)
-                                    }
-                                    .onMove { source, destination in
-                                        audioPlayer.moveInQueue(from: source, to: destination)
-                                    }
-                                    .onDelete { offsets in
-                                        audioPlayer.removeFromQueue(at: offsets)
-                                    }
-                                }
+                            }) {
+                                QueueTrackRow(
+                                    track: audioPlayer.currentTrack!,
+                                    downloadManager: downloadManager,
+                                    isPlaying: true,
+                                    isPrevious: false,
+                                    audioPlayer: audioPlayer
+                                )
+                                .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
+                                .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                            } else {
-                                Section {
-                                    VStack(spacing: 8) {
-                                        Image(systemName: "arrow.right.circle")
-                                            .font(.title2)
-                                            .foregroundColor(.blue.opacity(0.5))
-                                        Text("Queue is empty")
-                                            .font(.subheadline)
-                                            .foregroundColor(.secondary)
-                                        Text("Swipe right on songs to add them")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
+                            }
+                            
+                            // Up next
+                            if audioPlayer.isPlaylistMode {
+                                // Show queued songs first (user-added)
+                                if !audioPlayer.queue.isEmpty {
+                                    Section(header: SectionEyebrow("Up Next")) {
+                                        ForEach(audioPlayer.queue) { track in
+                                            QueueTrackRow(
+                                                track: track,
+                                                downloadManager: downloadManager,
+                                                isPlaying: false,
+                                                isPrevious: false,
+                                                audioPlayer: audioPlayer
+                                            )
+                                            .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
+                                            .listRowBackground(Color.clear)
+                                            .listRowSeparator(.hidden)
+                                        }
+                                        .onMove { source, destination in
+                                            audioPlayer.moveInQueue(from: source, to: destination)
+                                        }
+                                        .onDelete { offsets in
+                                            audioPlayer.removeFromQueue(at: offsets)
+                                        }
                                     }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 20)
-                                    .listRowBackground(Color.clear)
+                                }
+                                
+                                // Then show remaining playlist tracks
+                                let playlistUpNext = audioPlayer.playlistUpNextTracks
+                                if !playlistUpNext.isEmpty {
+                                    Section(header: SectionEyebrow("Up Next from Playlist")) {
+                                        ForEach(playlistUpNext) { track in
+                                            QueueTrackRow(
+                                                track: track,
+                                                downloadManager: downloadManager,
+                                                isPlaying: false,
+                                                isPrevious: false,
+                                                audioPlayer: audioPlayer
+                                            )
+                                            .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
+                                            .listRowBackground(Color.clear)
+                                            .listRowSeparator(.hidden)
+                                        }
+                                    }
+                                }
+                            } else {
+                                if !audioPlayer.queue.isEmpty {
+                                    Section(header: SectionEyebrow("Up Next")) {
+                                        ForEach(audioPlayer.queue) { track in
+                                            QueueTrackRow(
+                                                track: track,
+                                                downloadManager: downloadManager,
+                                                isPlaying: false,
+                                                isPrevious: false,
+                                                audioPlayer: audioPlayer
+                                            )
+                                            .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
+                                            .listRowBackground(Color.clear)
+                                            .listRowSeparator(.hidden)
+                                        }
+                                        .onMove { source, destination in
+                                            audioPlayer.moveInQueue(from: source, to: destination)
+                                        }
+                                        .onDelete { offsets in
+                                            audioPlayer.removeFromQueue(at: offsets)
+                                        }
+                                    }
+                                } else {
+                                    Section {
+                                        VStack(spacing: 8) {
+                                            Image(systemName: "arrow.right.circle")
+                                                .font(.system(size: 24, weight: .medium))
+                                                .foregroundColor(Theme.mint.opacity(0.6))
+                                            Text("Queue is empty")
+                                                .font(Theme.body(14, weight: .semibold))
+                                                .foregroundColor(Theme.boneDim)
+                                            Text("Swipe right on songs to add them")
+                                                .font(Theme.caption(11))
+                                                .foregroundColor(Theme.boneFaint)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 20)
+                                        .listRowBackground(Color.clear)
+                                        .listRowSeparator(.hidden)
+                                    }
                                 }
                             }
                         }
-                    }
-                    .listStyle(.insetGrouped)
-                    .scrollContentBackground(.hidden)
-                    .environment(\.editMode, .constant(.active))
-                    .scrollIndicators(.visible) // FIXED: Add scroll bar
-                    .safeAreaInset(edge: .bottom) {  // ✅ ADD THIS
-                        Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .environment(\.editMode, .constant(.active))
+                        .scrollIndicators(.visible)
+                        .safeAreaInset(edge: .bottom) {
+                            Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
+                        }
                     }
                 }
             }
@@ -217,7 +225,8 @@ struct QueueView: View {
                             audioPlayer.clearQueueAndExitPlaylist()
                         } label: {
                             Text("Clear All")
-                                .foregroundColor(.red)
+                                .font(Theme.body(15, weight: .semibold))
+                                .foregroundColor(Theme.danger)
                         }
                     }
                 }
@@ -234,48 +243,44 @@ struct QueueTrackRow: View {
     let isPrevious: Bool
     @ObservedObject var audioPlayer: AudioPlayerManager
     
-    @State private var showRenameAlert = false  // ✅ ADD THIS
-    @State private var newName: String = ""     // ✅ ADD THIS
+    @State private var showRenameAlert = false
+    @State private var newName: String = ""
     
     private var download: Download? {
         downloadManager.getDownload(byID: track.id)
     }
     
-    // In QueueView.txt, replace QueueTrackRow body:
-
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
                 ZStack {
                     AsyncThumbnailView(
                         thumbnailPath: download?.resolvedThumbnailPath,
-                        size: 48,
-                        cornerRadius: 8
+                        size: 46,
+                        cornerRadius: 10
                     )
-                    .opacity(isPrevious ? 0.6 : 1.0)
+                    .opacity(isPrevious ? 0.55 : 1.0)
                     
-                    // ✅ FIXED: Changed from speaker icon to pause icon (matches other views)
+                    // Pause glyph over the artwork while this row is playing
                     if isPlaying && audioPlayer.isPlaying {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.black.opacity(0.4))
-                        Image(systemName: "pause.fill")  // ✅ Changed from speaker.wave.2.fill
-                            .foregroundColor(.white)
-                            .font(.system(size: 14))
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black.opacity(0.45))
+                        Image(systemName: "pause.fill")
+                            .foregroundColor(Theme.bone)
+                            .font(.system(size: 14, weight: .bold))
                     }
                 }
-                .frame(width: 48, height: 48)
+                .frame(width: 46, height: 46)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.name)
-                        .font(.body)
-                        .fontWeight(isPlaying ? .bold : .regular)
-                        .italic(isPlaying)
-                        .foregroundColor(isPlaying ? .blue : (isPrevious ? .secondary : .primary))  // ✅ Already blue
+                        .font(Theme.body(15, weight: isPlaying ? .bold : .medium))
+                        .foregroundColor(isPlaying ? Theme.emberLight : (isPrevious ? Theme.boneDim : Theme.bone))
                         .lineLimit(1)
                     
                     Text(track.folderName)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(Theme.caption(11))
+                        .foregroundColor(Theme.boneFaint)
                         .lineLimit(1)
                 }
                 
@@ -327,16 +332,16 @@ struct QueueTrackRow: View {
                 Text("Enter a new name for this song")
             }
             
-            // ✅ ADDED: Volume icon when playing
+            // Live EQ beside the playing track
             if isPlaying && audioPlayer.isPlaying {
-                Image(systemName: "speaker.wave.2.fill")
-                    .foregroundColor(.blue)
-                    .font(.body)
+                EQIndicator()
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .surfaceCard()
     }
     
-    // ✅ ADD THIS HELPER
     private func redownload(download: Download) {
         guard let videoID = download.videoID else { return }
         let url: String

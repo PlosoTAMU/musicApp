@@ -10,35 +10,42 @@ struct SelectSongsSheet: View {
     
     var body: some View {
         NavigationView {
-            List {
-                ForEach(downloadManager.sortedDownloads) { download in
-                    Button {
-                        playlistManager.addToPlaylist(playlistID, downloadID: download.id)
-                    } label: {
-                        HStack(spacing: 12) {
-                            // ✅ PERFORMANCE: Async thumbnail loading
-                            AsyncThumbnailView(
-                                thumbnailPath: download.resolvedThumbnailPath,
-                                size: 48,
-                                cornerRadius: 8
-                            )
-                            
-                            Text(download.name)
-                                .font(.body)
-                                .foregroundColor(.primary)
-                                .lineLimit(1)
-                            
-                            Spacer()
-                            
-                            if let playlist = playlistManager.playlists.first(where: { $0.id == playlistID }),
-                               playlist.trackIDs.contains(download.id) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.blue)
+            ZStack {
+                AppBackground()
+                
+                List {
+                    ForEach(downloadManager.sortedDownloads) { download in
+                        Button {
+                            playlistManager.addToPlaylist(playlistID, downloadID: download.id)
+                        } label: {
+                            HStack(spacing: 12) {
+                                AsyncThumbnailView(
+                                    thumbnailPath: download.resolvedThumbnailPath,
+                                    size: 48,
+                                    cornerRadius: 10
+                                )
+                                
+                                Text(download.name)
+                                    .font(Theme.body(15, weight: .medium))
+                                    .foregroundColor(Theme.bone)
+                                    .lineLimit(1)
+                                
+                                Spacer()
+                                
+                                if let playlist = playlistManager.playlists.first(where: { $0.id == playlistID }),
+                                   playlist.trackIDs.contains(download.id) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(Theme.emberLight)
+                                }
                             }
                         }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     }
-                    .buttonStyle(.plain)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("Add Songs")
             .navigationBarTitleDisplayMode(.inline)
@@ -48,6 +55,8 @@ struct SelectSongsSheet: View {
                         dismiss()
                         onDismiss()
                     }
+                    .font(Theme.body(15, weight: .semibold))
+                    .foregroundColor(Theme.emberLight)
                 }
             }
         }
@@ -61,7 +70,6 @@ struct PlaylistDetailView: View {
     var audioPlayer: AudioPlayerManager
     @State private var showAddSongs = false
     @State private var totalDuration: TimeInterval = 0
-    @State private var isVisible = false
     @State private var currentPlayingTrackID: UUID?
     @State private var isAudioPlaying = false
     
@@ -72,80 +80,102 @@ struct PlaylistDetailView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 8) {
-                PlaylistActionButtons(
-                    tracks: tracks,
-                    playlistName: playlist.name,
-                    audioPlayer: audioPlayer
-                )
-                
-                Text("\(tracks.count) songs • \(formatDuration(totalDuration))")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .padding()
+        ZStack {
+            AppBackground()
             
-            List {
-                ForEach(Array(tracks.enumerated()), id: \.element.id) { index, download in
-                    PlaylistSongRow(
-                        download: download,
-                        isCurrentlyPlaying: currentPlayingTrackID == download.id,
-                        isPlaying: isAudioPlaying,
-                        playlist: playlist,
-                        onTap: {
-                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
-                            audioPlayer.play(track)
-                        },
-                        onRename: { newName in
-                            downloadManager.renameDownload(download, newName: newName)
-                        },
-                        onRedownload: {
-                            if let videoID = download.videoID,
-                            let originalURL = constructURL(from: videoID, source: download.source) {
-                                downloadManager.startBackgroundDownload(
-                                    url: originalURL,
-                                    videoID: videoID,
-                                    source: download.source,
-                                    title: "Redownloading..."
-                                )
-                            }
-                        },
-                        onQueue: {
-                            let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
-                            audioPlayer.addToQueue(track)
+            VStack(spacing: 0) {
+                // Header card: cover, stats, actions
+                VStack(spacing: 14) {
+                    HStack(spacing: 14) {
+                        AsyncThumbnailView(
+                            thumbnailPath: tracks.first?.resolvedThumbnailPath,
+                            size: 72,
+                            cornerRadius: 14
+                        )
+                        
+                        VStack(alignment: .leading, spacing: 5) {
+                            SectionEyebrow("Playlist")
+                            Text("\(tracks.count) songs  •  \(formatDuration(totalDuration))")
+                                .font(Theme.caption(12))
+                                .foregroundColor(Theme.boneDim)
                         }
-                    )
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                    .listRowBackground(Color.black)
-                }
-                .onMove { source, destination in
-                    var trackIDs = playlist.trackIDs
-                    trackIDs.move(fromOffsets: source, toOffset: destination)
+                        
+                        Spacer(minLength: 0)
+                    }
                     
-                    if let playlistIndex = playlistManager.playlists.firstIndex(where: { $0.id == playlist.id }) {
-                        playlistManager.playlists[playlistIndex].trackIDs = trackIDs
-                        playlistManager.objectWillChange.send()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            playlistManager.savePlaylists()
+                    PlaylistActionButtons(
+                        tracks: tracks,
+                        playlistName: playlist.name,
+                        audioPlayer: audioPlayer
+                    )
+                }
+                .padding(16)
+                .surfaceCard()
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+                .padding(.bottom, 10)
+                
+                List {
+                    ForEach(Array(tracks.enumerated()), id: \.element.id) { index, download in
+                        PlaylistSongRow(
+                            download: download,
+                            isCurrentlyPlaying: currentPlayingTrackID == download.id,
+                            isPlaying: isAudioPlaying,
+                            playlist: playlist,
+                            onTap: {
+                                let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
+                                audioPlayer.play(track)
+                            },
+                            onRename: { newName in
+                                downloadManager.renameDownload(download, newName: newName)
+                            },
+                            onRedownload: {
+                                if let videoID = download.videoID,
+                                let originalURL = constructURL(from: videoID, source: download.source) {
+                                    downloadManager.startBackgroundDownload(
+                                        url: originalURL,
+                                        videoID: videoID,
+                                        source: download.source,
+                                        title: "Redownloading..."
+                                    )
+                                }
+                            },
+                            onQueue: {
+                                let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
+                                audioPlayer.addToQueue(track)
+                            }
+                        )
+                        .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    }
+                    .onMove { source, destination in
+                        var trackIDs = playlist.trackIDs
+                        trackIDs.move(fromOffsets: source, toOffset: destination)
+                        
+                        if let playlistIndex = playlistManager.playlists.firstIndex(where: { $0.id == playlist.id }) {
+                            playlistManager.playlists[playlistIndex].trackIDs = trackIDs
+                            playlistManager.objectWillChange.send()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                playlistManager.savePlaylists()
+                            }
                         }
                     }
-                }
-                .onDelete { offsets in
-                    for index in offsets {
-                        let download = tracks[index]
-                        playlistManager.removeFromPlaylist(playlist.id, downloadID: download.id)
+                    .onDelete { offsets in
+                        for index in offsets {
+                            let download = tracks[index]
+                            playlistManager.removeFromPlaylist(playlist.id, downloadID: download.id)
+                        }
+                        updateTotalDuration()
                     }
-                    updateTotalDuration()
                 }
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(Color.black)
-            .environment(\.editMode, .constant(.active))
-            .scrollIndicators(.visible)
-            .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: currentPlayingTrackID != nil ? 65 : 0)
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .environment(\.editMode, .constant(.active))
+                .scrollIndicators(.visible)
+                .safeAreaInset(edge: .bottom) {
+                    Color.clear.frame(height: currentPlayingTrackID != nil ? 65 : 0)
+                }
             }
         }
         .navigationTitle(playlist.name)
@@ -156,6 +186,8 @@ struct PlaylistDetailView: View {
                     showAddSongs = true
                 } label: {
                     Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Theme.emberLight)
                 }
             }
         }
@@ -170,13 +202,9 @@ struct PlaylistDetailView: View {
             )
         }
         .onAppear {
-            isVisible = true
             currentPlayingTrackID = audioPlayer.currentTrack?.id
             isAudioPlaying = audioPlayer.isPlaying
             updateTotalDuration()
-        }
-        .onDisappear {
-            isVisible = false
         }
         .onReceive(audioPlayer.$currentTrack) { newTrack in
             let newID = newTrack?.id
@@ -226,15 +254,6 @@ struct PlaylistDetailView: View {
         }
     }
     
-    private func getAudioDuration(url: URL) async -> TimeInterval? {
-        let asset = AVAsset(url: url)
-        if let duration = try? await asset.load(.duration) {
-            let seconds = duration.seconds
-            return seconds.isFinite ? seconds : nil
-        }
-        return nil
-    }
-    
     private func formatDuration(_ duration: TimeInterval) -> String {
         let hours = Int(duration) / 3600
         let minutes = (Int(duration) % 3600) / 60
@@ -259,37 +278,32 @@ struct PlaylistSongRow: View {
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
-                // ✅ FIXED: Add play/pause icon overlay on thumbnail
                 ZStack {
                     AsyncThumbnailView(
                         thumbnailPath: download.resolvedThumbnailPath,
                         size: 48,
-                        cornerRadius: 8
+                        cornerRadius: 10
                     )
                     
-                    // ✅ ADDED: Play/Pause icon overlay
+                    // Pause icon overlay while this track is playing
                     if isCurrentlyPlaying && isPlaying {
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 10)
                             .fill(Color.black.opacity(0.4))
                             .frame(width: 48, height: 48)
                         Image(systemName: "pause.fill")
-                            .foregroundColor(.white)
+                            .foregroundColor(Theme.bone)
                             .font(.system(size: 14))
                     }
                 }
                 .frame(width: 48, height: 48)
                 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(download.name)
-                        .font(.body)
-                        .fontWeight(isCurrentlyPlaying ? .bold : .regular)
-                        .italic(isCurrentlyPlaying)
-                        .foregroundColor(isCurrentlyPlaying ? .blue : .primary)
+                        .font(Theme.body(15, weight: isCurrentlyPlaying ? .bold : .medium))
+                        .foregroundColor(isCurrentlyPlaying ? Theme.emberLight : Theme.bone)
                         .lineLimit(1)
                     
-                    Text(download.source.rawValue.capitalized)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    SourceChip(source: download.source)
                 }
                 
                 Spacer()
@@ -324,16 +338,14 @@ struct PlaylistSongRow: View {
                 Text("Enter a new name for this song")
             }
             
-            // ✅ ADDED: Volume icon when playing
+            // Animated EQ bars while this track is playing
             if isCurrentlyPlaying && isPlaying {
-                Image(systemName: "speaker.wave.2.fill")
-                    .foregroundColor(.blue)
-                    .font(.body)
+                EQIndicator()
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color.black)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .surfaceCard()
         .swipeToQueue {
             onQueue()
         }
@@ -367,7 +379,7 @@ struct PlaylistActionButtons: View {
     }
     
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             // PLAY / PLAY NOW button
             Button {
                 if playConfirmPending {
@@ -399,19 +411,24 @@ struct PlaylistActionButtons: View {
                     }
                 }
             } label: {
-                HStack {
+                HStack(spacing: 6) {
                     Image(systemName: playConfirmPending ? "play.circle.fill" : "play.fill")
-                    Text(playConfirmPending ? "Play Now?" : "Play")
+                    Text(playConfirmPending ? "Play now?" : "Play")
                 }
-                .font(.subheadline)
-                .fontWeight(playConfirmPending ? .bold : .regular)
-                .foregroundColor(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(playConfirmPending ? Color.orange : Color.blue)
-                .cornerRadius(8)
+                .font(Theme.body(15, weight: playConfirmPending ? .bold : .semibold))
+                .foregroundColor(playConfirmPending ? Theme.ink : Theme.ink)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(
+                    Capsule().fill(
+                        playConfirmPending
+                            ? AnyShapeStyle(Theme.emberLight)
+                            : AnyShapeStyle(Theme.emberGradient)
+                    )
+                )
                 .animation(.easeInOut(duration: 0.15), value: playConfirmPending)
             }
+            .buttonStyle(.plain)
             
             // SHUFFLE / SHUFFLE NOW button
             Button {
@@ -444,19 +461,24 @@ struct PlaylistActionButtons: View {
                     }
                 }
             } label: {
-                HStack {
+                HStack(spacing: 6) {
                     Image(systemName: shuffleConfirmPending ? "shuffle.circle.fill" : "shuffle")
-                    Text(shuffleConfirmPending ? "Shuffle Now?" : "Shuffle")
+                    Text(shuffleConfirmPending ? "Shuffle now?" : "Shuffle")
                 }
-                .font(.subheadline)
-                .fontWeight(shuffleConfirmPending ? .bold : .regular)
-                .foregroundColor(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(shuffleConfirmPending ? Color.orange : Color.green)
-                .cornerRadius(8)
+                .font(Theme.body(15, weight: shuffleConfirmPending ? .bold : .semibold))
+                .foregroundColor(Theme.ink)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(
+                    Capsule().fill(
+                        shuffleConfirmPending
+                            ? AnyShapeStyle(Theme.emberLight)
+                            : AnyShapeStyle(Theme.mintGradient)
+                    )
+                )
                 .animation(.easeInOut(duration: 0.15), value: shuffleConfirmPending)
             }
+            .buttonStyle(.plain)
         }
         .onDisappear {
             playTimer?.invalidate()

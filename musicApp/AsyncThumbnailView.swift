@@ -26,16 +26,20 @@ struct AsyncThumbnailView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: size, height: size)
-                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
                     .grayscale(grayscale ? 1.0 : 0.0)
             } else {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(Color.gray.opacity(0.3))
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Theme.smokeRaised)
                     .frame(width: size, height: size)
                     .overlay(
                         Image(systemName: "music.note")
-                            .font(.caption)
-                            .foregroundColor(.gray)
+                            .font(.system(size: max(size * 0.28, 10), weight: .medium))
+                            .foregroundColor(Theme.boneFaint)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .strokeBorder(Theme.seam, lineWidth: 1)
                     )
             }
         }
@@ -107,7 +111,7 @@ final class ThumbnailCache {
     
     private init() {
         cache.countLimit = 100  // Keep up to 100 thumbnails in memory
-        cache.totalCostLimit = 100 * 1024 * 1024  // ~50MB limit
+        cache.totalCostLimit = 100 * 1024 * 1024  // ~100MB limit
     }
     
     func get(_ path: String) -> UIImage? {

@@ -14,58 +14,71 @@ struct PlaylistsView: View {
     
     var body: some View {
         NavigationView {
-            List {
-                ForEach(playlistManager.playlists) { playlist in
-                    NavigationLink {
-                        PlaylistDetailView(
-                            playlist: playlist,
-                            playlistManager: playlistManager,
-                            downloadManager: downloadManager,
-                            audioPlayer: audioPlayer
+            ZStack {
+                AppBackground()
+                
+                Group {
+                    if playlistManager.playlists.isEmpty {
+                        EmptyStateView(
+                            icon: "music.note.list",
+                            title: "No playlists yet",
+                            message: "Tap + to create your first playlist from your downloaded songs."
                         )
-                    } label: {
-                        HStack {
-                            Image(systemName: "music.note.list")
-                                .font(.title2)
-                                .foregroundColor(.blue)
-                            
-                            VStack(alignment: .leading) {
-                                Text(playlist.name)
-                                    .font(.headline)
-                                
-                                let trackCount = playlist.trackIDs.count
-                                let duration = cachedDurations[playlist.id] ?? 0
-                                
-                                Text("\(trackCount) songs • \(formatDuration(duration))")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
+                    } else {
+                        List {
+                            ForEach(playlistManager.playlists) { playlist in
+                                NavigationLink {
+                                    PlaylistDetailView(
+                                        playlist: playlist,
+                                        playlistManager: playlistManager,
+                                        downloadManager: downloadManager,
+                                        audioPlayer: audioPlayer
+                                    )
+                                } label: {
+                                    PlaylistCardLabel(
+                                        playlist: playlist,
+                                        coverThumbnailPath: coverThumbnailPath(for: playlist),
+                                        duration: cachedDurations[playlist.id] ?? 0
+                                    )
+                                }
+                                .listRowInsets(EdgeInsets(top: 9, leading: 28, bottom: 9, trailing: 24))
+                                .listRowBackground(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .fill(Theme.smoke)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                                .strokeBorder(Theme.seam, lineWidth: 1)
+                                        )
+                                        .padding(.vertical, 4)
+                                        .padding(.horizontal, 14)
+                                )
+                                .listRowSeparator(.hidden)
+                                .contextMenu {
+                                    Button {
+                                        renameText = playlist.name
+                                        renamingPlaylist = playlist
+                                    } label: {
+                                        Label("Rename", systemImage: "pencil")
+                                    }
+                                    Button(role: .destructive) {
+                                        playlistManager.deletePlaylist(playlist)
+                                        refreshID = UUID()
+                                        computeDurationsAsync()
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
                             }
+                            .onDelete(perform: deletePlaylists)
                         }
-                    }
-                    .contextMenu {
-                        Button {
-                            renameText = playlist.name
-                            renamingPlaylist = playlist
-                        } label: {
-                            Label("Rename", systemImage: "pencil")
-                        }
-                        Button(role: .destructive) {
-                            playlistManager.deletePlaylist(playlist)
-                            refreshID = UUID()
-                            computeDurationsAsync()
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
+                        .id(refreshID)
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .scrollIndicators(.visible)
                     }
                 }
-                .onDelete(perform: deletePlaylists)
             }
-            .id(refreshID)
             .navigationTitle("Playlists")
-            .background(Color.black)
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .scrollIndicators(.visible)
             .safeAreaInset(edge: .bottom) {
                 Color.clear.frame(height: hasCurrentTrack ? 65 : 0)
             }
@@ -75,6 +88,8 @@ struct PlaylistsView: View {
                         showCreatePlaylist = true
                     } label: {
                         Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(Theme.emberLight)
                     }
                 }
             }
@@ -116,6 +131,16 @@ struct PlaylistsView: View {
         }
     }
     
+    /// First track's artwork doubles as the playlist cover.
+    private func coverThumbnailPath(for playlist: Playlist) -> String? {
+        for trackID in playlist.trackIDs {
+            if let path = downloadManager.getDownload(byID: trackID)?.resolvedThumbnailPath {
+                return path
+            }
+        }
+        return nil
+    }
+    
     /// Compute all playlist durations off the main thread
     private func computeDurationsAsync() {
         let playlists = playlistManager.playlists
@@ -152,6 +177,38 @@ struct PlaylistsView: View {
         }
         refreshID = UUID()
         computeDurationsAsync()
+    }
+}
+
+// MARK: - Playlist card label
+
+private struct PlaylistCardLabel: View {
+    let playlist: Playlist
+    let coverThumbnailPath: String?
+    let duration: TimeInterval
+    
+    var body: some View {
+        HStack(spacing: 14) {
+            AsyncThumbnailView(
+                thumbnailPath: coverThumbnailPath,
+                size: 54,
+                cornerRadius: 12
+            )
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(playlist.name)
+                    .font(Theme.title(16, weight: .semibold))
+                    .foregroundColor(Theme.bone)
+                    .lineLimit(1)
+                
+                Text("\(playlist.trackIDs.count) songs  •  \(formatDuration(duration))")
+                    .font(Theme.caption(11))
+                    .foregroundColor(Theme.boneDim)
+            }
+            
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 6)
     }
     
     private func formatDuration(_ duration: TimeInterval) -> String {
