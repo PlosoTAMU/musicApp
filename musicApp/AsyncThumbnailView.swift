@@ -68,6 +68,12 @@ struct AsyncThumbnailView: View {
             return
         }
         
+        // Cache miss for a *new* path: drop the previous image immediately so
+        // we show the placeholder rather than the prior track's artwork while
+        // the new thumbnail decodes. This is the fix for the mini-player
+        // artwork lagging one song behind when the queue advances.
+        image = nil
+        
         // ⚡ Capture size locally to avoid referencing self in detached task
         let targetSize = size
         

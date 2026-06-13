@@ -108,6 +108,11 @@ struct ContentView: View {
         .onAppear {
             downloadManager.audioPlayer = audioPlayer
             
+            // Give Siri / App Intents a live handle to playback so
+            // "Hey Siri, play <song> in <app>" can reach the player. Any
+            // request that arrived during a cold launch is fulfilled here.
+            SiriPlaybackBridge.shared.attach(audioPlayer: audioPlayer, downloadManager: downloadManager)
+            
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if !handlingDeepLink {
                     processIncomingShares()
@@ -407,16 +412,26 @@ struct MiniPlayerBar: View {
     }
     
     private func updateBackgroundImage() {
-        PerformanceMonitor.shared.start("NowPlayingView_UpdateBackground")
-        defer { PerformanceMonitor.shared.end("NowPlayingView_UpdateBackground") }
-        
         guard let track = audioPlayer.currentTrack else {
             backgroundImage = nil
             return
         }
         
-        // Wide aspect crop for the mini player
-        backgroundImage = Artwork.croppedBackground(forAudioFileURL: track.url, aspect: 4.0)
+        let audioURL = track.url
+        // Disk read + crop off the main thread so swapping tracks never
+        // hitches the UI (the foreground artwork is handled by AsyncThumbnailView).
+        DispatchQueue.global(qos: .userInitiated).async {
+            PerformanceMonitor.shared.start("NowPlayingView_UpdateBackground")
+            // Wide aspect crop for the mini player
+            let cropped = Artwork.croppedBackground(forAudioFileURL: audioURL, aspect: 4.0)
+            PerformanceMonitor.shared.end("NowPlayingView_UpdateBackground")
+            DispatchQueue.main.async {
+                // Only apply if we're still on the same track
+                if self.audioPlayer.currentTrack?.url == audioURL {
+                    self.backgroundImage = cropped
+                }
+            }
+        }
     }
 }
 
@@ -537,36 +552,43 @@ struct NowPlayingView: View {
     
     @ViewBuilder
     private var backgroundLayer: some View {
-        if let bgImage = backgroundImage {
-            Image(uiImage: bgImage)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-                .blur(radius: 50)
-                .scaleEffect(1.3)
-                .ignoresSafeArea()
-        } else {
-            LinearGradient(
-                colors: [Theme.emberDeep.opacity(0.25), Color(red: 0.31, green: 0.28, blue: 0.58).opacity(0.3)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+        ZStack {
+            if let bgImage = backgroundImage {
+                Image(uiImage: bgImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+                    .blur(radius: 55)
+                    .scaleEffect(1.3)
+                    // Desaturate toward the red/black identity so wildly
+                    // colored artwork doesn't fight the theme.
+                    .saturation(0.65)
+                    .overlay(Theme.ink.opacity(0.35))
+            } else {
+                Theme.ink
+            }
+            
+            // Red glow rising from the bottom — the signature of the
+            // red/black Now Playing screen.
+            RadialGradient(
+                colors: [Theme.red.opacity(0.28), .clear],
+                center: .bottom,
+                startRadius: 10,
+                endRadius: 460
             )
-            .background(Theme.ink)
-            .ignoresSafeArea()
         }
+        .ignoresSafeArea()
     }
     
     @ViewBuilder
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 10) {
             Button {
                 isPresented = false
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundColor(Theme.bone)
-                    .frame(width: 44, height: 44)
             }
+            .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
             
             Spacer()
             
@@ -576,21 +598,24 @@ struct NowPlayingView: View {
                 }
             } label: {
                 Image(systemName: "repeat")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundColor(audioPlayer.isLoopEnabled ? Theme.emberLight : Theme.bone)
-                    .frame(width: 44, height: 44)
-                    .scaleEffect(audioPlayer.isLoopEnabled ? 1.1 : 1.0)
                     .rotationEffect(.degrees(audioPlayer.isLoopEnabled ? 360 : 0))
             }
+            .buttonStyle(CircleControlButtonStyle(
+                diameter: 40,
+                tint: audioPlayer.isLoopEnabled ? Theme.ink : Theme.bone,
+                filled: audioPlayer.isLoopEnabled
+            ))
             
             Button {
                 audioPlayer.effectsBypass.toggle()
             } label: {
                 Image(systemName: "slider.vertical.3")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundColor(audioPlayer.effectsBypass ? Theme.bone : Theme.emberLight)
-                    .frame(width: 44, height: 44)
             }
+            .buttonStyle(CircleControlButtonStyle(
+                diameter: 40,
+                tint: audioPlayer.effectsBypass ? Theme.bone : Theme.ink,
+                filled: !audioPlayer.effectsBypass
+            ))
             
             Menu {
                 Button(action: { showPlaylistPicker = true }) {
@@ -600,14 +625,16 @@ struct NowPlayingView: View {
                     Label("Crop Song", systemImage: "scissors")
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 19, weight: .semibold))
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(Theme.bone)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Theme.smokeRaised))
+                    .overlay(Circle().strokeBorder(Theme.seam, lineWidth: 1))
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 40)
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
     }
     
     @ViewBuilder
@@ -636,7 +663,7 @@ struct NowPlayingView: View {
             playbackControls
             volumeBar
         }
-        .padding(.bottom, 65)
+        .padding(.bottom, 28)
     }
     
     @ViewBuilder
@@ -687,11 +714,11 @@ struct NowPlayingView: View {
                         .font(Theme.eyebrowFont)
                         .tracking(1.2)
                 }
-                .foregroundColor(Theme.emberLight)
+                .foregroundColor(Theme.redLight)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(Theme.emberDeep.opacity(0.22)))
-                .overlay(Capsule().strokeBorder(Theme.emberLight.opacity(0.35), lineWidth: 1))
+                .background(Capsule().fill(Theme.redDeep.opacity(0.22)))
+                .overlay(Capsule().strokeBorder(Theme.redLight.opacity(0.35), lineWidth: 1))
             }
         }
         .padding(.horizontal, 28)
@@ -716,7 +743,7 @@ struct NowPlayingView: View {
                     audioPlayer.seek(to: localSeekPosition)
                 }
             }
-            .tint(Theme.emberLight)
+            .tint(Theme.redLight)
             .disabled(audioPlayer.duration == 0)
             
             HStack {
@@ -737,16 +764,15 @@ struct NowPlayingView: View {
     
     @ViewBuilder
     private var playbackControls: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 14) {
             Button { audioPlayer.previous() } label: {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(Theme.bone)
-                    .frame(width: 50, height: 50)
             }
+            .buttonStyle(CircleControlButtonStyle(diameter: 46, tint: Theme.bone))
             
             RewindButton(audioPlayer: audioPlayer)
             
+            // Primary play/pause — red gradient, glow, press-spring.
             Button {
                 if audioPlayer.isPlaying {
                     audioPlayer.pause()
@@ -754,38 +780,35 @@ struct NowPlayingView: View {
                     audioPlayer.resume()
                 }
             } label: {
-                Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 76))
-                    .foregroundColor(Theme.bone)
+                Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
             }
+            .buttonStyle(PlayButtonStyle(diameter: 76))
             
             FastForwardButton(audioPlayer: audioPlayer)
             
             Button { audioPlayer.next() } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(Theme.bone)
-                    .frame(width: 50, height: 50)
             }
+            .buttonStyle(CircleControlButtonStyle(diameter: 46, tint: Theme.bone))
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 24)
+        .padding(.horizontal, 20)
+        .padding(.top, 22)
     }
     
     @ViewBuilder
     private var volumeBar: some View {
         HStack(spacing: 12) {
             Image(systemName: "speaker.fill")
-                .foregroundColor(Theme.bone.opacity(0.7))
+                .foregroundColor(Theme.redLight.opacity(0.8))
                 .font(.caption)
             VolumeSlider()
                 .frame(height: 20)
             Image(systemName: "speaker.wave.3.fill")
-                .foregroundColor(Theme.bone.opacity(0.7))
+                .foregroundColor(Theme.redLight.opacity(0.8))
                 .font(.caption)
         }
         .padding(.horizontal, 36)
-        .padding(.top, 25)
+        .padding(.top, 22)
     }
     
     private func updateBackgroundImage() {
@@ -848,9 +871,15 @@ struct RewindButton: View {
     var body: some View {
         Image("rewind")
             .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 32, height: 32)
-                .foregroundColor(Theme.bone)
+            .renderingMode(.template)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 22, height: 22)
+            .foregroundColor(Theme.bone)
+            .frame(width: 46, height: 46)
+            .background(Circle().fill(Theme.smokeRaised))
+            .overlay(Circle().strokeBorder(Theme.seam, lineWidth: 1))
+            .scaleEffect(isLongPressing ? 0.9 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isLongPressing)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
@@ -888,10 +917,16 @@ struct FastForwardButton: View {
     
     var body: some View {
         Image("forward")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 32, height: 32)
-                .foregroundColor(Theme.bone)
+            .resizable()
+            .renderingMode(.template)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 22, height: 22)
+            .foregroundColor(Theme.bone)
+            .frame(width: 46, height: 46)
+            .background(Circle().fill(Theme.smokeRaised))
+            .overlay(Circle().strokeBorder(Theme.seam, lineWidth: 1))
+            .scaleEffect(isLongPressing ? 0.9 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isLongPressing)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
@@ -992,8 +1027,8 @@ class VolumeContainerView: UIView {
             return
         }
         
-        slider.minimumTrackTintColor = .white
-        slider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.3)
+        slider.minimumTrackTintColor = UIColor(Theme.red)
+        slider.maximumTrackTintColor = UIColor(Theme.bone).withAlphaComponent(0.18)
         slider.thumbTintColor = nil
         
         let thumb = makeThumb(size: 12)
@@ -1005,7 +1040,7 @@ class VolumeContainerView: UIView {
     
     private func makeThumb(size: CGFloat) -> UIImage {
         UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
-            UIColor.white.setFill()
+            UIColor(Theme.bone).setFill()
             ctx.cgContext.fillEllipse(in: CGRect(origin: .zero, size: CGSize(width: size, height: size)))
         }
     }
@@ -1020,11 +1055,12 @@ class VolumeContainerView: UIView {
 struct AudioSettingsSheet: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     
-    // Per-control accents drawn from the theme
-    private let speedColor = Theme.emberLight
-    private let pitchColor = Color(red: 0.56, green: 0.49, blue: 1.0)   // violet
-    private let reverbColor = Color(red: 0.36, green: 0.78, blue: 0.91) // sky
-    private let bassColor = Theme.emberDeep
+    // Per-control accents — red family, varied by intensity so each
+    // control still reads as distinct.
+    private let speedColor = Theme.redLight
+    private let pitchColor = Theme.rose
+    private let reverbColor = Color(red: 1.0, green: 0.45, blue: 0.38) // warm coral
+    private let bassColor = Theme.redDeep
     
     private var speedBinding: Binding<Double> {
         Binding(

@@ -3,54 +3,66 @@ import UIKit
 
 // MARK: - Theme
 // Centralized design system for the entire app.
-// Direction: "Afterhours" — a late-night DJ-tool identity. Near-black ink
-// surfaces, hairline seams, a single warm ember accent for playback and
-// primary actions, and mint reserved for queue/shuffle semantics.
-// Typography is SF Rounded everywhere, with small tracked-uppercase
-// "eyebrow" labels as the recurring structural device.
+// Direction: red on black — a near-black "ink" base with hairline seams,
+// a single vivid red accent for playback and primary actions, and a cooler
+// rose reserved for queue/shuffle semantics. Typography is SF Rounded
+// everywhere, with small tracked-uppercase "eyebrow" labels as the
+// recurring structural device.
 enum Theme {
     
     // MARK: Palette
     
-    /// Base background. Near-black with a hint of indigo.  #0A0A0F
-    static let ink = Color(red: 0.039, green: 0.039, blue: 0.059)
-    /// Raised surface (cards, fields).  #15151F
-    static let smoke = Color(red: 0.082, green: 0.082, blue: 0.122)
-    /// Higher surface (placeholders, chips).  #1C1C28
-    static let smokeRaised = Color(red: 0.110, green: 0.110, blue: 0.157)
+    /// Base background. Near-black with a faint warm cast.  #0A0809
+    static let ink = Color(red: 0.039, green: 0.031, blue: 0.035)
+    /// Raised surface (cards, fields).  #17100F
+    static let smoke = Color(red: 0.090, green: 0.063, blue: 0.059)
+    /// Higher surface (placeholders, chips).  #211615
+    static let smokeRaised = Color(red: 0.129, green: 0.086, blue: 0.082)
     /// Hairline stroke used on every surface.
     static let seam = Color.white.opacity(0.07)
     
-    /// Primary text. Warm off-white.  #F4F1EC
-    static let bone = Color(red: 0.957, green: 0.945, blue: 0.925)
+    /// Primary text. Warm off-white.  #F4EDEA
+    static let bone = Color(red: 0.957, green: 0.929, blue: 0.918)
     /// Secondary text.
     static let boneDim = bone.opacity(0.55)
     /// Tertiary text / inactive icons.
     static let boneFaint = bone.opacity(0.32)
     
-    /// Accent, light end.  #FFB35C
-    static let emberLight = Color(red: 1.0, green: 0.702, blue: 0.361)
-    /// Accent, mid.  #FF8A50
-    static let ember = Color(red: 1.0, green: 0.541, blue: 0.314)
-    /// Accent, deep end.  #FF6F4D
-    static let emberDeep = Color(red: 1.0, green: 0.435, blue: 0.302)
+    // Primary accent — red. Playback, progress, primary actions.
+    /// Accent, light end.  #FF5E54
+    static let redLight = Color(red: 1.0, green: 0.369, blue: 0.329)
+    /// Accent, mid.  #F12B26
+    static let red = Color(red: 0.945, green: 0.169, blue: 0.149)
+    /// Accent, deep end.  #B91414
+    static let redDeep = Color(red: 0.725, green: 0.078, blue: 0.078)
     
-    /// Queue / shuffle semantics.  #57E6A8
-    static let mint = Color(red: 0.341, green: 0.902, blue: 0.659)
+    /// Secondary accent — a cooler rose for queue / shuffle semantics so
+    /// they stay distinguishable from the primary red.  #FF6B7D
+    static let rose = Color(red: 1.0, green: 0.420, blue: 0.490)
     /// Destructive actions.  #FF6B6B
     static let danger = Color(red: 1.0, green: 0.42, blue: 0.42)
     
-    static let emberGradient = LinearGradient(
-        colors: [emberLight, emberDeep],
+    static let redGradient = LinearGradient(
+        colors: [redLight, redDeep],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
     
-    static let mintGradient = LinearGradient(
-        colors: [mint, Color(red: 0.18, green: 0.72, blue: 0.52)],
+    static let roseGradient = LinearGradient(
+        colors: [rose, Color(red: 0.78, green: 0.20, blue: 0.29)],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
+    
+    // Backward-compatible aliases. The earlier "Afterhours" build used
+    // ember/mint names throughout the view files; they now resolve to the
+    // red/rose palette so those files keep compiling without edits.
+    static let emberLight = redLight
+    static let ember = red
+    static let emberDeep = redDeep
+    static let emberGradient = redGradient
+    static let mint = rose
+    static let mintGradient = roseGradient
     
     // MARK: Typography (SF Rounded throughout)
     
@@ -130,20 +142,20 @@ enum Theme {
 
 // MARK: - App background
 
-/// The shared screen background: ink base with two very faint glows so
+/// The shared screen background: ink base with two very faint red glows so
 /// large empty areas don't read as flat black.
 struct AppBackground: View {
     var body: some View {
         ZStack {
             Theme.ink
             RadialGradient(
-                colors: [Theme.emberDeep.opacity(0.09), .clear],
+                colors: [Theme.red.opacity(0.10), .clear],
                 center: .topTrailing,
                 startRadius: 20,
                 endRadius: 420
             )
             RadialGradient(
-                colors: [Color(red: 0.31, green: 0.28, blue: 0.58).opacity(0.12), .clear],
+                colors: [Theme.redDeep.opacity(0.13), .clear],
                 center: .bottomLeading,
                 startRadius: 20,
                 endRadius: 480
@@ -384,5 +396,73 @@ enum Artwork {
         
         guard let cropped = original.cgImage?.cropping(to: cropRect) else { return original }
         return UIImage(cgImage: cropped)
+    }
+}
+
+// MARK: - Custom button styles
+
+/// Circular transport / chrome button. Smoke-raised disc with a seam
+/// hairline, optional red fill for the active state, and a press spring.
+/// Replaces the default iOS button look across the player.
+struct CircleControlButtonStyle: ButtonStyle {
+    var diameter: CGFloat = 46
+    var tint: Color = Theme.bone
+    var filled: Bool = false
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: diameter * 0.42, weight: .semibold))
+            .foregroundColor(tint)
+            .frame(width: diameter, height: diameter)
+            .background(
+                Circle().fill(filled ? AnyShapeStyle(Theme.redGradient) : AnyShapeStyle(Theme.smokeRaised))
+            )
+            .overlay(
+                Circle().strokeBorder(filled ? Color.white.opacity(0.18) : Theme.seam, lineWidth: 1)
+            )
+            .shadow(color: filled ? Theme.red.opacity(0.5) : .clear,
+                    radius: filled ? 10 : 0, y: filled ? 3 : 0)
+            .scaleEffect(configuration.isPressed ? 0.9 : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
+/// The primary play/pause button: a red gradient disc with a glow and a
+/// press spring.
+struct PlayButtonStyle: ButtonStyle {
+    var diameter: CGFloat = 76
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: diameter * 0.40, weight: .heavy))
+            .foregroundColor(Theme.bone)
+            .frame(width: diameter, height: diameter)
+            .background(Circle().fill(Theme.redGradient))
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.20), lineWidth: 1))
+            .shadow(color: Theme.red.opacity(0.55),
+                    radius: configuration.isPressed ? 8 : 20, y: 5)
+            .scaleEffect(configuration.isPressed ? 0.92 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
+/// Full-width capsule action button (red or rose gradient). Useful for
+/// primary actions on sheets and detail screens.
+struct PillButtonStyle: ButtonStyle {
+    var gradient: LinearGradient = Theme.redGradient
+    var textColor: Color = Theme.bone
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.body(16, weight: .bold))
+            .foregroundColor(textColor)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 13)
+            .background(Capsule().fill(gradient))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.15), lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .opacity(configuration.isPressed ? 0.9 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
