@@ -112,7 +112,15 @@ struct ContentView: View {
             // "Hey Siri, play <song> in <app>" can reach the player. Any
             // request that arrived during a cold launch is fulfilled here.
             SiriPlaybackBridge.shared.attach(audioPlayer: audioPlayer, downloadManager: downloadManager)
-            
+
+            // Register/refresh the App Shortcut phrases AND the song-name
+            // vocabulary. Without this, the shortcut grammar can stay empty and
+            // Siri answers "hasn't added support for that" even though the
+            // intent exists. Safe to call every launch.
+            if #available(iOS 16.0, *) {
+                MusicAppShortcuts.updateAppShortcutParameters()
+            }
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if !handlingDeepLink {
                     processIncomingShares()
@@ -344,7 +352,12 @@ struct MiniPlayerBar: View {
                         size: 42,
                         cornerRadius: 10
                     )
-                    
+                    // The mini-player is a single persistent view, so its
+                    // thumbnail keeps the same SwiftUI identity across songs and
+                    // the previous track's async-loaded image lingers one song
+                    // behind. Re-key on the track id to force a fresh load.
+                    .id(audioPlayer.currentTrack?.id)
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text(audioPlayer.currentTrack?.name ?? "Unknown")
                             .font(Theme.body(15, weight: .semibold))
@@ -468,6 +481,9 @@ struct NowPlayingView: View {
     @State private var showAudioSettings = false
     @State private var thumbnailCenter: CGPoint = .zero
     @State private var showCropSheet = false
+    // Interactive swipe-to-dismiss: tracks the finger so the whole screen
+    // follows the drag instead of only snapping shut on release.
+    @State private var dragOffset: CGFloat = 0
     
     private var sliderBinding: Binding<Double> {
         Binding(
@@ -490,26 +506,27 @@ struct NowPlayingView: View {
             Color.black.opacity(0.4)
                 .ignoresSafeArea()
             
-            // Foreground content respects the device safe area so the top
-            // controls clear the notch and the volume bar clears the home
-            // indicator — correct on the iPhone 12 mini and every other size.
-            GeometryReader { geo in
-                VStack(spacing: 0) {
-                    topBar
-                    
-                    Spacer(minLength: 5)
-                    
-                    thumbnailView
-                    
-                    Spacer(minLength: 15)
-                    
-                    controlsSection
-                }
-                .padding(.top, geo.safeAreaInsets.top + 6)
-                .padding(.bottom, geo.safeAreaInsets.bottom + 4)
-                .frame(width: geo.size.width, height: geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom)
-                .offset(y: -geo.safeAreaInsets.top)
+            // Foreground content. This layer deliberately does NOT call
+            // ignoresSafeArea, so SwiftUI insets it to the safe area: the top
+            // bar lands below the notch / Dynamic Island and the volume bar
+            // lands above the home indicator. (The previous manual
+            // offset/inset math collapsed to 0 because the sibling background
+            // layers ignore the safe area, which pushed the controls off the
+            // top edge and dropped the volume bar under the home indicator.)
+            VStack(spacing: 0) {
+                topBar
+
+                Spacer(minLength: 5)
+
+                thumbnailView
+
+                Spacer(minLength: 15)
+
+                controlsSection
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.top, 6)
+            .padding(.bottom, 10)
             
             // Visualizer layer — full screen in global coordinates so its
             // bars stay locked to the thumbnail's real on-screen center.
@@ -518,6 +535,9 @@ struct NowPlayingView: View {
                 .allowsHitTesting(false)
                 .ignoresSafeArea()
         }
+        // Follow the finger on a downward drag (rubber-banded so it feels
+        // attached), then either complete the dismiss or spring back.
+        .offset(y: dragOffset)
         .onAppear {
             updateBackgroundImage()
             lockOrientation(.portrait)
@@ -531,17 +551,37 @@ struct NowPlayingView: View {
             updateBackgroundImage()
         }
         .highPriorityGesture(
-            DragGesture(minimumDistance: 25)
+            DragGesture(minimumDistance: 20)
+                .onChanged { value in
+                    let dy = value.translation.height
+                    if dy > 0 {
+                        // Light resistance: divide so it trails the finger
+                        // slightly rather than moving 1:1.
+                        dragOffset = dy < 220 ? dy : 220 + (dy - 220) * 0.35
+                    } else {
+                        dragOffset = 0
+                    }
+                }
                 .onEnded { value in
                     let dy = value.translation.height
                     let vy = value.predictedEndTranslation.height
-                    // Smooth, momentum-aware dismiss / settings reveal.
-                    if dy > 90 || vy > 220 {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                    if dy > 110 || vy > 320 {
+                        // Commit: slide the rest of the way out, then dismiss.
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+                            dragOffset = UIScreen.main.bounds.height
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
                             isPresented = false
+                            dragOffset = 0
                         }
                     } else if dy < -90 || vy < -220 {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragOffset = 0 }
                         showAudioSettings = true
+                    } else {
+                        // Not far enough: spring back to place.
+                        withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.82)) {
+                            dragOffset = 0
+                        }
                     }
                 }
         )
@@ -834,7 +874,7 @@ struct NowPlayingView: View {
             Image(systemName: "speaker.fill")
                 .foregroundColor(Theme.redLight.opacity(0.8))
                 .font(.caption)
-            VolumeSlider()
+            CustomVolumeBar()
                 .frame(height: 20)
             Image(systemName: "speaker.wave.3.fill")
                 .foregroundColor(Theme.redLight.opacity(0.8))
@@ -992,8 +1032,105 @@ struct FastForwardButton: View {
     }
 }
 
+// MARK: - Custom Volume Bar
+//
+// A fully custom SwiftUI volume control. iOS only lets an app change the
+// hardware output volume through MPVolumeView's embedded UISlider, so a hidden
+// MPVolumeView is kept in the hierarchy purely as the system hook: dragging the
+// custom bar writes through to that slider, and hardware button presses flow
+// back via KVO on AVAudioSession.outputVolume.
+final class SystemVolume: ObservableObject {
+    static let shared = SystemVolume()
+    @Published var level: Float = AVAudioSession.sharedInstance().outputVolume
+    /// While the user drags our bar, ignore KVO echoes so the thumb doesn't fight the finger.
+    var isDragging = false
+    private var observation: NSKeyValueObservation?
+
+    private init() {
+        observation = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] _, change in
+            guard let self, let v = change.newValue else { return }
+            DispatchQueue.main.async {
+                if !self.isDragging { self.level = v }
+            }
+        }
+    }
+}
+
+/// Hidden MPVolumeView — never visually shown, but must live in the hierarchy
+/// for its UISlider to exist and actually move the hardware volume.
+struct HiddenSystemVolume: UIViewRepresentable {
+    @Binding var slider: UISlider?
+
+    func makeUIView(context: Context) -> MPVolumeView {
+        let v = MPVolumeView(frame: CGRect(x: -3000, y: -3000, width: 120, height: 30))
+        v.showsVolumeSlider = true
+        v.alpha = 0.0001
+        v.isUserInteractionEnabled = false
+        return v
+    }
+
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {
+        if slider == nil {
+            DispatchQueue.main.async {
+                slider = uiView.subviews.compactMap { $0 as? UISlider }.first
+            }
+        }
+    }
+}
+
+struct CustomVolumeBar: View {
+    @ObservedObject private var sys = SystemVolume.shared
+    @State private var systemSlider: UISlider?
+    @State private var dragValue: Float?
+
+    var body: some View {
+        let shown = CGFloat(max(0, min(dragValue ?? sys.level, 1)))
+        return GeometryReader { geo in
+            let w = geo.size.width
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Theme.smokeRaised)
+                    .frame(height: 6)
+                Capsule()
+                    .fill(Theme.emberGradient)
+                    .frame(width: shown * w, height: 6)
+                Circle()
+                    .fill(Theme.bone)
+                    .overlay(Circle().strokeBorder(Theme.red, lineWidth: 1))
+                    .frame(width: 16, height: 16)
+                    .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
+                    .offset(x: shown * w - 8)
+            }
+            .frame(height: 20)
+            .frame(maxHeight: .infinity, alignment: .center)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        sys.isDragging = true
+                        let v = Float(max(0, min(value.location.x / w, 1)))
+                        dragValue = v
+                        systemSlider?.value = v
+                        systemSlider?.sendActions(for: .valueChanged)
+                    }
+                    .onEnded { _ in
+                        if let v = dragValue { sys.level = v }
+                        dragValue = nil
+                        sys.isDragging = false
+                    }
+            )
+            .background(
+                HiddenSystemVolume(slider: $systemSlider)
+                    .frame(width: 0, height: 0)
+                    .allowsHitTesting(false)
+            )
+        }
+        .frame(height: 20)
+    }
+}
+
 struct VolumeSlider: UIViewRepresentable {
-    
+
     func makeUIView(context: Context) -> VolumeContainerView {
         VolumeContainerView()
     }
