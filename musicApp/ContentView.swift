@@ -542,8 +542,9 @@ struct NowPlayingView: View {
                     .ignoresSafeArea()
             }
         }
-        // Follow the finger on a downward drag (rubber-banded so it feels
-        // attached), then either complete the dismiss or spring back.
+        // Follow the finger: the screen shrinks slightly and slides down as it
+        // is pulled, like a card lifting away, then completes or springs back.
+        .scaleEffect(1 - min(max(dragOffset, 0), 700) / 7000)
         .offset(y: dragOffset)
         .onAppear {
             updateBackgroundImage()
@@ -881,7 +882,7 @@ struct NowPlayingView: View {
             Image(systemName: "speaker.fill")
                 .foregroundColor(Theme.redLight.opacity(0.8))
                 .font(.caption)
-            CustomVolumeBar()
+            VolumeSlider()
                 .frame(height: 20)
             Image(systemName: "speaker.wave.3.fill")
                 .foregroundColor(Theme.redLight.opacity(0.8))
@@ -1036,103 +1037,6 @@ struct FastForwardButton: View {
                         }
                     }
             )
-    }
-}
-
-// MARK: - Custom Volume Bar
-//
-// A fully custom SwiftUI volume control. iOS only lets an app change the
-// hardware output volume through MPVolumeView's embedded UISlider, so a hidden
-// MPVolumeView is kept in the hierarchy purely as the system hook: dragging the
-// custom bar writes through to that slider, and hardware button presses flow
-// back via KVO on AVAudioSession.outputVolume.
-final class SystemVolume: ObservableObject {
-    static let shared = SystemVolume()
-    @Published var level: Float = AVAudioSession.sharedInstance().outputVolume
-    /// While the user drags our bar, ignore KVO echoes so the thumb doesn't fight the finger.
-    var isDragging = false
-    private var observation: NSKeyValueObservation?
-
-    private init() {
-        observation = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] _, change in
-            guard let self, let v = change.newValue else { return }
-            DispatchQueue.main.async {
-                if !self.isDragging { self.level = v }
-            }
-        }
-    }
-}
-
-/// Hidden MPVolumeView — never visually shown, but must live in the hierarchy
-/// for its UISlider to exist and actually move the hardware volume.
-struct HiddenSystemVolume: UIViewRepresentable {
-    @Binding var slider: UISlider?
-
-    func makeUIView(context: Context) -> MPVolumeView {
-        let v = MPVolumeView(frame: CGRect(x: -3000, y: -3000, width: 120, height: 30))
-        v.showsVolumeSlider = true
-        v.alpha = 0.0001
-        v.isUserInteractionEnabled = false
-        return v
-    }
-
-    func updateUIView(_ uiView: MPVolumeView, context: Context) {
-        if slider == nil {
-            DispatchQueue.main.async {
-                slider = uiView.subviews.compactMap { $0 as? UISlider }.first
-            }
-        }
-    }
-}
-
-struct CustomVolumeBar: View {
-    @ObservedObject private var sys = SystemVolume.shared
-    @State private var systemSlider: UISlider?
-    @State private var dragValue: Float?
-
-    var body: some View {
-        let shown = CGFloat(max(0, min(dragValue ?? sys.level, 1)))
-        return GeometryReader { geo in
-            let w = geo.size.width
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Theme.smokeRaised)
-                    .frame(height: 6)
-                Capsule()
-                    .fill(Theme.emberGradient)
-                    .frame(width: shown * w, height: 6)
-                Circle()
-                    .fill(Theme.bone)
-                    .overlay(Circle().strokeBorder(Theme.red, lineWidth: 1))
-                    .frame(width: 16, height: 16)
-                    .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
-                    .offset(x: shown * w - 8)
-            }
-            .frame(height: 20)
-            .frame(maxHeight: .infinity, alignment: .center)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        sys.isDragging = true
-                        let v = Float(max(0, min(value.location.x / w, 1)))
-                        dragValue = v
-                        systemSlider?.value = v
-                        systemSlider?.sendActions(for: .valueChanged)
-                    }
-                    .onEnded { _ in
-                        if let v = dragValue { sys.level = v }
-                        dragValue = nil
-                        sys.isDragging = false
-                    }
-            )
-            .background(
-                HiddenSystemVolume(slider: $systemSlider)
-                    .frame(width: 0, height: 0)
-                    .allowsHitTesting(false)
-            )
-        }
-        .frame(height: 20)
     }
 }
 
@@ -1607,13 +1511,17 @@ struct PulsingThumbnailView: View {
                     .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
             }
         }
-        .scaleEffect(1.0 + CGFloat(visualizerState.bassLevel) * 0.20)
+        // Measure the center BEFORE the pulse scale. Measuring after meant the
+        // global frame (a CGRect) changed every frame and got swept into
+        // animation transactions → "invalid sample AnimatablePair" spam. The
+        // unscaled center is stable; the visualizer applies its own pulse.
         .background(
             GeometryReader { geo in
                 Color.clear
                     .preference(key: ThumbnailCenterKey.self, value: geo.frame(in: .global))
             }
         )
+        .scaleEffect(1.0 + CGFloat(visualizerState.bassLevel) * 0.20)
         .onPreferenceChange(ThumbnailCenterKey.self) { frame in
             onThumbnailCenterChanged?(CGPoint(x: frame.midX, y: frame.midY))
         }
