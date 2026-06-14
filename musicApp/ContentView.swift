@@ -490,17 +490,10 @@ struct NowPlayingView: View {
     @State private var showRenameAlert = false
     @State private var newTrackName: String = ""
     @State private var showAudioSettings = false
-    @State private var thumbnailCenter: CGPoint = .zero
     @State private var showCropSheet = false
     // Interactive swipe-to-dismiss: tracks the finger so the whole screen
     // follows the drag instead of only snapping shut on release.
     @State private var dragOffset: CGFloat = 0
-    // The visualizer is a full-screen layer centered on the thumbnail's GLOBAL
-    // frame, but it lives inside the sliding panel — so during a slide the global
-    // tracking and the panel translation fight and the bars detach from the art.
-    // Simplest correct answer: hide it during the slide (only ~0.3s), show it at
-    // rest where the coordinates line up. Starts hidden; fades in once settled.
-    @State private var hideVisualizer = true
     
     private var sliderBinding: Binding<Double> {
         Binding(
@@ -547,17 +540,6 @@ struct NowPlayingView: View {
             // (where the system was reading horizontal drags as app-switching).
             .padding(.top, 30)
             .padding(.bottom, 30)
-            
-            // Visualizer layer — full screen in global coordinates so its bars
-            // stay locked to the thumbnail's real on-screen center. Stays mounted
-            // during the dismiss drag (it gets frozen instead — see the gesture)
-            // so it never pops in/out.
-            EdgeVisualizerView(audioPlayer: audioPlayer, visualizerState: audioPlayer.visualizerState, thumbnailCenter: thumbnailCenter)
-                .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-                .opacity(hideVisualizer ? 0 : 1)
-                .animation(.easeInOut(duration: 0.2), value: hideVisualizer)
-                .allowsHitTesting(false)
-                .ignoresSafeArea()
         }
         // Drag-to-dismiss: the screen tracks the finger straight down. No scale —
         // scaling a full-bleed view peeled black borders in at the edges.
@@ -566,11 +548,6 @@ struct NowPlayingView: View {
             updateBackgroundImage()
             lockOrientation(.portrait)
             audioPlayer.startVisualization()
-            // Visualizer starts hidden (see @State); fade in after the present
-            // slide settles so it can't detach from the artwork mid-slide.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
-                hideVisualizer = false
-            }
         }
         .onDisappear {
             unlockOrientation()
@@ -590,10 +567,10 @@ struct NowPlayingView: View {
                         // On the first downward move, freeze the visualizer (a live
                         // 60fps Canvas translated every frame stutters) and lock its
                         // center (else it slides at double speed).
-                        if dragOffset == 0 {
-                            audioPlayer.isVisualizerVisible = false
-                            hideVisualizer = true
-                        }
+                        // Freeze the FFT on the first downward move so the bars
+                        // hold their shape and slide with the artwork (cheaper
+                        // than redrawing a live Canvas every frame mid-drag).
+                        if dragOffset == 0 { audioPlayer.isVisualizerVisible = false }
                         dragOffset = dy                 // 1:1 with the finger
                     } else {
                         dragOffset = 0                  // ignore upward travel here
@@ -608,7 +585,6 @@ struct NowPlayingView: View {
                         // Swipe up → audio settings; unfreeze and settle back.
                         audioPlayer.isVisualizerVisible = true
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { dragOffset = 0 }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { hideVisualizer = false }
                         showAudioSettings = true
                     } else {
                         // Not far enough → spring back and resume the visualizer.
@@ -616,7 +592,6 @@ struct NowPlayingView: View {
                         withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                             dragOffset = 0
                         }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { hideVisualizer = false }
                     }
                 }
         )
@@ -750,9 +725,6 @@ struct NowPlayingView: View {
         PulsingThumbnailView(
             visualizerState: audioPlayer.visualizerState,
             thumbnailImage: getThumbnailImage(for: audioPlayer.currentTrack),
-            onThumbnailCenterChanged: { newCenter in
-                thumbnailCenter = newCenter
-            },
             onTap: {
                 if audioPlayer.isPlaying {
                     audioPlayer.pause()
@@ -760,6 +732,17 @@ struct NowPlayingView: View {
                     audioPlayer.resume()
                 }
             }
+        )
+        .overlay(
+            // Visualizer glued onto the artwork as an overlay — same layout unit,
+            // so it slides and pulses WITH the thumbnail. No global-center
+            // tracking, no double translation, no detaching during the slide.
+            EdgeVisualizerView(
+                audioPlayer: audioPlayer,
+                visualizerState: audioPlayer.visualizerState
+            )
+            .frame(width: 440, height: 440)
+            .allowsHitTesting(false)
         )
     }
     
@@ -967,8 +950,7 @@ struct NowPlayingView: View {
     /// the view up while the .move(.bottom) removal moves it down a full screen;
     /// the two sum to a single smooth downward slide that reveals the app behind.
     private func animatedDismiss() {
-        audioPlayer.isVisualizerVisible = false
-        hideVisualizer = true   // fade the bars out for the slide (avoids detach)
+        audioPlayer.isVisualizerVisible = false   // freeze bars; they slide out with the panel
         withAnimation(.easeInOut(duration: 0.3)) {
             dragOffset = 0
             isPresented = false
@@ -1518,8 +1500,7 @@ struct FailedDownloadsBanner: View {
 struct PulsingThumbnailView: View {
     @ObservedObject var visualizerState: VisualizerState
     let thumbnailImage: UIImage?
-    var onThumbnailCenterChanged: ((CGPoint) -> Void)?
-    var onTap: (() -> Void)?
+    var onTap: (() -> Void)? = nil
     
     var body: some View {
         PerformanceMonitor.shared.recordViewUpdate("PulsingThumbnailView")
@@ -1548,31 +1529,10 @@ struct PulsingThumbnailView: View {
                     .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
             }
         }
-        // Measure the center BEFORE the pulse scale. Measuring after meant the
-        // global frame (a CGRect) changed every frame and got swept into
-        // animation transactions → "invalid sample AnimatablePair" spam. The
-        // unscaled center is stable; the visualizer applies its own pulse.
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .preference(key: ThumbnailCenterKey.self, value: geo.frame(in: .global))
-            }
-        )
         .scaleEffect(1.0 + CGFloat(visualizerState.bassLevel) * 0.20)
-        .onPreferenceChange(ThumbnailCenterKey.self) { frame in
-            onThumbnailCenterChanged?(CGPoint(x: frame.midX, y: frame.midY))
-        }
         .onTapGesture {
             onTap?()
         }
-    }
-}
-
-// Preference key for continuous center tracking
-struct ThumbnailCenterKey: PreferenceKey {
-    static var defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
     }
 }
 
