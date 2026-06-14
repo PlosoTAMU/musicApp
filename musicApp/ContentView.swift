@@ -531,20 +531,17 @@ struct NowPlayingView: View {
             .padding(.top, 30)
             .padding(.bottom, 30)
             
-            // Visualizer layer — full screen in global coordinates so its
-            // bars stay locked to the thumbnail's real on-screen center.
-            // Dropped from the tree during an active drag: translating a live
-            // 60fps Canvas every frame is what made the swipe feel choppy.
-            if dragOffset == 0 {
-                EdgeVisualizerView(audioPlayer: audioPlayer, visualizerState: audioPlayer.visualizerState, thumbnailCenter: thumbnailCenter)
-                    .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-                    .allowsHitTesting(false)
-                    .ignoresSafeArea()
-            }
+            // Visualizer layer — full screen in global coordinates so its bars
+            // stay locked to the thumbnail's real on-screen center. Stays mounted
+            // during the dismiss drag (it gets frozen instead — see the gesture)
+            // so it never pops in/out.
+            EdgeVisualizerView(audioPlayer: audioPlayer, visualizerState: audioPlayer.visualizerState, thumbnailCenter: thumbnailCenter)
+                .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+                .allowsHitTesting(false)
+                .ignoresSafeArea()
         }
-        // Follow the finger: the screen shrinks slightly and slides down as it
-        // is pulled, like a card lifting away, then completes or springs back.
-        .scaleEffect(1 - min(max(dragOffset, 0), 700) / 7000)
+        // Drag-to-dismiss: the screen tracks the finger straight down. No scale —
+        // scaling a full-bleed view peeled black borders in at the edges.
         .offset(y: dragOffset)
         .onAppear {
             updateBackgroundImage()
@@ -559,35 +556,47 @@ struct NowPlayingView: View {
             updateBackgroundImage()
         }
         // Plain .gesture (NOT highPriority) so child controls — the volume bar
-        // and progress slider — still receive their own drags. The dismiss
-        // drag only takes over in the empty areas (background, thumbnail).
+        // and progress slider — still receive their own drags. The dismiss drag
+        // only takes over in the empty areas (background, thumbnail).
         .gesture(
             DragGesture(minimumDistance: 12)
                 .onChanged { value in
                     let dy = value.translation.height
-                    // Follow the finger 1:1 downward; stiffen upward pulls.
-                    dragOffset = dy > 0 ? dy : dy * 0.1
+                    if dy > 0 {
+                        // Freeze the visualizer on the first downward move: a live
+                        // 60fps Canvas being translated every frame is what made
+                        // the drag stutter. Freezing (vs removing) avoids a pop.
+                        if dragOffset == 0 { audioPlayer.isVisualizerVisible = false }
+                        dragOffset = dy                 // 1:1 with the finger
+                    } else {
+                        dragOffset = 0                  // ignore upward travel here
+                    }
                 }
                 .onEnded { value in
                     let dy = value.translation.height
                     let vy = value.predictedEndTranslation.height
-                    if dy > 130 || vy > 500 {
-                        // One clean slide out, then dismiss with the cover's own
-                        // animation suppressed (no second slide).
-                        withAnimation(.easeOut(duration: 0.24)) {
+                    if dy > 120 || vy > 600 {
+                        // Commit: accelerate off the bottom in one motion, then
+                        // remove the cover with ITS transition suppressed so there
+                        // is exactly one slide.
+                        withAnimation(.easeIn(duration: 0.26)) {
                             dragOffset = UIScreen.main.bounds.height
                         }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
                             var t = Transaction()
                             t.disablesAnimations = true
                             withTransaction(t) { isPresented = false }
                             dragOffset = 0
                         }
                     } else if dy < -90 || vy < -300 {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragOffset = 0 }
+                        // Swipe up → audio settings; unfreeze and settle back.
+                        audioPlayer.isVisualizerVisible = true
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { dragOffset = 0 }
                         showAudioSettings = true
                     } else {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        // Not far enough → spring back and resume the visualizer.
+                        audioPlayer.isVisualizerVisible = true
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                             dragOffset = 0
                         }
                     }
