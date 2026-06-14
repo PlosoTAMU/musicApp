@@ -78,16 +78,24 @@ struct ContentView: View {
                 }
             }
             .padding(.bottom, 49)
-        }
-        .fullScreenCover(isPresented: $showNowPlaying) {
-            NowPlayingView(
-                audioPlayer: audioPlayer,
-                downloadManager: downloadManager,
-                playlistManager: playlistManager,
-                isPresented: $showNowPlaying
-            )
-            .statusBarHidden(false)
-            .persistentSystemOverlays(.hidden)
+
+            // Now Playing as a custom overlay — NOT a fullScreenCover. The cover
+            // composited over an opaque black backing, so presenting/dismissing
+            // showed a black void. As an overlay it slides over the live app and
+            // slides back down to reveal the list behind it. zIndex keeps it
+            // above the tab bar + mini player during the transition.
+            if showNowPlaying {
+                NowPlayingView(
+                    audioPlayer: audioPlayer,
+                    downloadManager: downloadManager,
+                    playlistManager: playlistManager,
+                    isPresented: $showNowPlaying
+                )
+                .ignoresSafeArea()
+                .transition(.move(edge: .bottom))
+                .zIndex(100)
+                .persistentSystemOverlays(.hidden)
+            }
         }
         .sheet(isPresented: $showFolderPicker) {
             FolderPicker(downloadManager: downloadManager)
@@ -128,7 +136,7 @@ struct ContentView: View {
             }
             
             audioPlayer.onPlaybackEnded = {
-                showNowPlaying = false
+                withAnimation(.easeInOut(duration: 0.3)) { showNowPlaying = false }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
@@ -376,9 +384,11 @@ struct MiniPlayerBar: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    showNowPlaying = true
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                        showNowPlaying = true
+                    }
                 }
-                
+
                 Spacer()
                 
                 Button {
@@ -576,18 +586,7 @@ struct NowPlayingView: View {
                     let dy = value.translation.height
                     let vy = value.predictedEndTranslation.height
                     if dy > 120 || vy > 600 {
-                        // Commit: accelerate off the bottom in one motion, then
-                        // remove the cover with ITS transition suppressed so there
-                        // is exactly one slide.
-                        withAnimation(.easeIn(duration: 0.26)) {
-                            dragOffset = UIScreen.main.bounds.height
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
-                            var t = Transaction()
-                            t.disablesAnimations = true
-                            withTransaction(t) { isPresented = false }
-                            dragOffset = 0
-                        }
+                        animatedDismiss()
                     } else if dy < -90 || vy < -300 {
                         // Swipe up → audio settings; unfreeze and settle back.
                         audioPlayer.isVisualizerVisible = true
@@ -674,7 +673,7 @@ struct NowPlayingView: View {
     private var topBar: some View {
         HStack(spacing: 10) {
             Button {
-                isPresented = false
+                animatedDismiss()
             } label: {
                 Image(systemName: "chevron.down")
             }
@@ -945,6 +944,17 @@ struct NowPlayingView: View {
         return image
     }
     
+    /// Slide the screen down and remove it in one motion. dragOffset → 0 moves
+    /// the view up while the .move(.bottom) removal moves it down a full screen;
+    /// the two sum to a single smooth downward slide that reveals the app behind.
+    private func animatedDismiss() {
+        audioPlayer.isVisualizerVisible = false
+        withAnimation(.easeInOut(duration: 0.3)) {
+            dragOffset = 0
+            isPresented = false
+        }
+    }
+
     private func lockOrientation(_ orientation: UIInterfaceOrientationMask) {
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
             windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: orientation))
