@@ -210,11 +210,13 @@ struct QueueView: View {
                         .scrollContentBackground(.hidden)
                         .environment(\.editMode, .constant(.active))
                         .scrollIndicators(.visible)
-                        // easeInOut reads smoother than a spring for big List
-                        // section diffs (no overshoot/settle jitter on insert/reorder).
-                        .animation(.easeInOut(duration: 0.3), value: audioPlayer.currentTrack?.id)
-                        .animation(.easeInOut(duration: 0.3), value: audioPlayer.queue.count)
-                        .animation(.easeInOut(duration: 0.3), value: audioPlayer.previousQueue.count)
+                        // Animate only single-row add/remove (clean inserts).
+                        // The track-advance case is intentionally NOT animated:
+                        // it reshuffles three sections at once (now-playing →
+                        // previous, up-next → now-playing), and animating that
+                        // whole diff is what looked choppy. Instant is cleaner.
+                        .animation(.spring(response: 0.38, dampingFraction: 0.9), value: audioPlayer.queue.count)
+                        .animation(.spring(response: 0.38, dampingFraction: 0.9), value: audioPlayer.previousQueue.count)
                         .safeAreaInset(edge: .bottom) {
                             Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
                         }

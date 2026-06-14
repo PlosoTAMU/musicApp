@@ -511,8 +511,14 @@ struct NowPlayingView: View {
         PerformanceMonitor.shared.recordViewUpdate("NowPlayingView")
         
         return ZStack {
+            // Opaque base. This view is now a custom overlay (not a black-backed
+            // fullScreenCover), so without a solid floor the Downloads list shows
+            // faintly through the blurred-artwork background.
+            Color.black
+                .ignoresSafeArea()
+
             backgroundLayer
-            
+
             Color.black.opacity(0.4)
                 .ignoresSafeArea()
             
