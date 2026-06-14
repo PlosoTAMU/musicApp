@@ -1047,36 +1047,45 @@ struct VolumeSlider: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: VolumeContainerView, context: Context) {
-        uiView.scheduleStylingUpdate()
+        uiView.applyStyle()
     }
 }
 
 class VolumeContainerView: UIView {
     private let volumeView = MPVolumeView()
     private var observer: NSKeyValueObservation?
-    private var isStylingScheduled = false
-    
+    private var isApplying = false
+
+    // Generate the custom artwork ONCE and reuse it. Re-applying is then cheap
+    // enough to do synchronously on every layout pass — which is what stops the
+    // stock slider from flashing through during gestures/scrolls.
+    private lazy var trackFill: UIImage = makeTrackImage(
+        colors: [UIColor(Theme.redLight), UIColor(Theme.redDeep)], height: 6)
+    private lazy var trackEmpty: UIImage = makeTrackImage(
+        colors: [UIColor(Theme.smokeRaised), UIColor(Theme.smokeRaised)], height: 6)
+    private lazy var thumb: UIImage = makeThumb(size: 16)
+
     deinit {
         observer?.invalidate()
         observer = nil
     }
-    
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         setup()
     }
-    
+
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setup()
     }
-    
+
     private func setup() {
         volumeView.showsVolumeSlider = true
-        // Note: showsRouteButton was deprecated in iOS 13. 
-        // If you need AirPlay/route picking UI, use AVRoutePickerView instead.
+        // showsRouteButton was deprecated in iOS 13; use AVRoutePickerView if
+        // AirPlay UI is ever needed.
         volumeView.translatesAutoresizingMaskIntoConstraints = false
-        
+
         addSubview(volumeView)
         NSLayoutConstraint.activate([
             volumeView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -1084,58 +1093,43 @@ class VolumeContainerView: UIView {
             volumeView.topAnchor.constraint(equalTo: topAnchor),
             volumeView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
-        
-        // Observe subview changes (debounced via isStylingScheduled flag)
+
+        // MPVolumeView recreates its slider subview on route/layout changes.
+        // Re-style synchronously the instant that happens — no async gap.
         observer = volumeView.observe(\.subviews, options: [.new]) { [weak self] _, _ in
-            self?.scheduleStylingUpdate()
+            self?.applyStyle()
         }
-        
-        // Initial + delayed styling
-        scheduleStylingUpdate()
+
+        applyStyle()
     }
-    
-    func scheduleStylingUpdate() {
-        guard !isStylingScheduled else { return }
-        isStylingScheduled = true
-        
-        DispatchQueue.main.async { [weak self] in
-            self?.refreshStyling()
-            self?.isStylingScheduled = false
+
+    /// Re-apply the custom look. Synchronous and idempotent: it only writes the
+    /// images when the slider is missing them (e.g. after MPVolumeView reset
+    /// them), so calling it every layout pass can't loop.
+    func applyStyle() {
+        guard !isApplying else { return }
+        isApplying = true
+        defer { isApplying = false }
+
+        for case let button as UIButton in volumeView.subviews {
+            button.isHidden = true
+            button.alpha = 0
         }
-    }
-    
-    func refreshStyling() {
-        // Hide buttons
-        volumeView.subviews
-            .compactMap { $0 as? UIButton }
-            .forEach { $0.isHidden = true; $0.alpha = 0 }
-        
-        // Style slider
+
         guard let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider else {
             return
         }
-        
-        // Custom artwork instead of the stock thin track. A thick rounded
-        // capsule: red gradient for the filled portion, dim smoke for the
-        // remainder, with a ringed bone thumb.
-        let trackHeight: CGFloat = 6
-        let minTrack = makeTrackImage(
-            colors: [UIColor(Theme.redLight), UIColor(Theme.redDeep)],
-            height: trackHeight
-        )
-        let maxTrack = makeTrackImage(
-            colors: [UIColor(Theme.smokeRaised), UIColor(Theme.smokeRaised)],
-            height: trackHeight
-        )
-        
+
+        // Already wearing our artwork → nothing to do (prevents relayout loops).
+        guard slider.thumbImage(for: .normal) !== thumb else { return }
+
         slider.minimumTrackTintColor = nil
         slider.maximumTrackTintColor = nil
         slider.thumbTintColor = nil
-        
+
         UIView.performWithoutAnimation {
-            slider.setMinimumTrackImage(minTrack, for: .normal)
-            slider.setMaximumTrackImage(maxTrack, for: .normal)
-            let thumb = makeThumb(size: 16)
+            slider.setMinimumTrackImage(trackFill, for: .normal)
+            slider.setMaximumTrackImage(trackEmpty, for: .normal)
             slider.setThumbImage(thumb, for: .normal)
             slider.setThumbImage(thumb, for: .highlighted)
         }
@@ -1193,7 +1187,11 @@ class VolumeContainerView: UIView {
     
     override func layoutSubviews() {
         super.layoutSubviews()
-        scheduleStylingUpdate()  // Debounced refresh on layout changes
+        // Force MPVolumeView to finish its own layout (the step that resets the
+        // slider to the stock look) FIRST, then paint our images over it in the
+        // same pass so the default never reaches the screen.
+        volumeView.layoutIfNeeded()
+        applyStyle()
     }
 }
 
