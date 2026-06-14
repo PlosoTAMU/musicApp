@@ -92,7 +92,6 @@ struct ContentView: View {
                     isPresented: $showNowPlaying
                 )
                 .ignoresSafeArea()
-                .transition(.move(edge: .bottom))
                 .zIndex(100)
                 .persistentSystemOverlays(.hidden)
             }
@@ -136,7 +135,7 @@ struct ContentView: View {
             }
             
             audioPlayer.onPlaybackEnded = {
-                withAnimation(.easeInOut(duration: 0.3)) { showNowPlaying = false }
+                showNowPlaying = false
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
@@ -384,10 +383,8 @@ struct MiniPlayerBar: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    // Exact reverse of the dismiss (same easeInOut, no bounce).
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        showNowPlaying = true
-                    }
+                    // NowPlayingView animates its own slide-up on appear.
+                    showNowPlaying = true
                 }
 
                 Spacer()
@@ -491,9 +488,11 @@ struct NowPlayingView: View {
     @State private var newTrackName: String = ""
     @State private var showAudioSettings = false
     @State private var showCropSheet = false
-    // Interactive swipe-to-dismiss: tracks the finger so the whole screen
-    // follows the drag instead of only snapping shut on release.
-    @State private var dragOffset: CGFloat = 0
+    // Panel position. Starts a full screen below (off-screen) so it animates UP
+    // on appear; dismiss animates it back down. Driving present + dismiss purely
+    // by this offset — no SwiftUI .transition — avoids the transition/offset race
+    // that left a gradient sliver and made the present sometimes pop in instantly.
+    @State private var panelOffset: CGFloat = UIScreen.main.bounds.height
     
     private var sliderBinding: Binding<Double> {
         Binding(
@@ -547,13 +546,14 @@ struct NowPlayingView: View {
             .padding(.top, 30)
             .padding(.bottom, 30)
         }
-        // Drag-to-dismiss: the screen tracks the finger straight down. No scale —
-        // scaling a full-bleed view peeled black borders in at the edges.
-        .offset(y: dragOffset)
+        // Single source of truth for present, drag, and dismiss motion.
+        .offset(y: panelOffset)
         .onAppear {
             updateBackgroundImage()
             lockOrientation(.portrait)
             audioPlayer.startVisualization()
+            // Slide up into place (panel starts off-screen below).
+            withAnimation(.easeInOut(duration: 0.3)) { panelOffset = 0 }
         }
         .onDisappear {
             unlockOrientation()
@@ -576,10 +576,10 @@ struct NowPlayingView: View {
                         // Freeze the FFT on the first downward move so the bars
                         // hold their shape and slide with the artwork (cheaper
                         // than redrawing a live Canvas every frame mid-drag).
-                        if dragOffset == 0 { audioPlayer.isVisualizerVisible = false }
-                        dragOffset = dy                 // 1:1 with the finger
+                        if panelOffset == 0 { audioPlayer.isVisualizerVisible = false }
+                        panelOffset = dy                // 1:1 with the finger
                     } else {
-                        dragOffset = 0                  // ignore upward travel here
+                        panelOffset = 0                 // ignore upward travel here
                     }
                 }
                 .onEnded { value in
@@ -590,13 +590,13 @@ struct NowPlayingView: View {
                     } else if dy < -90 || vy < -300 {
                         // Swipe up → audio settings; unfreeze and settle back.
                         audioPlayer.isVisualizerVisible = true
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { dragOffset = 0 }
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { panelOffset = 0 }
                         showAudioSettings = true
                     } else {
                         // Not far enough → spring back and resume the visualizer.
                         audioPlayer.isVisualizerVisible = true
                         withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
-                            dragOffset = 0
+                            panelOffset = 0
                         }
                     }
                 }
@@ -952,13 +952,14 @@ struct NowPlayingView: View {
         return image
     }
     
-    /// Slide the screen down and remove it in one motion. dragOffset → 0 moves
-    /// the view up while the .move(.bottom) removal moves it down a full screen;
-    /// the two sum to a single smooth downward slide that reveals the app behind.
+    /// Slide the panel down off-screen, then unmount once it's fully gone.
+    /// Offset-only (no SwiftUI .transition) so nothing is left rendering behind.
     private func animatedDismiss() {
         audioPlayer.isVisualizerVisible = false   // freeze bars; they slide out with the panel
         withAnimation(.easeInOut(duration: 0.3)) {
-            dragOffset = 0
+            panelOffset = UIScreen.main.bounds.height
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             isPresented = false
         }
     }
