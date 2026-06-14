@@ -171,8 +171,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     // Sub-band energy tracking (for different frequency ranges)
     private var subBassHistory = [Float](repeating: 0, count: 20)   // 20-60Hz (kick drum)
-    private var bassHistory = [Float](repeating: 0, count: 20)       // 60-250Hz (bass)
-    private var lowMidHistory = [Float](repeating: 0, count: 20)     // 250-500Hz (low mids)
     private var subBassHistoryIndex = 0
     
     // Beat state
@@ -1753,8 +1751,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         energyHistory = [Float](repeating: 0, count: 43)
         fluxHistory = [Float](repeating: 0, count: 43)
         subBassHistory = [Float](repeating: 0, count: 20)
-        bassHistory = [Float](repeating: 0, count: 20)
-        lowMidHistory = [Float](repeating: 0, count: 20)
         energyHistoryIndex = 0
         fluxHistoryIndex = 0
         subBassHistoryIndex = 0
@@ -1953,8 +1949,6 @@ class AudioPlayerManager: NSObject, ObservableObject {
         fluxHistoryIndex = (fluxHistoryIndex + 1) % fluxHistory.count
         
         subBassHistory[subBassHistoryIndex] = subBassEnergy
-        bassHistory[subBassHistoryIndex] = bassEnergy
-        lowMidHistory[subBassHistoryIndex] = lowMidEnergy
         subBassHistoryIndex = (subBassHistoryIndex + 1) % subBassHistory.count
         
         // ==========================================
@@ -1984,13 +1978,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         // Sub-band averages for relative comparison
         var avgSubBass: Float = 0
-        var avgBass: Float = 0
         for i in 0..<subBassHistory.count {
             avgSubBass += subBassHistory[i]
-            avgBass += bassHistory[i]
         }
         avgSubBass /= Float(subBassHistory.count)
-        avgBass /= Float(subBassHistory.count)
         
         // ==========================================
         // STEP 7: BEAT DETECTION
