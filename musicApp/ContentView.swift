@@ -516,24 +516,31 @@ struct NowPlayingView: View {
             VStack(spacing: 0) {
                 topBar
 
-                Spacer(minLength: 5)
+                Spacer(minLength: 4)
 
                 thumbnailView
 
-                Spacer(minLength: 15)
+                Spacer(minLength: 8)
 
                 controlsSection
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.top, 6)
-            .padding(.bottom, 10)
+            // More top → top buttons sit lower, clear of the notch.
+            // More bottom → volume bar rises out of the bottom edge-swipe zone
+            // (where the system was reading horizontal drags as app-switching).
+            .padding(.top, 18)
+            .padding(.bottom, 30)
             
             // Visualizer layer — full screen in global coordinates so its
             // bars stay locked to the thumbnail's real on-screen center.
-            EdgeVisualizerView(audioPlayer: audioPlayer, visualizerState: audioPlayer.visualizerState, thumbnailCenter: thumbnailCenter)
-                .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-                .allowsHitTesting(false)
-                .ignoresSafeArea()
+            // Dropped from the tree during an active drag: translating a live
+            // 60fps Canvas every frame is what made the swipe feel choppy.
+            if dragOffset == 0 {
+                EdgeVisualizerView(audioPlayer: audioPlayer, visualizerState: audioPlayer.visualizerState, thumbnailCenter: thumbnailCenter)
+                    .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+                    .allowsHitTesting(false)
+                    .ignoresSafeArea()
+            }
         }
         // Follow the finger on a downward drag (rubber-banded so it feels
         // attached), then either complete the dismiss or spring back.
@@ -566,12 +573,17 @@ struct NowPlayingView: View {
                     let dy = value.translation.height
                     let vy = value.predictedEndTranslation.height
                     if dy > 110 || vy > 320 {
-                        // Commit: slide the rest of the way out, then dismiss.
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+                        // Commit: our own slide carries the screen off the
+                        // bottom. Then dismiss the cover with animations
+                        // DISABLED so fullScreenCover doesn't add a second
+                        // slide on top of ours (the "sliding down twice" bug).
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.92)) {
                             dragOffset = UIScreen.main.bounds.height
                         }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                            isPresented = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+                            var t = Transaction()
+                            t.disablesAnimations = true
+                            withTransaction(t) { isPresented = false }
                             dragOffset = 0
                         }
                     } else if dy < -90 || vy < -220 {
