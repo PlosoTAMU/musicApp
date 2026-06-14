@@ -528,7 +528,7 @@ struct NowPlayingView: View {
             // More top → top buttons sit lower, clear of the notch.
             // More bottom → volume bar rises out of the bottom edge-swipe zone
             // (where the system was reading horizontal drags as app-switching).
-            .padding(.top, 18)
+            .padding(.top, 30)
             .padding(.bottom, 30)
             
             // Visualizer layer — full screen in global coordinates so its
@@ -557,41 +557,36 @@ struct NowPlayingView: View {
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             updateBackgroundImage()
         }
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 20)
+        // Plain .gesture (NOT highPriority) so child controls — the volume bar
+        // and progress slider — still receive their own drags. The dismiss
+        // drag only takes over in the empty areas (background, thumbnail).
+        .gesture(
+            DragGesture(minimumDistance: 12)
                 .onChanged { value in
                     let dy = value.translation.height
-                    if dy > 0 {
-                        // Light resistance: divide so it trails the finger
-                        // slightly rather than moving 1:1.
-                        dragOffset = dy < 220 ? dy : 220 + (dy - 220) * 0.35
-                    } else {
-                        dragOffset = 0
-                    }
+                    // Follow the finger 1:1 downward; stiffen upward pulls.
+                    dragOffset = dy > 0 ? dy : dy * 0.1
                 }
                 .onEnded { value in
                     let dy = value.translation.height
                     let vy = value.predictedEndTranslation.height
-                    if dy > 110 || vy > 320 {
-                        // Commit: our own slide carries the screen off the
-                        // bottom. Then dismiss the cover with animations
-                        // DISABLED so fullScreenCover doesn't add a second
-                        // slide on top of ours (the "sliding down twice" bug).
-                        withAnimation(.spring(response: 0.34, dampingFraction: 0.92)) {
+                    if dy > 130 || vy > 500 {
+                        // One clean slide out, then dismiss with the cover's own
+                        // animation suppressed (no second slide).
+                        withAnimation(.easeOut(duration: 0.24)) {
                             dragOffset = UIScreen.main.bounds.height
                         }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
                             var t = Transaction()
                             t.disablesAnimations = true
                             withTransaction(t) { isPresented = false }
                             dragOffset = 0
                         }
-                    } else if dy < -90 || vy < -220 {
+                    } else if dy < -90 || vy < -300 {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragOffset = 0 }
                         showAudioSettings = true
                     } else {
-                        // Not far enough: spring back to place.
-                        withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.82)) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                             dragOffset = 0
                         }
                     }
