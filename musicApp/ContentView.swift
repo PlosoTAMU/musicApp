@@ -384,7 +384,8 @@ struct MiniPlayerBar: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                    // Exact reverse of the dismiss (same easeInOut, no bounce).
+                    withAnimation(.easeInOut(duration: 0.3)) {
                         showNowPlaying = true
                     }
                 }
@@ -494,6 +495,10 @@ struct NowPlayingView: View {
     // Interactive swipe-to-dismiss: tracks the finger so the whole screen
     // follows the drag instead of only snapping shut on release.
     @State private var dragOffset: CGFloat = 0
+    // While the panel is sliding, stop the visualizer from re-centering on the
+    // thumbnail's (moving) global frame — otherwise it translates twice and
+    // appears to move at double speed.
+    @State private var freezeVisualizerCenter = false
     
     private var sliderBinding: Binding<Double> {
         Binding(
@@ -573,10 +578,13 @@ struct NowPlayingView: View {
                 .onChanged { value in
                     let dy = value.translation.height
                     if dy > 0 {
-                        // Freeze the visualizer on the first downward move: a live
-                        // 60fps Canvas being translated every frame is what made
-                        // the drag stutter. Freezing (vs removing) avoids a pop.
-                        if dragOffset == 0 { audioPlayer.isVisualizerVisible = false }
+                        // On the first downward move, freeze the visualizer (a live
+                        // 60fps Canvas translated every frame stutters) and lock its
+                        // center (else it slides at double speed).
+                        if dragOffset == 0 {
+                            audioPlayer.isVisualizerVisible = false
+                            freezeVisualizerCenter = true
+                        }
                         dragOffset = dy                 // 1:1 with the finger
                     } else {
                         dragOffset = 0                  // ignore upward travel here
@@ -591,6 +599,7 @@ struct NowPlayingView: View {
                         // Swipe up → audio settings; unfreeze and settle back.
                         audioPlayer.isVisualizerVisible = true
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { dragOffset = 0 }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { freezeVisualizerCenter = false }
                         showAudioSettings = true
                     } else {
                         // Not far enough → spring back and resume the visualizer.
@@ -598,6 +607,7 @@ struct NowPlayingView: View {
                         withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                             dragOffset = 0
                         }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { freezeVisualizerCenter = false }
                     }
                 }
         )
@@ -732,7 +742,8 @@ struct NowPlayingView: View {
             visualizerState: audioPlayer.visualizerState,
             thumbnailImage: getThumbnailImage(for: audioPlayer.currentTrack),
             onThumbnailCenterChanged: { newCenter in
-                thumbnailCenter = newCenter
+                // Ignore updates while the panel slides (see freezeVisualizerCenter).
+                if !freezeVisualizerCenter { thumbnailCenter = newCenter }
             },
             onTap: {
                 if audioPlayer.isPlaying {
@@ -949,6 +960,7 @@ struct NowPlayingView: View {
     /// the two sum to a single smooth downward slide that reveals the app behind.
     private func animatedDismiss() {
         audioPlayer.isVisualizerVisible = false
+        freezeVisualizerCenter = true   // lock center so it slides once, not twice
         withAnimation(.easeInOut(duration: 0.3)) {
             dragOffset = 0
             isPresented = false
