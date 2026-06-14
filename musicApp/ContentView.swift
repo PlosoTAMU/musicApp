@@ -495,10 +495,12 @@ struct NowPlayingView: View {
     // Interactive swipe-to-dismiss: tracks the finger so the whole screen
     // follows the drag instead of only snapping shut on release.
     @State private var dragOffset: CGFloat = 0
-    // While the panel is sliding, stop the visualizer from re-centering on the
-    // thumbnail's (moving) global frame — otherwise it translates twice and
-    // appears to move at double speed.
-    @State private var freezeVisualizerCenter = false
+    // The visualizer is a full-screen layer centered on the thumbnail's GLOBAL
+    // frame, but it lives inside the sliding panel — so during a slide the global
+    // tracking and the panel translation fight and the bars detach from the art.
+    // Simplest correct answer: hide it during the slide (only ~0.3s), show it at
+    // rest where the coordinates line up. Starts hidden; fades in once settled.
+    @State private var hideVisualizer = true
     
     private var sliderBinding: Binding<Double> {
         Binding(
@@ -552,6 +554,8 @@ struct NowPlayingView: View {
             // so it never pops in/out.
             EdgeVisualizerView(audioPlayer: audioPlayer, visualizerState: audioPlayer.visualizerState, thumbnailCenter: thumbnailCenter)
                 .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+                .opacity(hideVisualizer ? 0 : 1)
+                .animation(.easeInOut(duration: 0.2), value: hideVisualizer)
                 .allowsHitTesting(false)
                 .ignoresSafeArea()
         }
@@ -562,6 +566,11 @@ struct NowPlayingView: View {
             updateBackgroundImage()
             lockOrientation(.portrait)
             audioPlayer.startVisualization()
+            // Visualizer starts hidden (see @State); fade in after the present
+            // slide settles so it can't detach from the artwork mid-slide.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
+                hideVisualizer = false
+            }
         }
         .onDisappear {
             unlockOrientation()
@@ -583,7 +592,7 @@ struct NowPlayingView: View {
                         // center (else it slides at double speed).
                         if dragOffset == 0 {
                             audioPlayer.isVisualizerVisible = false
-                            freezeVisualizerCenter = true
+                            hideVisualizer = true
                         }
                         dragOffset = dy                 // 1:1 with the finger
                     } else {
@@ -599,7 +608,7 @@ struct NowPlayingView: View {
                         // Swipe up → audio settings; unfreeze and settle back.
                         audioPlayer.isVisualizerVisible = true
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { dragOffset = 0 }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { freezeVisualizerCenter = false }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { hideVisualizer = false }
                         showAudioSettings = true
                     } else {
                         // Not far enough → spring back and resume the visualizer.
@@ -607,7 +616,7 @@ struct NowPlayingView: View {
                         withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                             dragOffset = 0
                         }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { freezeVisualizerCenter = false }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { hideVisualizer = false }
                     }
                 }
         )
@@ -742,8 +751,7 @@ struct NowPlayingView: View {
             visualizerState: audioPlayer.visualizerState,
             thumbnailImage: getThumbnailImage(for: audioPlayer.currentTrack),
             onThumbnailCenterChanged: { newCenter in
-                // Ignore updates while the panel slides (see freezeVisualizerCenter).
-                if !freezeVisualizerCenter { thumbnailCenter = newCenter }
+                thumbnailCenter = newCenter
             },
             onTap: {
                 if audioPlayer.isPlaying {
@@ -960,7 +968,7 @@ struct NowPlayingView: View {
     /// the two sum to a single smooth downward slide that reveals the app behind.
     private func animatedDismiss() {
         audioPlayer.isVisualizerVisible = false
-        freezeVisualizerCenter = true   // lock center so it slides once, not twice
+        hideVisualizer = true   // fade the bars out for the slide (avoids detach)
         withAnimation(.easeInOut(duration: 0.3)) {
             dragOffset = 0
             isPresented = false
