@@ -11,13 +11,13 @@ import AppIntents
 // finishes wiring up.
 final class SiriPlaybackBridge {
     static let shared = SiriPlaybackBridge()
-    
+
     weak var audioPlayer: AudioPlayerManager?
     weak var downloadManager: DownloadManager?
-    private var pendingQuery: String?
-    
+    private var pendingTrackID: UUID?
+
     private init() {}
-    
+
     /// Called from ContentView.onAppear once the managers exist.
     @MainActor
     func attach(audioPlayer: AudioPlayerManager, downloadManager: DownloadManager) {
@@ -25,55 +25,52 @@ final class SiriPlaybackBridge {
         self.downloadManager = downloadManager
         fulfillPendingIfNeeded()
     }
-    
-    /// Attempts to play a song matching `query`. Returns true if playback
-    /// started now; false if the app wasn't ready yet (the request is then
-    /// queued and played on launch).
+
+    /// Plays a specific download by id. Returns true if playback started now,
+    /// false if the app wasn't ready (the request is then queued for launch).
     @discardableResult
     @MainActor
-    func requestPlay(query: String) -> Bool {
+    func requestPlay(trackID: UUID) -> Bool {
         guard let dm = downloadManager, let ap = audioPlayer else {
-            pendingQuery = query
+            pendingTrackID = trackID
             return false
         }
-        return play(query: query, downloadManager: dm, audioPlayer: ap)
+        return play(trackID: trackID, downloadManager: dm, audioPlayer: ap)
     }
-    
+
     @MainActor
     private func fulfillPendingIfNeeded() {
-        guard let query = pendingQuery,
+        guard let id = pendingTrackID,
               let dm = downloadManager,
               let ap = audioPlayer else { return }
-        
-        if play(query: query, downloadManager: dm, audioPlayer: ap) {
-            pendingQuery = nil
+
+        if play(trackID: id, downloadManager: dm, audioPlayer: ap) {
+            pendingTrackID = nil
         } else {
             // Library may still be loading on a cold launch — retry once.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 guard let self,
-                      let query = self.pendingQuery,
+                      let id = self.pendingTrackID,
                       let dm = self.downloadManager,
                       let ap = self.audioPlayer else { return }
-                _ = self.play(query: query, downloadManager: dm, audioPlayer: ap)
-                self.pendingQuery = nil
+                _ = self.play(trackID: id, downloadManager: dm, audioPlayer: ap)
+                self.pendingTrackID = nil
             }
         }
     }
-    
+
     @MainActor
     @discardableResult
-    private func play(query: String, downloadManager: DownloadManager, audioPlayer: AudioPlayerManager) -> Bool {
-        guard let match = bestMatch(for: query, in: downloadManager.downloads) else {
-            return false
-        }
-        
+    private func play(trackID: UUID, downloadManager: DownloadManager, audioPlayer: AudioPlayerManager) -> Bool {
+        guard let match = downloadManager.getDownload(byID: trackID) else { return false }
+
         let folderName: String
         switch match.source {
         case .youtube: folderName = "YouTube"
         case .spotify: folderName = "Spotify"
         case .folder:  folderName = "Files"
         }
-        
+
         let track = Track(
             id: match.id,
             name: match.name,
@@ -85,78 +82,118 @@ final class SiriPlaybackBridge {
         audioPlayer.play(track)
         return true
     }
-    
-    /// The name of the song that best matches a spoken query, or nil.
-    var lastMatchedName: String?
-    
-    private func bestMatch(for query: String, in downloads: [Download]) -> Download? {
-        let q = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else {
-            lastMatchedName = downloads.first?.name
-            return downloads.first
+}
+
+// MARK: - Library reader
+//
+// Reads the song library straight from Documents/downloads.json so the
+// entity query works even when the app process isn't running (which is the
+// normal case when Siri resolves a shortcut).
+enum SongLibrary {
+    static func allSongs() -> [SongEntity] {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let url = docs.appendingPathComponent("downloads.json")
+        guard let data = try? Data(contentsOf: url),
+              let downloads = try? JSONDecoder().decode([Download].self, from: data) else {
+            return []
         }
-        
-        // 1. Exact name match.
-        if let exact = downloads.first(where: { $0.name.lowercased() == q }) {
-            lastMatchedName = exact.name
-            return exact
+        return downloads
+            .filter { !$0.pendingDeletion }
+            .map { SongEntity(id: $0.id, name: $0.name) }
+    }
+}
+
+// MARK: - Song entity
+//
+// Exposing songs as an AppEntity (instead of a free-form String parameter)
+// is what lets Siri resolve a spoken title like "play Blinding Lights" by
+// matching it against the real library. Free-form string parameters in App
+// Shortcut phrases are why Siri answered "hasn't added support for that".
+@available(iOS 16.0, *)
+struct SongEntity: AppEntity, Identifiable {
+    let id: UUID
+    let name: String
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Song"
+    static var defaultQuery = SongEntityQuery()
+
+    var displayRepresentation: DisplayRepresentation {
+        DisplayRepresentation(title: "\(name)")
+    }
+}
+
+@available(iOS 16.0, *)
+struct SongEntityQuery: EntityQuery, EntityStringQuery {
+    // Resolve by entity id (used internally by the system).
+    func entities(for identifiers: [UUID]) async throws -> [SongEntity] {
+        let all = SongLibrary.allSongs()
+        let wanted = Set(identifiers)
+        return all.filter { wanted.contains($0.id) }
+    }
+
+    // Resolve by the spoken/typed string — the important one for Siri.
+    func entities(matching string: String) async throws -> [SongEntity] {
+        let q = string.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let all = SongLibrary.allSongs()
+        guard !q.isEmpty else { return all }
+
+        // Exact, then substring, then word-overlap ranking.
+        if let exact = all.first(where: { $0.name.lowercased() == q }) {
+            return [exact]
         }
-        
-        // 2. Substring match either direction.
-        if let contains = downloads.first(where: {
-            let name = $0.name.lowercased()
-            return name.contains(q) || q.contains(name)
-        }) {
-            lastMatchedName = contains.name
-            return contains
+        let substring = all.filter {
+            let n = $0.name.lowercased()
+            return n.contains(q) || q.contains(n)
         }
-        
-        // 3. Highest word-overlap score.
-        let queryTokens = Set(q.split(separator: " ").map(String.init))
-        var best: (download: Download, score: Int)?
-        for download in downloads {
-            let nameTokens = Set(download.name.lowercased().split(separator: " ").map(String.init))
-            let score = queryTokens.intersection(nameTokens).count
-            if score > 0, best == nil || score > best!.score {
-                best = (download, score)
+        if !substring.isEmpty { return substring }
+
+        let qTokens = Set(q.split(separator: " ").map(String.init))
+        let scored = all
+            .map { song -> (SongEntity, Int) in
+                let nTokens = Set(song.name.lowercased().split(separator: " ").map(String.init))
+                return (song, qTokens.intersection(nTokens).count)
             }
-        }
-        lastMatchedName = best?.download.name
-        return best?.download
+            .filter { $0.1 > 0 }
+            .sorted { $0.1 > $1.1 }
+            .map { $0.0 }
+        return scored
+    }
+
+    // Shown as suggestions in the Shortcuts app.
+    func suggestedEntities() async throws -> [SongEntity] {
+        SongLibrary.allSongs()
     }
 }
 
 // MARK: - Play Song intent
 //
-// Drives "Hey Siri, play <song> in <app name>". The song title is a free
-// string parameter so any track in the library can be requested by voice.
+// Drives "Hey Siri, play <song> in <app name>". The song parameter is a
+// SongEntity, so Siri matches the spoken title against the library above.
 @available(iOS 16.0, *)
 struct PlaySongIntent: AppIntent {
     static var title: LocalizedStringResource = "Play Song"
-    static var description = IntentDescription("Plays a downloaded song by name.")
-    
+    static var description = IntentDescription("Plays a song from your library by name.")
+
     // Bring the app to the foreground so playback is visible and the player
     // is guaranteed to be running.
     static var openAppWhenRun: Bool = true
-    
-    @Parameter(title: "Song", requestValueDialog: "Which song?")
-    var songName: String
-    
+
+    @Parameter(title: "Song")
+    var song: SongEntity
+
     static var parameterSummary: some ParameterSummary {
-        Summary("Play \(\.$songName)")
+        Summary("Play \(\.$song)")
     }
-    
+
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let started = SiriPlaybackBridge.shared.requestPlay(query: songName)
-        
+        let started = SiriPlaybackBridge.shared.requestPlay(trackID: song.id)
         if started {
-            let name = SiriPlaybackBridge.shared.lastMatchedName ?? songName
-            return .result(dialog: "Playing \(name)")
+            return .result(dialog: "Playing \(song.name)")
         } else {
-            // App was cold-launched; the request is queued and will play
-            // as soon as the library finishes loading.
-            return .result(dialog: "Opening to play \(songName)")
+            // App was cold-launched; the request is queued and will play as
+            // soon as the library finishes loading.
+            return .result(dialog: "Opening to play \(song.name)")
         }
     }
 }
@@ -172,10 +209,10 @@ struct MusicAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: PlaySongIntent(),
             phrases: [
-                "Play \(\.$songName) in \(.applicationName)",
-                "Play \(\.$songName) on \(.applicationName)",
-                "\(.applicationName) play \(\.$songName)",
-                "Play \(\.$songName) with \(.applicationName)"
+                "Play \(\.$song) in \(.applicationName)",
+                "Play \(\.$song) on \(.applicationName)",
+                "\(.applicationName) play \(\.$song)",
+                "Play \(\.$song) with \(.applicationName)"
             ],
             shortTitle: "Play Song",
             systemImageName: "play.circle.fill"

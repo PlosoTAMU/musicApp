@@ -74,7 +74,7 @@ struct ContentView: View {
                 }
                 
                 if audioPlayer.currentTrack != nil {
-                    MiniPlayerBar(audioPlayer: audioPlayer, showNowPlaying: $showNowPlaying)
+                    MiniPlayerBar(audioPlayer: audioPlayer, downloadManager: downloadManager, showNowPlaying: $showNowPlaying)
                 }
             }
             .padding(.bottom, 49)
@@ -295,12 +295,26 @@ struct ContentView: View {
 // and a live ember progress line along the bottom edge.
 struct MiniPlayerBar: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
+    @ObservedObject var downloadManager: DownloadManager
     @Binding var showNowPlaying: Bool
     @State private var backgroundImage: UIImage?
     
     private var progress: CGFloat {
         guard audioPlayer.duration > 0 else { return 0 }
         return CGFloat(min(max(audioPlayer.currentTime / audioPlayer.duration, 0), 1))
+    }
+    
+    /// Resolve artwork the same way the lists do — through the Download
+    /// record's stored thumbnail path — instead of guessing the filename
+    /// from the audio URL. Falls back to the audio-derived path.
+    private var currentThumbnailPath: String? {
+        guard let track = audioPlayer.currentTrack else { return nil }
+        if let stored = downloadManager.getDownload(byID: track.id)?.resolvedThumbnailPath,
+           FileManager.default.fileExists(atPath: stored) {
+            return stored
+        }
+        let derived = Artwork.thumbnailURL(forAudioFileURL: track.url).path
+        return FileManager.default.fileExists(atPath: derived) ? derived : nil
     }
     
     var body: some View {
@@ -326,9 +340,7 @@ struct MiniPlayerBar: View {
                 // Left side - thumbnail and text (fully tappable)
                 HStack(spacing: 12) {
                     AsyncThumbnailView(
-                        thumbnailPath: audioPlayer.currentTrack.map {
-                            Artwork.thumbnailURL(forAudioFileURL: $0.url).path
-                        },
+                        thumbnailPath: currentThumbnailPath,
                         size: 42,
                         cornerRadius: 10
                     )
@@ -418,12 +430,18 @@ struct MiniPlayerBar: View {
         }
         
         let audioURL = track.url
+        let path = currentThumbnailPath
         // Disk read + crop off the main thread so swapping tracks never
         // hitches the UI (the foreground artwork is handled by AsyncThumbnailView).
         DispatchQueue.global(qos: .userInitiated).async {
             PerformanceMonitor.shared.start("NowPlayingView_UpdateBackground")
             // Wide aspect crop for the mini player
-            let cropped = Artwork.croppedBackground(forAudioFileURL: audioURL, aspect: 4.0)
+            let cropped: UIImage?
+            if let path = path {
+                cropped = Artwork.croppedBackground(atPath: path, aspect: 4.0)
+            } else {
+                cropped = Artwork.croppedBackground(forAudioFileURL: audioURL, aspect: 4.0)
+            }
             PerformanceMonitor.shared.end("NowPlayingView_UpdateBackground")
             DispatchQueue.main.async {
                 // Only apply if we're still on the same track
@@ -472,19 +490,29 @@ struct NowPlayingView: View {
             Color.black.opacity(0.4)
                 .ignoresSafeArea()
             
-            VStack(spacing: 0) {
-                topBar
-                
-                Spacer(minLength: 5)
-                
-                thumbnailView
-                
-                Spacer(minLength: 15)
-                
-                controlsSection
+            // Foreground content respects the device safe area so the top
+            // controls clear the notch and the volume bar clears the home
+            // indicator — correct on the iPhone 12 mini and every other size.
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    topBar
+                    
+                    Spacer(minLength: 5)
+                    
+                    thumbnailView
+                    
+                    Spacer(minLength: 15)
+                    
+                    controlsSection
+                }
+                .padding(.top, geo.safeAreaInsets.top + 6)
+                .padding(.bottom, geo.safeAreaInsets.bottom + 4)
+                .frame(width: geo.size.width, height: geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom)
+                .offset(y: -geo.safeAreaInsets.top)
             }
             
-            // Visualizer layer
+            // Visualizer layer — full screen in global coordinates so its
+            // bars stay locked to the thumbnail's real on-screen center.
             EdgeVisualizerView(audioPlayer: audioPlayer, visualizerState: audioPlayer.visualizerState, thumbnailCenter: thumbnailCenter)
                 .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
                 .allowsHitTesting(false)
@@ -502,12 +530,17 @@ struct NowPlayingView: View {
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             updateBackgroundImage()
         }
-        .gesture(
-            DragGesture()
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 25)
                 .onEnded { value in
-                    if value.translation.height > 100 {
-                        isPresented = false
-                    } else if value.translation.height < -100 {
+                    let dy = value.translation.height
+                    let vy = value.predictedEndTranslation.height
+                    // Smooth, momentum-aware dismiss / settings reveal.
+                    if dy > 90 || vy > 220 {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                            isPresented = false
+                        }
+                    } else if dy < -90 || vy < -220 {
                         showAudioSettings = true
                     }
                 }
@@ -663,7 +696,7 @@ struct NowPlayingView: View {
             playbackControls
             volumeBar
         }
-        .padding(.bottom, 28)
+        .padding(.bottom, 12)
     }
     
     @ViewBuilder
@@ -829,12 +862,19 @@ struct NowPlayingView: View {
     }
     
     private func getThumbnailImage(for track: Track?) -> UIImage? {
-        guard let track = track,
-              let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url) else {
+        guard let track = track else { return nil }
+        
+        // Prefer the Download record's stored thumbnail path (the same source
+        // the lists use); fall back to the audio-derived path.
+        let pathString: String
+        if let stored = downloadManager.getDownload(byID: track.id)?.resolvedThumbnailPath,
+           FileManager.default.fileExists(atPath: stored) {
+            pathString = stored
+        } else if let derived = EmbeddedPython.shared.getThumbnailPath(for: track.url) {
+            pathString = derived.path
+        } else {
             return nil
         }
-        
-        let pathString = thumbnailPath.path
         
         // ⚡ Use a size-specific cache key so list thumbnails (48px) don't conflict with NowPlaying (200px)
         let cacheKey = pathString + "_nowplaying"
@@ -1027,21 +1067,79 @@ class VolumeContainerView: UIView {
             return
         }
         
-        slider.minimumTrackTintColor = UIColor(Theme.red)
-        slider.maximumTrackTintColor = UIColor(Theme.bone).withAlphaComponent(0.18)
+        // Custom artwork instead of the stock thin track. A thick rounded
+        // capsule: red gradient for the filled portion, dim smoke for the
+        // remainder, with a ringed bone thumb.
+        let trackHeight: CGFloat = 6
+        let minTrack = makeTrackImage(
+            colors: [UIColor(Theme.redLight), UIColor(Theme.redDeep)],
+            height: trackHeight
+        )
+        let maxTrack = makeTrackImage(
+            colors: [UIColor(Theme.smokeRaised), UIColor(Theme.smokeRaised)],
+            height: trackHeight
+        )
+        
+        slider.minimumTrackTintColor = nil
+        slider.maximumTrackTintColor = nil
         slider.thumbTintColor = nil
         
-        let thumb = makeThumb(size: 12)
         UIView.performWithoutAnimation {
+            slider.setMinimumTrackImage(minTrack, for: .normal)
+            slider.setMaximumTrackImage(maxTrack, for: .normal)
+            let thumb = makeThumb(size: 16)
             slider.setThumbImage(thumb, for: .normal)
             slider.setThumbImage(thumb, for: .highlighted)
         }
     }
     
+    /// A horizontal rounded-capsule track image (resizable) drawn with a
+    /// left-to-right gradient.
+    private func makeTrackImage(colors: [UIColor], height: CGFloat) -> UIImage {
+        // Width just needs to exceed the corner radius on both ends; the
+        // image is stretched via cap insets.
+        let width = height * 3
+        let size = CGSize(width: width, height: height)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { ctx in
+            let rect = CGRect(origin: .zero, size: size)
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: height / 2)
+            path.addClip()
+            let cg = ctx.cgContext
+            let space = CGColorSpaceCreateDeviceRGB()
+            let cgColors = colors.map { $0.cgColor } as CFArray
+            if let gradient = CGGradient(colorsSpace: space, colors: cgColors, locations: [0, 1]) {
+                cg.drawLinearGradient(
+                    gradient,
+                    start: CGPoint(x: 0, y: 0),
+                    end: CGPoint(x: width, y: 0),
+                    options: []
+                )
+            }
+        }
+        // Cap insets so the rounded ends stay crisp when stretched.
+        let cap = height / 2
+        return image
+            .resizableImage(withCapInsets: UIEdgeInsets(top: 0, left: cap, bottom: 0, right: cap),
+                            resizingMode: .stretch)
+            .withRenderingMode(.alwaysOriginal)
+    }
+    
     private func makeThumb(size: CGFloat) -> UIImage {
         UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+            let rect = CGRect(origin: .zero, size: CGSize(width: size, height: size))
+            // Soft shadow so the thumb reads on dark backgrounds.
+            ctx.cgContext.setShadow(offset: CGSize(width: 0, height: 1),
+                                    blur: 3,
+                                    color: UIColor.black.withAlphaComponent(0.5).cgColor)
             UIColor(Theme.bone).setFill()
-            ctx.cgContext.fillEllipse(in: CGRect(origin: .zero, size: CGSize(width: size, height: size)))
+            ctx.cgContext.fillEllipse(in: rect.insetBy(dx: 2, dy: 2))
+            // Thin red ring.
+            ctx.cgContext.setShadow(offset: .zero, blur: 0, color: nil)
+            UIColor(Theme.red).setStroke()
+            let ring = UIBezierPath(ovalIn: rect.insetBy(dx: 2.5, dy: 2.5))
+            ring.lineWidth = 1
+            ring.stroke()
         }
     }
     

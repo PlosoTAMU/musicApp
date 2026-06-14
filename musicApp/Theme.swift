@@ -380,7 +380,17 @@ enum Artwork {
     /// player (wide) and the Now Playing screen (screen aspect).
     static func croppedBackground(forAudioFileURL audioURL: URL, aspect: CGFloat) -> UIImage? {
         guard let original = image(forAudioFileURL: audioURL) else { return nil }
-        
+        return crop(original, aspect: aspect)
+    }
+    
+    /// Same crop, but from an explicit on-disk thumbnail path.
+    static func croppedBackground(atPath path: String, aspect: CGFloat) -> UIImage? {
+        guard FileManager.default.fileExists(atPath: path),
+              let original = UIImage(contentsOfFile: path) else { return nil }
+        return crop(original, aspect: aspect)
+    }
+    
+    private static func crop(_ original: UIImage, aspect: CGFloat) -> UIImage {
         let imageAspect = original.size.width / original.size.height
         let cropRect: CGRect
         

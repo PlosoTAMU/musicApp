@@ -210,6 +210,9 @@ struct QueueView: View {
                         .scrollContentBackground(.hidden)
                         .environment(\.editMode, .constant(.active))
                         .scrollIndicators(.visible)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: audioPlayer.currentTrack?.id)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: audioPlayer.queue.count)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: audioPlayer.previousQueue.count)
                         .safeAreaInset(edge: .bottom) {
                             Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
                         }
