@@ -510,44 +510,48 @@ struct NowPlayingView: View {
         PerformanceMonitor.shared.recordViewUpdate("NowPlayingView")
         
         return ZStack {
-            // Opaque base. This view is now a custom overlay (not a black-backed
-            // fullScreenCover), so without a solid floor the Downloads list shows
-            // faintly through the blurred-artwork background.
+            // Backdrop that dims the list behind as the panel rises (and clears
+            // as it falls). Tied to slide progress, so the card blends over a
+            // darkening list instead of cutting a hard bright/dark seam — a
+            // smooth, intentional sheet feel. This layer does NOT slide.
             Color.black
+                .opacity(0.55 * (1 - min(max(panelOffset / UIScreen.main.bounds.height, 0), 1)))
                 .ignoresSafeArea()
 
-            backgroundLayer
+            // The Now Playing panel — this is the part that slides.
+            ZStack {
+                // Opaque floor so the list never shows through the blurred art.
+                Color.black
+                    .ignoresSafeArea()
 
-            Color.black.opacity(0.4)
-                .ignoresSafeArea()
-            
-            // Foreground content. This layer deliberately does NOT call
-            // ignoresSafeArea, so SwiftUI insets it to the safe area: the top
-            // bar lands below the notch / Dynamic Island and the volume bar
-            // lands above the home indicator. (The previous manual
-            // offset/inset math collapsed to 0 because the sibling background
-            // layers ignore the safe area, which pushed the controls off the
-            // top edge and dropped the volume bar under the home indicator.)
-            VStack(spacing: 0) {
-                topBar
+                backgroundLayer
 
-                Spacer(minLength: 4)
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
 
-                thumbnailView
+                // Foreground content. Deliberately does NOT ignoreSafeArea, so
+                // SwiftUI insets it: top bar clears the notch, volume bar clears
+                // the home indicator.
+                VStack(spacing: 0) {
+                    topBar
 
-                Spacer(minLength: 8)
+                    Spacer(minLength: 4)
 
-                controlsSection
+                    thumbnailView
+
+                    Spacer(minLength: 8)
+
+                    controlsSection
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // More top → top buttons sit lower, clear of the notch.
+                // More bottom → volume bar rises out of the bottom edge-swipe zone.
+                .padding(.top, 50)
+                .padding(.bottom, 30)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // More top → top buttons sit lower, clear of the notch.
-            // More bottom → volume bar rises out of the bottom edge-swipe zone
-            // (where the system was reading horizontal drags as app-switching).
-            .padding(.top, 30)
-            .padding(.bottom, 30)
+            // Single source of truth for present, drag, and dismiss motion.
+            .offset(y: panelOffset)
         }
-        // Single source of truth for present, drag, and dismiss motion.
-        .offset(y: panelOffset)
         .onAppear {
             updateBackgroundImage()
             lockOrientation(.portrait)
