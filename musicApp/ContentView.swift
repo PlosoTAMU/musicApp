@@ -792,8 +792,67 @@ struct NowPlayingView: View {
             progressBar
             playbackControls
             volumeBar
+            upNextStrip
         }
         .padding(.bottom, 12)
+    }
+
+    // Persistent "next song" strip — shows ONLY the immediate next track
+    // (queued song first, else next playlist track). Inline, so it's always
+    // visible without a sheet. Renders nothing when there's no next track, so
+    // the layout is unchanged in that case (no overflow risk).
+    @ViewBuilder
+    private var upNextStrip: some View {
+        if let next = audioPlayer.upNextTracks.first {
+            Button {
+                skipToNext(next)
+            } label: {
+                HStack(spacing: 10) {
+                    AsyncThumbnailView(
+                        thumbnailPath: downloadManager.getDownload(byID: next.id)?.resolvedThumbnailPath,
+                        size: 34,
+                        cornerRadius: 7
+                    )
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("UP NEXT")
+                            .font(Theme.eyebrowFont)
+                            .tracking(1.4)
+                            .foregroundColor(Theme.redLight.opacity(0.9))
+                        Text(next.name)
+                            .font(Theme.body(13, weight: .semibold))
+                            .foregroundColor(Theme.bone)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "forward.end.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Theme.boneFaint)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Theme.smokeRaised)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Theme.seam, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 24)
+            .padding(.top, 14)
+        }
+    }
+
+    /// Jump straight to the upcoming track. A queued song is pulled from the
+    /// queue and played; a playlist track just plays.
+    private func skipToNext(_ track: Track) {
+        if audioPlayer.queue.contains(where: { $0.id == track.id }) {
+            audioPlayer.playFromQueue(track)
+        } else {
+            audioPlayer.play(track)
+        }
     }
     
     @ViewBuilder
@@ -938,7 +997,7 @@ struct NowPlayingView: View {
                 .font(.caption)
         }
         .padding(.horizontal, 36)
-        .padding(.top, 22)
+        .padding(.top, 16)
     }
     
     private func updateBackgroundImage() {
