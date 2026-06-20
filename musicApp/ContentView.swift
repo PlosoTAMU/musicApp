@@ -495,6 +495,7 @@ struct NowPlayingView: View {
     @State private var newTrackName: String = ""
     @State private var showAudioSettings = false
     @State private var showCropSheet = false
+    @State private var showUpNext = false
     // Panel position, owned by ContentView so the mini player can crossfade with
     // the slide. A full screen below = off-screen (onAppear animates it up);
     // dismiss animates it back down. Offset-only (no SwiftUI .transition).
@@ -639,6 +640,15 @@ struct NowPlayingView: View {
                 )
             }
         }
+        .sheet(isPresented: $showUpNext) {
+            UpNextSheet(
+                audioPlayer: audioPlayer,
+                downloadManager: downloadManager,
+                isPresented: $showUpNext
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
         .alert("Rename Song", isPresented: $showRenameAlert) {
             TextField("Song name", text: $newTrackName)
             Button("Cancel", role: .cancel) { }
@@ -692,9 +702,18 @@ struct NowPlayingView: View {
                 Image(systemName: "chevron.down")
             }
             .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
-            
+
             Spacer()
-            
+
+            // Up Next — opens the queue as a half-sheet (separate layer, so it
+            // can't push any of these controls off-screen).
+            Button {
+                showUpNext = true
+            } label: {
+                Image(systemName: "list.bullet")
+            }
+            .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
+
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
                     audioPlayer.isLoopEnabled.toggle()
@@ -990,6 +1009,119 @@ struct NowPlayingView: View {
     }
 }
 
+
+// MARK: - Up Next sheet
+//
+// Presented from Now Playing as a half-sheet. It's a separate presentation
+// layer, so it never affects the Now Playing layout — nothing can be pushed
+// off-screen — and it floats above everything, including the mini player.
+struct UpNextSheet: View {
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    @ObservedObject var downloadManager: DownloadManager
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                Theme.ink.ignoresSafeArea()
+
+                let upNext = audioPlayer.upNextTracks
+                if upNext.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "music.note.list")
+                            .font(.system(size: 40))
+                            .foregroundColor(Theme.boneFaint)
+                        Text("Nothing up next")
+                            .font(Theme.body(15, weight: .semibold))
+                            .foregroundColor(Theme.boneDim)
+                        Text("Swipe right on songs to queue them")
+                            .font(Theme.caption(12))
+                            .foregroundColor(Theme.boneFaint)
+                    }
+                    .padding()
+                } else {
+                    List {
+                        // Index-keyed so a song queued twice can't collide ids.
+                        ForEach(Array(upNext.enumerated()), id: \.offset) { _, track in
+                            UpNextRow(track: track, downloadManager: downloadManager)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .contentShape(Rectangle())
+                                .onTapGesture { skipTo(track) }
+                        }
+                        .onDelete(perform: deleteRows)
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                }
+            }
+            .navigationTitle("Up Next")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { isPresented = false }
+                        .foregroundColor(Theme.bone)
+                }
+            }
+        }
+    }
+
+    private func skipTo(_ track: Track) {
+        // A user-queued track is removed from the queue and played; a playlist
+        // up-next track just plays.
+        if audioPlayer.queue.contains(where: { $0.id == track.id }) {
+            audioPlayer.playFromQueue(track)
+        } else {
+            audioPlayer.play(track)
+        }
+        isPresented = false
+    }
+
+    private func deleteRows(at offsets: IndexSet) {
+        // upNextTracks = queue (first) + playlist upcoming. Only the queue block
+        // is removable via removeFromQueue.
+        let queueCount = audioPlayer.queue.count
+        let queueOffsets = IndexSet(offsets.filter { $0 < queueCount })
+        guard !queueOffsets.isEmpty else { return }
+        audioPlayer.removeFromQueue(at: queueOffsets)
+    }
+}
+
+struct UpNextRow: View {
+    let track: Track
+    @ObservedObject var downloadManager: DownloadManager
+
+    private var download: Download? {
+        downloadManager.getDownload(byID: track.id)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            AsyncThumbnailView(
+                thumbnailPath: download?.resolvedThumbnailPath,
+                size: 44,
+                cornerRadius: 8
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(track.name)
+                    .font(Theme.body(15, weight: .medium))
+                    .foregroundColor(Theme.bone)
+                    .lineLimit(1)
+                Text(track.folderName)
+                    .font(Theme.caption(11))
+                    .foregroundColor(Theme.boneFaint)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .surfaceCard()
+    }
+}
 
 // MARK: - Rewind/Forward Buttons
 struct RewindButton: View {
