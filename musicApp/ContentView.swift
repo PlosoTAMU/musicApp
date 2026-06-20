@@ -62,7 +62,11 @@ struct ContentView: View {
                 MainThreadWatchdog.shared.start()
                 #endif
             }
-            
+            // Same crossfade as the mini player: the tab bar (Downloads /
+            // Playlists / Queue) fades with the Now Playing slide instead of
+            // abruptly vanishing as the panel rises over it.
+            .opacity(showNowPlaying ? Double(min(max(nowPlayingOffset / UIScreen.main.bounds.height, 0), 1)) : 1)
+
             VStack(spacing: 0) {
                 Spacer()
                 
