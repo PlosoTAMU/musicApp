@@ -10,6 +10,9 @@ struct ContentView: View {
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
+    // Now Playing slide position, owned here so the mini player can crossfade
+    // with it (stay visible during the slide instead of vanishing instantly).
+    @State private var nowPlayingOffset: CGFloat = UIScreen.main.bounds.height
     @State private var handlingDeepLink = false
     
     // For post-download playlist prompt
@@ -78,6 +81,12 @@ struct ContentView: View {
                 }
             }
             .padding(.bottom, 49)
+            // Crossfade with the Now Playing slide: fully visible when the panel
+            // is down, fading out as it rises (and back in as it falls) so the
+            // mini player never abruptly disappears. Raised above the panel during
+            // the transition so it's actually on screen while it fades.
+            .opacity(showNowPlaying ? min(max(nowPlayingOffset / UIScreen.main.bounds.height, 0), 1) : 1)
+            .zIndex(showNowPlaying ? 101 : 0)
 
             // Now Playing as a custom overlay — NOT a fullScreenCover. The cover
             // composited over an opaque black backing, so presenting/dismissing
@@ -89,7 +98,8 @@ struct ContentView: View {
                     audioPlayer: audioPlayer,
                     downloadManager: downloadManager,
                     playlistManager: playlistManager,
-                    isPresented: $showNowPlaying
+                    isPresented: $showNowPlaying,
+                    panelOffset: $nowPlayingOffset
                 )
                 .ignoresSafeArea()
                 .zIndex(100)
@@ -488,11 +498,10 @@ struct NowPlayingView: View {
     @State private var newTrackName: String = ""
     @State private var showAudioSettings = false
     @State private var showCropSheet = false
-    // Panel position. Starts a full screen below (off-screen) so it animates UP
-    // on appear; dismiss animates it back down. Driving present + dismiss purely
-    // by this offset — no SwiftUI .transition — avoids the transition/offset race
-    // that left a gradient sliver and made the present sometimes pop in instantly.
-    @State private var panelOffset: CGFloat = UIScreen.main.bounds.height
+    // Panel position, owned by ContentView so the mini player can crossfade with
+    // the slide. A full screen below = off-screen (onAppear animates it up);
+    // dismiss animates it back down. Offset-only (no SwiftUI .transition).
+    @Binding var panelOffset: CGFloat
     
     private var sliderBinding: Binding<Double> {
         Binding(
