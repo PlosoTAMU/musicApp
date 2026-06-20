@@ -97,7 +97,9 @@ struct ContentView: View {
                 )
                 .ignoresSafeArea()
                 .zIndex(100)
-                .persistentSystemOverlays(.hidden)
+                // Home indicator is hidden app-wide at the root (constant inset),
+                // not here — hiding it per-screen changed the inset on present/
+                // dismiss and jolted the tab bar + mini bar.
             }
         }
         .sheet(isPresented: $showFolderPicker) {
@@ -170,6 +172,10 @@ struct ContentView: View {
                 handlingDeepLink = false
             }
         }
+        // Hide the home indicator app-wide so the bottom safe-area inset is
+        // CONSTANT. Now Playing presenting/dismissing no longer changes it, so
+        // the tab bar + mini bar never jolt — and it's hidden on Now Playing too.
+        .persistentSystemOverlays(.hidden)
     }
 
     // FPS tracking with CADisplayLink
