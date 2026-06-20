@@ -81,12 +81,13 @@ struct ContentView: View {
                 }
             }
             .padding(.bottom, 49)
-
-            // Now Playing as a custom overlay — NOT a fullScreenCover. The cover
-            // composited over an opaque black backing, so presenting/dismissing
-            // showed a black void. As an overlay it slides over the live app and
-            // slides back down to reveal the list behind it. zIndex keeps it
-            // above the tab bar + mini player during the transition.
+        }
+        // Now Playing lives in an .overlay, NOT as a ZStack(alignment: .bottom)
+        // child. As a child, its .ignoresSafeArea() stretched the ZStack to the
+        // full screen, dragging the .bottom anchor down — so the tab bar + mini
+        // bar sat lower while it was up and JOLTED up the instant it unmounted.
+        // An overlay never affects the host's layout, so they hold their place.
+        .overlay {
             if showNowPlaying {
                 NowPlayingView(
                     audioPlayer: audioPlayer,
@@ -96,10 +97,6 @@ struct ContentView: View {
                     panelOffset: $nowPlayingOffset
                 )
                 .ignoresSafeArea()
-                .zIndex(100)
-                // Home indicator is hidden app-wide at the root (constant inset),
-                // not here — hiding it per-screen changed the inset on present/
-                // dismiss and jolted the tab bar + mini bar.
             }
         }
         .sheet(isPresented: $showFolderPicker) {
