@@ -77,6 +77,10 @@ struct ContentView: View {
                 }
                 
                 if audioPlayer.currentTrack != nil {
+                    // Slim "next song" bar nested above the mini player. Renders
+                    // nothing when there's no next track, so the mini bar sits
+                    // alone in that case.
+                    UpNextMiniBar(audioPlayer: audioPlayer, downloadManager: downloadManager)
                     MiniPlayerBar(audioPlayer: audioPlayer, downloadManager: downloadManager, showNowPlaying: $showNowPlaying)
                 }
             }
@@ -315,6 +319,63 @@ struct ContentView: View {
 // MARK: - Mini Player Bar
 // Floating card: blurred artwork behind a smoke scrim, hairline seam,
 // and a live ember progress line along the bottom edge.
+// MARK: - Up Next mini bar
+//
+// Slim bar that peeks the immediate next track, nested just above the mini
+// player on the main screen. Narrower than the mini bar so it reads as
+// "stacked behind/above" it. Tap = jump to that song.
+struct UpNextMiniBar: View {
+    @ObservedObject var audioPlayer: AudioPlayerManager
+    @ObservedObject var downloadManager: DownloadManager
+
+    private var nextTrack: Track? { audioPlayer.upNextTracks.first }
+
+    var body: some View {
+        if let next = nextTrack {
+            Button {
+                if audioPlayer.queue.contains(where: { $0.id == next.id }) {
+                    audioPlayer.playFromQueue(next)
+                } else {
+                    audioPlayer.play(next)
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "forward.end.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Theme.redLight.opacity(0.9))
+                    Text("UP NEXT")
+                        .font(Theme.eyebrowFont)
+                        .tracking(1.3)
+                        .foregroundColor(Theme.redLight.opacity(0.9))
+                    Text(next.name)
+                        .font(Theme.body(13, weight: .semibold))
+                        .foregroundColor(Theme.bone)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    AsyncThumbnailView(
+                        thumbnailPath: downloadManager.getDownload(byID: next.id)?.resolvedThumbnailPath,
+                        size: 26,
+                        cornerRadius: 6
+                    )
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Theme.smoke.opacity(0.92))
+                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .strokeBorder(Theme.seam, lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+            }
+            .buttonStyle(.plain)
+            // Inset more than the mini bar (12) so it nests above it.
+            .padding(.horizontal, 22)
+            .padding(.bottom, 5)
+        }
+    }
+}
+
 struct MiniPlayerBar: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @ObservedObject var downloadManager: DownloadManager
@@ -842,6 +903,11 @@ struct NowPlayingView: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 24)
             .padding(.top, 14)
+            // Without this, the conditional `if let` insertion gets SwiftUI's
+            // default .opacity transition under the onAppear withAnimation — so
+            // the strip FADES in while its unconditional siblings just ride the
+            // panel's offset up. .identity = no transition, so it slides too.
+            .transition(.identity)
         }
     }
 
