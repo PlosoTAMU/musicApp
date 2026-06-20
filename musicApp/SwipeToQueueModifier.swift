@@ -5,10 +5,10 @@ struct SwipeToQueueModifier: ViewModifier {
 
     @State private var offset: CGFloat = 0
     @State private var isArmed = false        // past the trigger threshold
-    @State private var showQueued = false     // brief post-commit confirmation
+    @State private var justQueued = false     // confirm state held briefly after commit
 
-    private let threshold: CGFloat = 72       // commit point
-    private let restWidth: CGFloat = 96       // natural reveal width before rubber-banding
+    private let threshold: CGFloat = 70       // commit point
+    private let restWidth: CGFloat = 100      // open/confirm width (and rubber-band point)
 
     func body(content: Content) -> some View {
         ZStack(alignment: .leading) {
@@ -17,10 +17,6 @@ struct SwipeToQueueModifier: ViewModifier {
             content
                 .offset(x: offset)
                 .gesture(swipeGesture)
-
-            if showQueued {
-                queuedBadge
-            }
         }
         // Clip to the card shape so the green panel never pokes past the corners.
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -29,20 +25,21 @@ struct SwipeToQueueModifier: ViewModifier {
     // MARK: - Reveal behind the row
 
     private var actionBackground: some View {
-        HStack(spacing: 7) {
-            Image(systemName: isArmed ? "checkmark.circle.fill" : "text.line.first.and.arrowtriangle.forward")
+        let showCheck = isArmed || justQueued
+        return HStack(spacing: 7) {
+            Image(systemName: showCheck ? "checkmark.circle.fill" : "text.line.first.and.arrowtriangle.forward")
                 .font(.system(size: 18, weight: .semibold))
-            Text("Add to Queue")
+            Text(justQueued ? "Queued" : "Add to Queue")
                 .font(Theme.caption(12, weight: .semibold))
         }
         .foregroundColor(Theme.mint)
-        // Small pop when it arms so the threshold is felt visually as well as via haptics.
-        .scaleEffect(isArmed ? 1.08 : 1.0)
+        // Small pop when armed/confirmed so the state reads visually too.
+        .scaleEffect(showCheck ? 1.06 : 1.0)
         .padding(.leading, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(
             LinearGradient(
-                colors: isArmed
+                colors: showCheck
                     ? [Color(red: 0.07, green: 0.34, blue: 0.22), Color(red: 0.10, green: 0.44, blue: 0.28)]
                     : [Color(red: 0.05, green: 0.22, blue: 0.15), Color(red: 0.07, green: 0.30, blue: 0.20)],
                 startPoint: .leading,
@@ -51,19 +48,7 @@ struct SwipeToQueueModifier: ViewModifier {
         )
         // Fade the panel in with the swipe instead of popping at a hard cutoff.
         .opacity(Double(min(offset / 40, 1)))
-        .animation(.easeOut(duration: 0.18), value: isArmed)
-    }
-
-    private var queuedBadge: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundColor(Theme.mint)
-            Text("Queued")
-                .font(Theme.body(14, weight: .semibold))
-                .foregroundColor(Theme.mint)
-        }
-        .padding(.leading, 18)
-        .transition(.opacity)
+        .animation(.easeOut(duration: 0.18), value: showCheck)
     }
 
     // MARK: - Gesture
@@ -71,6 +56,7 @@ struct SwipeToQueueModifier: ViewModifier {
     private var swipeGesture: some Gesture {
         DragGesture(minimumDistance: 16, coordinateSpace: .local)
             .onChanged { g in
+                guard !justQueued else { return }   // ignore input during the confirm hold
                 let h = g.translation.width
                 let v = abs(g.translation.height)
                 // Engage only on a clearly horizontal, rightward drag so vertical
@@ -78,8 +64,7 @@ struct SwipeToQueueModifier: ViewModifier {
                 guard h > 0, h > v * 1.6 else { return }
 
                 // Track the finger 1:1 up to restWidth, then rubber-band. NO
-                // withAnimation here — that was the lag/wobble; the offset must
-                // equal the finger, not chase it.
+                // withAnimation here — the offset must equal the finger, not chase it.
                 offset = h <= restWidth ? h : restWidth + (h - restWidth) * 0.28
 
                 let armed = offset >= threshold
@@ -96,20 +81,28 @@ struct SwipeToQueueModifier: ViewModifier {
                 if committed {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     onQueue()
-                    showQueued = true
-                    // Row springs closed immediately — no awkward hold-open.
-                    withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                        offset = 0
+                    isArmed = false
+                    justQueued = true
+                    // Snap OPEN to the confirm position (green + "Queued" checkmark),
+                    // hold a beat so the action is clearly seen, then close.
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.8)) {
+                        offset = restWidth
                     }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                        withAnimation(.easeOut(duration: 0.25)) { showQueued = false }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.85)) {
+                            offset = 0
+                        }
+                        // Keep the "Queued" label until it's closed.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            justQueued = false
+                        }
                     }
                 } else {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                         offset = 0
                     }
+                    isArmed = false
                 }
-                isArmed = false
             }
     }
 }
