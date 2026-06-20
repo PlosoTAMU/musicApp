@@ -82,11 +82,9 @@ struct ContentView: View {
             }
             .padding(.bottom, 49)
             // Crossfade with the Now Playing slide: fully visible when the panel
-            // is down, fading out as it rises (and back in as it falls) so the
-            // mini player never abruptly disappears. Raised above the panel during
-            // the transition so it's actually on screen while it fades.
+            // is down, fading as it rises (and back in as it falls). Sits UNDER
+            // the panel (no zIndex bump) so Now Playing covers it.
             .opacity(showNowPlaying ? Double(min(max(nowPlayingOffset / UIScreen.main.bounds.height, 0), 1)) : 1)
-            .zIndex(showNowPlaying ? 101 : 0)
 
             // Now Playing as a custom overlay — NOT a fullScreenCover. The cover
             // composited over an opaque black backing, so presenting/dismissing
@@ -970,7 +968,7 @@ struct NowPlayingView: View {
     private func animatedDismiss() {
         audioPlayer.isVisualizerVisible = false   // freeze bars; they slide out with the panel
         withAnimation(.easeInOut(duration: 0.3)) {
-            panelOffset = UIScreen.main.bounds.height
+            panelOffset = UIScreen.main.bounds.height + 30   // +30 so it fully clears the bottom
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             isPresented = false
