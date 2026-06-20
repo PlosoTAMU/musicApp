@@ -99,7 +99,30 @@ enum SongLibrary {
         }
         return downloads
             .filter { !$0.pendingDeletion }
-            .map { SongEntity(id: $0.id, name: $0.name) }
+            // Use a SPEAKABLE title so Siri's grammar matches natural phrasing.
+            // The raw YouTube name ("Faded (Official Music Video) [4K]") is almost
+            // impossible to say verbatim; playback still uses the id, so the real
+            // file/name is unaffected.
+            .map { SongEntity(id: $0.id, name: speakableTitle($0.name)) }
+    }
+
+    /// Strips the noise that makes spoken matching fail: bracketed/parenthesized
+    /// segments and common tags ("official video", "lyrics", "HD", …).
+    static func speakableTitle(_ raw: String) -> String {
+        var s = raw
+        s = s.replacingOccurrences(of: "\\([^)]*\\)", with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "\\[[^\\]]*\\]", with: "", options: .regularExpression)
+        let noise = [
+            "official music video", "official lyric video", "official video",
+            "official audio", "lyric video", "lyrics", "visualizer",
+            "audio", "hd", "4k", "mv", "m/v"
+        ]
+        for n in noise {
+            s = s.replacingOccurrences(of: n, with: "", options: [.caseInsensitive])
+        }
+        s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        s = s.trimmingCharacters(in: CharacterSet(charactersIn: " -–—|·"))
+        return s.isEmpty ? raw : s
     }
 }
 
