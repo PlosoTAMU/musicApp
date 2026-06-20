@@ -85,7 +85,7 @@ struct ContentView: View {
             // is down, fading out as it rises (and back in as it falls) so the
             // mini player never abruptly disappears. Raised above the panel during
             // the transition so it's actually on screen while it fades.
-            .opacity(showNowPlaying ? min(max(nowPlayingOffset / UIScreen.main.bounds.height, 0), 1) : 1)
+            .opacity(showNowPlaying ? Double(min(max(nowPlayingOffset / UIScreen.main.bounds.height, 0), 1)) : 1)
             .zIndex(showNowPlaying ? 101 : 0)
 
             // Now Playing as a custom overlay — NOT a fullScreenCover. The cover
@@ -524,7 +524,7 @@ struct NowPlayingView: View {
             // darkening list instead of cutting a hard bright/dark seam — a
             // smooth, intentional sheet feel. This layer does NOT slide.
             Color.black
-                .opacity(0.55 * (1 - min(max(panelOffset / UIScreen.main.bounds.height, 0), 1)))
+                .opacity(0.55 * (1.0 - Double(min(max(panelOffset / UIScreen.main.bounds.height, 0), 1))))
                 .ignoresSafeArea()
 
             // The Now Playing panel — this is the part that slides.
