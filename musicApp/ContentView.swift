@@ -859,56 +859,63 @@ struct NowPlayingView: View {
     }
 
     // Persistent "next song" strip — shows ONLY the immediate next track
-    // (queued song first, else next playlist track). Inline, so it's always
-    // visible without a sheet. Renders nothing when there's no next track, so
-    // the layout is unchanged in that case (no overflow risk).
+    // (queued song first, else next playlist track).
+    //
+    // UNCONDITIONAL on purpose. A `if let next { … }` here gives the strip its
+    // own view identity, so on the panel's animated mount SwiftUI INSERTS it
+    // (default .opacity transition) instead of letting it ride the panel offset
+    // like the unconditional siblings (title/controls/volume) — that's the
+    // fade. Keeping the Button always in the tree and collapsing it to zero
+    // height/opacity when there's no next track makes it structurally identical
+    // to its siblings: it slides up/down with the panel, never fades on its own.
     @ViewBuilder
     private var upNextStrip: some View {
-        if let next = audioPlayer.upNextTracks.first {
-            Button {
-                skipToNext(next)
-            } label: {
-                HStack(spacing: 10) {
-                    AsyncThumbnailView(
-                        thumbnailPath: downloadManager.getDownload(byID: next.id)?.resolvedThumbnailPath,
-                        size: 34,
-                        cornerRadius: 7
-                    )
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("UP NEXT")
-                            .font(Theme.eyebrowFont)
-                            .tracking(1.4)
-                            .foregroundColor(Theme.redLight.opacity(0.9))
-                        Text(next.name)
-                            .font(Theme.body(13, weight: .semibold))
-                            .foregroundColor(Theme.bone)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    Image(systemName: "forward.end.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(Theme.boneFaint)
+        let next = audioPlayer.upNextTracks.first
+        Button {
+            if let next { skipToNext(next) }
+        } label: {
+            HStack(spacing: 10) {
+                AsyncThumbnailView(
+                    thumbnailPath: next.flatMap { downloadManager.getDownload(byID: $0.id)?.resolvedThumbnailPath },
+                    size: 34,
+                    cornerRadius: 7
+                )
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("UP NEXT")
+                        .font(Theme.eyebrowFont)
+                        .tracking(1.4)
+                        .foregroundColor(Theme.redLight.opacity(0.9))
+                    Text(next?.name ?? "")
+                        .font(Theme.body(13, weight: .semibold))
+                        .foregroundColor(Theme.bone)
+                        .lineLimit(1)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Theme.smokeRaised)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Theme.seam, lineWidth: 1)
-                )
+                Spacer()
+                Image(systemName: "forward.end.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Theme.boneFaint)
             }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 24)
-            .padding(.top, 14)
-            // Without this, the conditional `if let` insertion gets SwiftUI's
-            // default .opacity transition under the onAppear withAnimation — so
-            // the strip FADES in while its unconditional siblings just ride the
-            // panel's offset up. .identity = no transition, so it slides too.
-            .transition(.identity)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Theme.smokeRaised)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Theme.seam, lineWidth: 1)
+            )
         }
+        .buttonStyle(.plain)
+        .disabled(next == nil)
+        .allowsHitTesting(next != nil)
+        // Collapse to nothing when there's no next track — same footprint as the
+        // old conditional, no overflow, but the view identity stays stable.
+        .frame(height: next == nil ? 0 : nil)
+        .opacity(next == nil ? 0 : 1)
+        .clipped()
+        .padding(.top, next == nil ? 0 : 14)
+        .padding(.horizontal, 24)
     }
 
     /// Jump straight to the upcoming track. A queued song is pulled from the
