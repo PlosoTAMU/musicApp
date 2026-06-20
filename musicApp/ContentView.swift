@@ -557,6 +557,10 @@ struct NowPlayingView: View {
             }
             // Single source of truth for present, drag, and dismiss motion.
             .offset(y: panelOffset)
+            // Fade once it slides past 60% of the screen, fully gone by the
+            // bottom (+30px). Position-based, so the present fades it back in as
+            // it rises above that threshold.
+            .opacity(1.0 - Double(min(max((panelOffset - 0.6 * UIScreen.main.bounds.height) / (0.4 * UIScreen.main.bounds.height + 30), 0), 1)))
         }
         .onAppear {
             updateBackgroundImage()
