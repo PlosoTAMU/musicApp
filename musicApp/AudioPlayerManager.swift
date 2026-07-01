@@ -637,7 +637,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
-    func play(_ track: Track) {
+    /// - Parameters:
+    ///   - startOffset: seconds (relative to crop start) to begin playback at.
+    ///     Used by the sync engine for session-handover continuity.
+    ///   - startPaused: hand over into a paused state — loads track metadata and
+    ///     arms resume() at startOffset without scheduling any audio.
+    func play(_ track: Track, at startOffset: Double = 0, startPaused: Bool = false) {
         PerformanceMonitor.shared.start("AudioPlayer_Play") // ✅ ADDED
         defer { PerformanceMonitor.shared.end("AudioPlayer_Play") } // ✅ ADDED
         currentPlaybackSessionID = UUID()
@@ -719,8 +724,29 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 
                 let cropStart = track.cropStartTime ?? 0.0
                 let cropEnd = track.cropEndTime ?? (Double(totalFileLength) / sampleRate)
-                
-                let startFrame = AVAudioFramePosition(cropStart * sampleRate)
+
+                // ✅ SYNC: clamp handover offset inside the cropped segment
+                let safeOffset = min(max(0, startOffset), max(0, (cropEnd - cropStart) - 0.5))
+
+                // ✅ SYNC: paused handover — set metadata only; resume() reschedules
+                // from savedCurrentTime when the user presses play.
+                if startPaused {
+                    DispatchQueue.main.async {
+                        self.currentTrack = track
+                        self.duration = cropEnd - cropStart
+                        self.currentTime = safeOffset
+                        self.savedCurrentTime = safeOffset
+                        self.seekOffset = safeOffset
+                        self.needsReschedule = true
+                        self.isPlaying = false
+                        self.lastPausedAt = Date()
+                        self.applyTrackSettings(for: track)
+                        self.updateNowPlayingInfo()
+                    }
+                    return
+                }
+
+                let startFrame = AVAudioFramePosition((cropStart + safeOffset) * sampleRate)
                 let endFrame = AVAudioFramePosition(cropEnd * sampleRate)
                 let frameCount = AVAudioFrameCount(max(0, endFrame - startFrame))
                 
@@ -766,7 +792,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 DispatchQueue.main.async {
                     self.isPlaying = true
                     self.currentTrack = track
-                    self.savedCurrentTime = 0
+                    self.savedCurrentTime = safeOffset
+                    self.currentTime = safeOffset
+                    self.seekOffset = safeOffset   // ✅ SYNC: updateTime() adds this to player position
                     self.duration = croppedDuration
                     
                     if let index = self.currentPlaylist.firstIndex(where: { $0.id == track.id }) {
