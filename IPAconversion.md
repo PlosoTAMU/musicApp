@@ -5,28 +5,30 @@
 # - Homebrew installed
 # - ldid installed: brew install ldid
 
+Make archive
+
 # 1. Navigate to Your Latest Archive
-ls -lt ~/Library/Developer/Xcode/Archives/
-cd ~/Library/Developer/Xcode/Archives/YYYY-MM-DD/*.xcarchive/Products/Applications/
+cd ~/Library/Developer/Xcode/Archives/YYYY-MM-DD
+cd *.xcarchive/Products/Applications/
 
 # 2. Copy App to Working Directory
-cp -r Pulsor.app ~/Desktop/Pulsor_final.app
+cp -r Pulsor.app ~/Desktop/Pulsor.app
 cd ~/Desktop
 
 # 3. Remove All Existing Signatures
-find Pulsor_final.app -name "_CodeSignature" -exec rm -rf {} \; 2>/dev/null
-find Pulsor_final.app -name "embedded.mobileprovision" -delete
-codesign --remove-signature Pulsor_final.app
-codesign --remove-signature Pulsor_final.app/PlugIns/ShareToPulsor.appex
+find Pulsor.app -name "_CodeSignature" -exec rm -rf {} \; 2>/dev/null
+find Pulsor.app -name "embedded.mobileprovision" -delete
+codesign --remove-signature Pulsor.app
+codesign --remove-signature Pulsor.app/PlugIns/ShareToPulsor.appex
 
 # 4. Pre-Sign with ldid (CRITICAL STEP - fixes SideStore ldid compatibility issue)
-ldid -S Pulsor_final.app/PlugIns/ShareToPulsor.appex/ShareToPulsor
-ldid -S Pulsor_final.app/Pulsor
+ldid -S Pulsor.app/PlugIns/ShareToPulsor.appex/ShareToPulsor
+ldid -S Pulsor.app/Pulsor
 
 # 5. Create the IPA
 mkdir Payload
-cp -r Pulsor_final.app Payload/
-zip -ry Pulsor_final.ipa Payload
+cp -r Pulsor.app Payload/
+zip -ry Pulsor.ipa Payload
 rm -rf Payload
 
 # 6. Install in SideStore

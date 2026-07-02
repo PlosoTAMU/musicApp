@@ -392,6 +392,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				BF5782072F1EC0AB0056E8CB /* XCRemoteSwiftPackageReference "ffmpeg-kit" */,
+				BF57CC4E2FF5E4D60024C9E7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BFFDD5F02F1C47850032409D /* Products */;
@@ -911,6 +912,14 @@
 			requirement = {
 				branch = main;
 				kind = branch;
+			};
+		};
+		BF57CC4E2FF5E4D60024C9E7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.15.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
