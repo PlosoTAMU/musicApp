@@ -55,9 +55,23 @@ const ICON_PAUSE =
 
 // ── Connection ─────────────────────────────────────────────────────────────
 
+// A hung stage must surface as an error, not an eternal spinner. The timeout
+// doesn't cancel the underlying call — if it completes late, state heals.
+const withTimeout = <T>(p: Promise<T>, label: string, ms = 25_000): Promise<T> =>
+  Promise.race([
+    p,
+    new Promise<T>((_, rej) => setTimeout(() =>
+      rej(new Error(`${label} timed out — check firewall/VPN, then retry`)), ms)),
+  ]);
+
+let connectStage = "";
+
 async function connect(secret: string) {
-  const uid = await bootstrapAuth(secret);
-  await coord.attach(uid);
+  connectStage = "Signing in…"; renderNow();
+  const uid = await withTimeout(bootstrapAuth(secret), "Sign-in");
+  connectStage = "Opening session…"; renderNow();
+  await withTimeout(coord.attach(uid), "Session load");
+  connectStage = "";
   playlistSync.start(uid);
   if (musicDir) {
     engine.loadLibrary(musicDir);
@@ -351,7 +365,6 @@ let vizIdle = true;
 
 function vizLoop(now: number) {
   requestAnimationFrame(vizLoop);
-  updateLyricsWords(); // karaoke sweep runs for owners AND mirrors
   const ownerPlaying = coord.role === "owner" && engine.player.playing;
   const btn = $("btn-toggle");
   const bpmChip = $("bpm");
@@ -494,36 +507,11 @@ function renderLyrics() {
   for (const line of lyricsLines ?? []) {
     const d = document.createElement("div");
     d.className = "lyr-line";
-    if (line.words.length) {
-      // Word spans so the active line can karaoke-sweep (60 fps tick below).
-      for (const w of line.words) {
-        const s = document.createElement("span");
-        s.className = "lyr-w";
-        s.textContent = w.text + " ";
-        d.appendChild(s);
-      }
-    } else {
-      d.textContent = "♪";
-    }
+    d.textContent = line.text || "♪";
     d.onclick = () => engine.seekMs(Math.max(0, line.timeMs + lyricsOffsetMs));
     body.appendChild(d);
   }
   updateLyricsHighlight();
-}
-
-/** rAF-driven karaoke sweep for the ACTIVE line only — the 500 ms line tick
- *  is far too coarse for words. Cheap: touches one line's spans per frame. */
-function updateLyricsWords() {
-  if (!lyricsOpen || !lyricsLines || lyricsActiveIdx < 0) return;
-  const line = lyricsLines[lyricsActiveIdx];
-  if (!line || !line.words.length) return;
-  const el = $("lyrics-body").children[lyricsActiveIdx] as HTMLElement | undefined;
-  if (!el) return;
-  const fileMs = currentPosMs();
-  const spans = el.children;
-  for (let i = 0; i < spans.length && i < line.words.length; i++) {
-    spans[i].classList.toggle("sung", fileMs >= line.words[i].timeMs + lyricsOffsetMs);
-  }
 }
 
 /** 500 ms tick: move the highlight. LRC times are file-relative; desktop
@@ -566,7 +554,7 @@ function renderNow() {
   $("busy").hidden = !busy;
   // Setup card gets its own status line — the tiny header error was invisible
   // when a connect failed, which read as "nothing happened".
-  $("setup-status").textContent = error ?? (busy ? "Connecting…" : "");
+  $("setup-status").textContent = error ?? (busy ? (connectStage || "Connecting…") : "");
   $("online").className = coord.online ? "dot" : "dot off";
   $("setup-folder-label").textContent = musicDir ?? "No folder chosen";
 

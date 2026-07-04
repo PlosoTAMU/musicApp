@@ -20,7 +20,14 @@ const app = initializeApp(firebaseConfig);
 
 // ignoreUndefinedProperties: optional TrackRef fields (`yt`, `track`) are
 // simply omitted — matching how the Swift side skips nil keys.
-export const db = initializeFirestore(app, { ignoreUndefinedProperties: true });
+// experimentalForceLongPolling: Electron's renderer breaks Firestore's
+// streaming transport (WebChannel) — the first getDoc never resolves and
+// connect spins forever. Long-polling always works; slight latency cost is
+// irrelevant for this app's tiny docs.
+export const db = initializeFirestore(app, {
+  ignoreUndefinedProperties: true,
+  experimentalForceLongPolling: true,
+});
 export const storage = getStorage(app);
 
 // ── Shared-secret identity ──────────────────────────────────────────────

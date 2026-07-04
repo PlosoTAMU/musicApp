@@ -6,20 +6,13 @@ import Accelerate
 class VisualizerState: ObservableObject {
     var bassLevel: Float = 0
     var frequencyBins: [Float] = Array(repeating: 0, count: 100)
-    /// Predictive head-nod displacement (0-1) from BeatEngine — tempo-locked,
-    /// beat-phase driven. Use THIS for the thumping icon, not bassLevel.
-    var nod: Float = 0
-    /// BeatEngine lock quality (0-1) — UI can subtly reward a strong lock.
-    var beatConfidence: Float = 0
-
+    
     /// Single batched update — fires objectWillChange exactly ONCE per frame
-    func update(bins: [Float], bass: Float, nod: Float = 0, confidence: Float = 0) {
+    func update(bins: [Float], bass: Float) {
         PerformanceMonitor.shared.recordStateChange("visualizerState.update")
         objectWillChange.send()
         frequencyBins = bins
         bassLevel = bass
-        self.nod = nod
-        self.beatConfidence = confidence
     }
 }
 
@@ -127,24 +120,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     let visualizerState = VisualizerState()
     
-    // Deterministic musical bar layout, replacing the old random shuffle:
-    // bottom = bass (deepest at center), mids climb the sides, highs sparkle
-    // across the top (brightest at center). Slots: 0-24 top (L→R), 25-49 right
-    // (T→B), 50-74 bottom (R→L), 75-99 left (B→T) — matches the draw order in
-    // EdgeVisualizerView.
-    private lazy var spatialMap: [Int] = {
-        var map = [Int](repeating: 0, count: 100)
-        func centerOut(_ k: Int) -> Int {   // 12→0, 11→1, 13→2, 10→3, …
-            let m = abs(k - 12)
-            return k < 12 ? 2 * m - 1 : 2 * m
-        }
-        for k in 0..<25 {
-            map[k]      = 75 + centerOut(k)     // top ← highs, center-out
-            map[25 + k] = 25 + 2 * (24 - k)     // right ← odd-step mids, low near bottom
-            map[50 + k] = centerOut(k)          // bottom ← bass, deepest center
-            map[75 + k] = 26 + 2 * k            // left ← even-step mids, low near bottom
-        }
-        return map
+    // Shuffled indices for randomized bar order (so frequencies are spread out)
+    private lazy var shuffledIndices: [Int] = {
+        var indices = Array(0..<100)
+        indices.shuffle()
+        return indices
     }()
     
     private var lastVisualizationUpdate: CFAbsoluteTime = 0
@@ -175,29 +155,35 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private var newBins = [Float](repeating: 0, count: 100)
     
     // ==========================================
-    // PREDICTIVE BEAT TRACKING (BeatEngine) + PER-BAND AGC
+    // ADVANCED BEAT DETECTION SYSTEM
     // ==========================================
-
-    /// Tempo + phase tracker — the "human head-nod" model. See BeatEngine.swift.
-    private let beatEngine = BeatEngine()
-
-    // Previous frame's LOG-magnitudes for spectral-flux onset detection
-    // (log flux is level-invariant: quiet tracks onset just as clearly).
+    
+    // Previous frame's magnitudes for spectral flux calculation
     private var previousMagnitudes = [Float](repeating: 0, count: 1024)
-
-    // Measured tap cadence (AVAudioEngine ignores requested buffer sizes).
-    private var lastTapTime: CFAbsoluteTime = 0
-
-    // Smoothed loudness gate (0-1): silences fade the whole visualizer out.
-    private var energyGate: Float = 0
-
-    // Per-band automatic gain: each of the 100 display bins is normalized
-    // against its OWN running floor/peak, so every band uses the full visual
-    // range regardless of genre or mix balance — "vibrant no matter the music".
-    private var binPeak = [Float](repeating: 0.001, count: 100)
-    private var binFloor = [Float](repeating: 0, count: 100)
-
-    // Running statistics for the global loudness gate
+    
+    // Energy history for beat detection (circular buffer)
+    private var energyHistory = [Float](repeating: 0, count: 43)  // ~1 second at 43 callbacks/sec
+    private var energyHistoryIndex = 0
+    
+    // Spectral flux history for onset detection
+    private var fluxHistory = [Float](repeating: 0, count: 43)
+    private var fluxHistoryIndex = 0
+    
+    // Sub-band energy tracking (for different frequency ranges)
+    private var subBassHistory = [Float](repeating: 0, count: 20)   // 20-60Hz (kick drum)
+    private var subBassHistoryIndex = 0
+    
+    // Beat state
+    private var beatIntensity: Float = 0      // Current beat strength (0-1)
+    private var lastBeatTime: CFAbsoluteTime = 0
+    private var beatDecayRate: Float = 0.82   // How fast beat pulse decays (punchier = faster decay)
+    
+    // Adaptive thresholds (auto-adjust to song dynamics)
+    private var adaptiveThreshold: Float = 0.5
+    private var peakEnergy: Float = 0.01
+    private var avgEnergy: Float = 0.01
+    
+    // Running statistics for normalization
     private var runningMax: Float = 0.001
     private var runningAvg: Float = 0.001
     private var sampleCount: Int = 0
@@ -1789,12 +1775,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
     }
     
     private func resetBeatDetectionState() {
-        beatEngine.reset()
         previousMagnitudes = [Float](repeating: 0, count: fftSizeHalf)
-        lastTapTime = 0
-        energyGate = 0
-        binPeak = [Float](repeating: 0.001, count: 100)
-        binFloor = [Float](repeating: 0, count: 100)
+        energyHistory = [Float](repeating: 0, count: 43)
+        fluxHistory = [Float](repeating: 0, count: 43)
+        subBassHistory = [Float](repeating: 0, count: 20)
+        energyHistoryIndex = 0
+        fluxHistoryIndex = 0
+        subBassHistoryIndex = 0
+        beatIntensity = 0
+        lastBeatTime = 0
+        adaptiveThreshold = 0.5
+        peakEnergy = 0.01
+        avgEnergy = 0.01
         runningMax = 0.001
         runningAvg = 0.001
         sampleCount = 0
@@ -1912,26 +1904,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
         vvsqrtf(&fftMagnitudes, fftMagnitudes, &count)
         
         // ==========================================
-        // STEP 3: Onset strength — half-wave-rectified LOG-spectral flux.
-        // Log magnitudes make onsets level-invariant (quiet tracks register
-        // just as clearly); kick-band changes are weighted heaviest because
-        // the kick defines the tactus people nod to.
+        // STEP 3: Calculate spectral flux (onset detection)
+        // Spectral flux measures how much the spectrum changed
+        // Large positive changes indicate beats/transients
         // ==========================================
-        var onsetLow: Float = 0    // 20-250 Hz: kick, bass attacks
-        var onsetMid: Float = 0    // 250 Hz-2 kHz: snare body, vocals
-        var onsetHigh: Float = 0   // 2-8 kHz: hats, transient sparkle
-        let onsetTop = min(372, fftSizeHalf)
-        for i in 1..<onsetTop {
-            let lm = log(1 + fftMagnitudes[i] * 10)
-            let d = lm - previousMagnitudes[i]
-            previousMagnitudes[i] = lm
-            if d > 0 {
-                if i < 12 { onsetLow += d }
-                else if i < 93 { onsetMid += d }
-                else { onsetHigh += d }
+        var spectralFlux: Float = 0
+        for i in 0..<fftSizeHalf {
+            let diff = fftMagnitudes[i] - previousMagnitudes[i]
+            if diff > 0 {  // Only count increases (onsets, not decays)
+                spectralFlux += diff * diff
             }
+            previousMagnitudes[i] = fftMagnitudes[i]
         }
-        let onsetStrength = onsetLow * 2.2 + onsetMid * 1.0 + onsetHigh * 0.5
+        spectralFlux = sqrt(spectralFlux)
         
         // ==========================================
         // STEP 4: Sub-band energy analysis
@@ -1983,37 +1968,125 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let totalEnergy = subBassEnergy + bassEnergy + lowMidEnergy + midEnergy * 0.5 + highEnergy * 0.3
         
         // ==========================================
-        // STEP 5: Loudness gate + predictive beat tracking
+        // STEP 5: Update history buffers
         // ==========================================
-
-        // Global running stats drive a smoothed 0-1 loudness gate: silence
-        // fades everything out instead of the AGC amplifying noise into a
-        // light show.
-        sampleCount += 1
-        if totalEnergy > runningMax {
-            runningMax = totalEnergy
-        } else {
-            runningMax = runningMax * 0.9995 + totalEnergy * 0.0005
+        energyHistory[energyHistoryIndex] = totalEnergy
+        energyHistoryIndex = (energyHistoryIndex + 1) % energyHistory.count
+        
+        fluxHistory[fluxHistoryIndex] = spectralFlux
+        fluxHistoryIndex = (fluxHistoryIndex + 1) % fluxHistory.count
+        
+        subBassHistory[subBassHistoryIndex] = subBassEnergy
+        subBassHistoryIndex = (subBassHistoryIndex + 1) % subBassHistory.count
+        
+        // ==========================================
+        // STEP 6: Calculate adaptive thresholds
+        // ==========================================
+        
+        // Average and variance of recent energy
+        var avgEnergyLocal: Float = 0
+        var varianceEnergy: Float = 0
+        for e in energyHistory {
+            avgEnergyLocal += e
         }
-        runningAvg = runningAvg * 0.99 + totalEnergy * 0.01
-
-        let loudness = min(1, totalEnergy / max(runningMax * 0.6, 1e-4))
-        let gateTarget: Float = totalEnergy < runningMax * 0.02 ? 0 : loudness
-        energyGate += (gateTarget - energyGate) * (gateTarget > energyGate ? 0.3 : 0.06)
-
-        // Measured callback cadence — AVAudioEngine ignores requested tap sizes.
-        let tapNow = CFAbsoluteTimeGetCurrent()
-        let tapDt = lastTapTime > 0 ? Float(tapNow - lastTapTime) : 1.0 / 43.0
-        lastTapTime = tapNow
-
-        // Tempo-locked, phase-predicting nod (see BeatEngine.swift).
-        let beat = beatEngine.process(onset: onsetStrength, energyGate: energyGate, dt: tapDt)
+        avgEnergyLocal /= Float(energyHistory.count)
+        
+        for e in energyHistory {
+            let diff = e - avgEnergyLocal
+            varianceEnergy += diff * diff
+        }
+        varianceEnergy = sqrt(varianceEnergy / Float(energyHistory.count))
+        
+        // Average of recent flux
+        var avgFlux: Float = 0
+        for f in fluxHistory {
+            avgFlux += f
+        }
+        avgFlux /= Float(fluxHistory.count)
+        
+        // Sub-band averages for relative comparison
+        var avgSubBass: Float = 0
+        for i in 0..<subBassHistory.count {
+            avgSubBass += subBassHistory[i]
+        }
+        avgSubBass /= Float(subBassHistory.count)
+        
+        // ==========================================
+        // STEP 7: BEAT DETECTION
+        // A beat is detected when:
+        // 1. Current energy exceeds adaptive threshold
+        // 2. OR spectral flux exceeds threshold (transient)
+        // 3. OR sub-bass has a sudden spike (kick drum)
+        // ==========================================
+        
+        let energyThreshold = avgEnergyLocal + varianceEnergy * 0.9  // Even more sensitive
+        let fluxThreshold = avgFlux * 1.4  // More sensitive
+        let subBassThreshold = avgSubBass * 1.2  // Much more sensitive to bass
+        
+        let now = CFAbsoluteTimeGetCurrent()
+        let minBeatInterval: CFAbsoluteTime = 0.14  // Allow even faster beats
+        
+        var beatDetected = false
+        var beatStrength: Float = 0
+        
+        if now - lastBeatTime >= minBeatInterval {
+            // Check for beat conditions (more aggressive, especially for bass)
+            let energyBeat = totalEnergy > energyThreshold && totalEnergy > avgEnergyLocal * 1.15
+            let fluxBeat = spectralFlux > fluxThreshold && spectralFlux > avgFlux * 1.25
+            let kickBeat = subBassEnergy > subBassThreshold && subBassEnergy > avgSubBass * 1.15  // More bass-focused
+            
+            if energyBeat || fluxBeat || kickBeat {
+                beatDetected = true
+                
+                // Calculate beat strength based on how much it exceeds thresholds
+                var strength: Float = 0
+                if energyBeat {
+                    strength = max(strength, (totalEnergy - energyThreshold) / (avgEnergyLocal + 0.001))
+                }
+                if fluxBeat {
+                    strength = max(strength, (spectralFlux - fluxThreshold) / (avgFlux + 0.001))
+                }
+                if kickBeat {
+                    // Give extra weight to bass hits
+                    strength = max(strength, (subBassEnergy - subBassThreshold) / (avgSubBass + 0.001) * 1.2)
+                }
+                
+                beatStrength = min(1.0, strength * 0.8)  // Even stronger beat response
+                lastBeatTime = now
+            }
+        }
+        
+        // ==========================================
+        // STEP 8: Update beat intensity with proper envelope
+        // Attack: instant on beat
+        // Decay: fast falloff for punchier feel
+        // ==========================================
+        
+        if beatDetected {
+            // Instant attack - jump to beat strength
+            beatIntensity = max(beatIntensity, 0.65 + beatStrength * 0.35)  // Stronger punch
+        } else {
+            // Faster decay for punchy feel - doesn't stay static
+            beatIntensity *= beatDecayRate
+        }
+        beatIntensity = min(1.0, max(0, beatIntensity))
         
         // ==========================================
         // STEP 9: Map frequency bins for visualization
         // Use logarithmic mapping for more musical distribution
         // ==========================================
-
+        
+        // Update running statistics
+        sampleCount += 1
+        if totalEnergy > runningMax {
+            runningMax = totalEnergy
+        } else {
+            runningMax = runningMax * 0.9995 + totalEnergy * 0.0005  // Very slow decay
+        }
+        runningAvg = runningAvg * 0.99 + totalEnergy * 0.01
+        
+        let normalizer = max(runningMax, runningAvg * 2, 0.001)
+        
         // Create frequency bins using pre-computed logarithmic mapping
         // Re-use pre-allocated buffer
         for i in 0..<100 { rawBins[i] = 0 }
@@ -2040,50 +2113,41 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
         
         // ==========================================
-        // STEP 10: Per-band AGC + beat-phase modulation
-        // Each display bin is normalized against its OWN running floor/peak,
-        // so a mid-heavy acoustic track fills the range exactly like a
-        // bass-heavy club track — vibrant for any music, but still honest:
-        // a band with no content stays dark (floor ≈ peak → value ≈ 0).
+        // STEP 10: Normalize and apply beat modulation
         // ==========================================
-
+        
         for i in 0..<100 {
-            let mag = rawBins[i]
-
-            // Per-band envelope followers. Peak: instant attack, ~5 s release.
-            // Floor: tracks the quietest recent level, creeping upward slowly.
-            binPeak[i] = mag > binPeak[i] ? mag : binPeak[i] * 0.9985 + mag * 0.0015
-            binFloor[i] = mag < binFloor[i] ? mag : binFloor[i] * 0.999 + mag * 0.001
-
-            let range = binPeak[i] - binFloor[i]
-            var value = range > 1e-5 ? (mag - binFloor[i]) / range : 0
-
-            // Perceptual curve + loudness gate (silence darkens everything).
-            value = pow(max(0, value), 0.65) * energyGate
-
-            // Beat coupling: the phase-locked pulse breathes through the bars,
-            // strongest at the bass end — the frame everything dances inside.
-            let beatModulation = beat.pulse * (1.0 - Float(i) / 150.0)
-            value *= 0.62 + beatModulation * 0.75
-
+            // Normalize
+            var value = rawBins[i] / normalizer
+            
+            // Apply power curve for better visual dynamics
+            value = pow(value, 0.6)
+            
+            // Modulate by beat intensity - bars pulse with the beat
+            // Stronger effect on bass frequencies (lower indices)
+            let beatModulation = beatIntensity * (1.0 - Float(i) / 150.0)  // Decreases toward high freqs
+            value = value * (0.55 + beatModulation * 0.9)  // 55-145% based on beat (even more punch!)
+            
             value = min(1.0, max(0, value))
-
-            // Punchy-but-smooth: fast attack, moderate release.
-            let smoothUp: Float = 0.80
-            let smoothDown: Float = 0.22
+            
+            // Smooth with different attack/decay for punchy but smooth feel
+            let smoothUp: Float = 0.80    // Fast attack — bars rise quickly
+            let smoothDown: Float = 0.22  // Moderate decay — smooth falloff, no flickering
+            
             if value > smoothedBins[i] {
-                smoothedBins[i] += (value - smoothedBins[i]) * smoothUp
+                smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothUp
             } else {
-                smoothedBins[i] += (value - smoothedBins[i]) * smoothDown
+                smoothedBins[i] = smoothedBins[i] + (value - smoothedBins[i]) * smoothDown
             }
-
+            
+            // NO artificial floor - 0 means no activity, lines should be invisible
+            // Values naturally range 0-1 based on actual audio energy
             orderedBins[i] = min(1.0, max(0, smoothedBins[i]))
         }
-
-        // Deterministic musical layout (bass bottom-center, mids up the sides,
-        // highs top-center) — replaces the old random shuffle.
-        for slot in 0..<100 {
-            newBins[slot] = orderedBins[spatialMap[slot]]
+        
+        // Shuffle for visual distribution (re-use pre-allocated buffer)
+        for i in 0..<100 {
+            newBins[shuffledIndices[i]] = orderedBins[i]
         }
         
         // ==========================================
@@ -2101,27 +2165,19 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         // Apply a slight power curve for punchier feel, then clamp
         smoothedBass = min(1.0, max(0, pow(avgBassBars, 0.8)))
-
+        
         // ==========================================
-        // STEP 12: Nod output + throttled update to SwiftUI
+        // STEP 12: Throttled update to SwiftUI
         // ==========================================
-
-        // The icon's thump: the predictive nod when locked; when the tracker
-        // has no rhythm to lock onto (ambient, speech), fall back to a gentle
-        // bass-envelope breath so the icon never reads as dead.
-        let nodOut = max(beat.nod, smoothedBass * 0.35 * (1 - beat.confidence))
-
         let finalBins = newBins
         let finalBass = smoothedBass
-        let finalConfidence = beat.confidence
-
+        
         let updateNow = CFAbsoluteTimeGetCurrent()
         if updateNow - lastVisualizationUpdate >= visualizationUpdateInterval {
             lastVisualizationUpdate = updateNow
-
+    
             DispatchQueue.main.async { [weak self] in
-                self?.visualizerState.update(bins: finalBins, bass: finalBass,
-                                             nod: nodOut, confidence: finalConfidence)
+                self?.visualizerState.update(bins: finalBins, bass: finalBass)
             }
         }
     }

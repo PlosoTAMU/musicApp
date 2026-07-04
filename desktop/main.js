@@ -39,6 +39,32 @@ app.whenReady().then(() => {
     globalShortcut.register(accel, () => win.webContents.send("media", msg));
   }
 
+  // E2E connect driver: PULSOR_E2E_SECRET=<phrase> npx electron .
+  // Types the secret, clicks Connect, prints the visible status every 2 s
+  // until the main view appears (or 40 s), then quits. Inert in normal runs.
+  if (process.env.PULSOR_E2E_SECRET) {
+    win.webContents.on("console-message", (_e, _lvl, msg) => console.log("[renderer]", msg));
+    win.webContents.once("did-finish-load", async () => {
+      await new Promise(r => setTimeout(r, 1500));
+      await win.webContents.executeJavaScript(`(() => {
+        const s = document.getElementById("secret-input");
+        s.value = ${JSON.stringify(process.env.PULSOR_E2E_SECRET)};
+        document.getElementById("btn-connect").click();
+      })()`);
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const st = await win.webContents.executeJavaScript(`JSON.stringify({
+          status: document.getElementById("setup-status").textContent,
+          main: !document.getElementById("main").hidden,
+          role: document.getElementById("role").textContent,
+        })`);
+        console.log("[e2e]", st);
+        if (JSON.parse(st).main) break;
+      }
+      app.quit();
+    });
+  }
+
   // Dev screenshot driver: PULSOR_SHOT=setup|main npx electron .
   // Writes PULSOR_SHOT_OUT (or shot.png) and quits. Inert in normal runs.
   if (process.env.PULSOR_SHOT) {

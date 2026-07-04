@@ -1896,11 +1896,7 @@ struct PulsingThumbnailView: View {
                     .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
             }
         }
-        // Predictive head-nod from BeatEngine: tempo-locked and anticipatory,
-        // not a bass-level follower. bassLevel remains as a subtle secondary
-        // swell so sustained drops still feel heavy between beats.
-        .scaleEffect(1.0 + CGFloat(visualizerState.nod) * 0.17
-                         + CGFloat(visualizerState.bassLevel) * 0.05)
+        .scaleEffect(1.0 + CGFloat(visualizerState.bassLevel) * 0.20)
         .onTapGesture {
             onTap?()
         }
@@ -1933,12 +1929,10 @@ struct EdgeVisualizerView: View {
             
             let bins = visualizerState.frequencyBins
             let bass = visualizerState.bassLevel
-            let nod = visualizerState.nod
             guard bins.count >= 100 else { return }
 
-            // Scale box to match the thumbnail's nod (same blend as
-            // PulsingThumbnailView so the frame and image move as one)
-            let pulseScale = 1.0 + CGFloat(nod) * 0.17 + CGFloat(bass) * 0.05
+            // Scale box to match thumbnail pulse
+            let pulseScale = 1.0 + CGFloat(bass) * 0.20
             let boxSize = baseBoxSize * pulseScale
             let halfBox = boxSize / 2
             let scaledCorner = cornerRadius * pulseScale

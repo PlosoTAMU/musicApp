@@ -271,9 +271,6 @@
                 transition: color .2s; }
     .lyr-line:hover { background: rgba(255,255,255,.03); }
     .lyr-line.active { color: var(--bone); }
-    /* Karaoke sweep: active line's words start dim, light up as sung. */
-    .lyr-line.active .lyr-w { color: var(--bone-dim); transition: color .12s; }
-    .lyr-line.active .lyr-w.sung { color: var(--bone); }
     .lyr-plain { white-space: pre-wrap; font-size: 14px; line-height: 1.6;
                  color: var(--bone-dim); user-select: text; }
     .lyr-msg { color: var(--bone-faint); font-size: 13px; padding: 10px 4px; }
@@ -474,6 +471,10 @@
     <button id="btn-forget" class="link">Forget home</button>
   </div>
 
-  <script>require("./dist/ui.js");</script>
+  <!-- Bundled with esbuild (platform=browser) so firebase resolves to its
+       BROWSER builds — plain require() pulled the Node builds, whose network
+       layer hangs in Electron's renderer (auth sign-in never resolved).
+       Node builtins + electron stay external; renderer require() serves them. -->
+  <script>require("./dist/bundle.js");</script>
 </body>
 </html>
