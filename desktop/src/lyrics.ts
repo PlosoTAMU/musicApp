@@ -12,9 +12,17 @@
 // original's lyrics.
 import { Firestore, doc, getDoc, setDoc } from "firebase/firestore";
 
+export interface LyricWord {
+  timeMs: number;
+  text: string;
+}
+
 export interface LyricLine {
   timeMs: number; // FILE-relative, like LRC itself
   text: string;
+  /** Exact when the source is enhanced LRC (<mm:ss.xx> tags), else estimated
+   *  by spreading words across the line window — close enough to read along. */
+  words: LyricWord[];
 }
 
 export interface LyricsDoc {
@@ -34,16 +42,63 @@ const DURATION_TOLERANCE_S = 5;
 
 const TAG_RE = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
 const OFFSET_RE = /^\[offset:\s*([+-]?\d+)\]$/i;
+// Enhanced-LRC word tags: <mm:ss.xx> inside the line body.
+const WORD_RE = /<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?>/g;
+
+const tagToMs = (m: RegExpExecArray): number => {
+  const mins = parseInt(m[1], 10);
+  const secs = parseInt(m[2], 10);
+  let frac = 0;
+  if (m[3] !== undefined) {
+    // ".5" = 500ms, ".55" = 550ms, ".555" = 555ms
+    frac = parseInt(m[3], 10) * (m[3].length === 1 ? 100 : m[3].length === 2 ? 10 : 1);
+  }
+  return (mins * 60 + secs) * 1000 + frac;
+};
+
+/** Word timing: exact from <…> tags when present, else even interpolation
+ *  across the line window. Mirrors LRCParser.makeLine in Swift. */
+function makeLine(startMs: number, raw: string, nextMs: number, offset: number): LyricLine {
+  WORD_RE.lastIndex = 0;
+  const tags: RegExpExecArray[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = WORD_RE.exec(raw))) tags.push(m);
+
+  if (tags.length) {
+    const words: LyricWord[] = [];
+    const lead = raw.slice(0, tags[0].index).trim();
+    if (lead) words.push({ timeMs: startMs, text: lead });
+    for (let i = 0; i < tags.length; i++) {
+      const segStart = tags[i].index + tags[i][0].length;
+      const segEnd = i + 1 < tags.length ? tags[i + 1].index : raw.length;
+      const text = raw.slice(segStart, segEnd).trim();
+      if (text) words.push({ timeMs: Math.max(0, tagToMs(tags[i]) - offset), text });
+    }
+    return { timeMs: startMs, text: words.map(w => w.text).join(" "), words };
+  }
+
+  const text = raw.trim();
+  const parts = text.split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) {
+    return { timeMs: startMs, text, words: text ? [{ timeMs: startMs, text }] : [] };
+  }
+  const window = Math.min(Math.max(nextMs - startMs, 600), 12_000);
+  const step = (window * 0.92) / parts.length; // finish slightly early
+  return {
+    timeMs: startMs, text,
+    words: parts.map((w, i) => ({ timeMs: startMs + Math.round(i * step), text: w })),
+  };
+}
 
 /** Time-sorted lines; multiple tags per line supported; [offset:] honored
  *  (LRC spec: positive = lyrics earlier). Empty lines kept — they mark
  *  instrumental gaps. Mirrors LRCParser.parse in Swift. */
 export function parseLRC(lrc: string): LyricLine[] {
-  const stamped: LyricLine[] = [];
+  const stamped: { ms: number; raw: string }[] = [];
   let globalOffset = 0;
 
-  for (const raw of lrc.split(/\r?\n/)) {
-    const line = raw.trim();
+  for (const rawLine of lrc.split(/\r?\n/)) {
+    const line = rawLine.trim();
     if (!line) continue;
 
     const off = OFFSET_RE.exec(line);
@@ -55,23 +110,20 @@ export function parseLRC(lrc: string): LyricLine[] {
     const times: number[] = [];
     let m: RegExpExecArray | null;
     while ((m = TAG_RE.exec(line)) && m.index === end) {
-      const mins = parseInt(m[1], 10);
-      const secs = parseInt(m[2], 10);
-      let frac = 0;
-      if (m[3] !== undefined) {
-        // ".5" = 500ms, ".55" = 550ms, ".555" = 555ms
-        frac = parseInt(m[3], 10) * (m[3].length === 1 ? 100 : m[3].length === 2 ? 10 : 1);
-      }
-      times.push((mins * 60 + secs) * 1000 + frac);
+      times.push(tagToMs(m));
       end = TAG_RE.lastIndex;
     }
     if (!times.length) continue;
 
-    const text = line.slice(end).trim();
-    for (const t of times) stamped.push({ timeMs: Math.max(0, t - globalOffset), text });
+    const body = line.slice(end);
+    for (const t of times) stamped.push({ ms: Math.max(0, t - globalOffset), raw: body });
   }
 
-  return stamped.sort((a, b) => a.timeMs - b.timeMs);
+  const sorted = stamped.sort((a, b) => a.ms - b.ms);
+  return sorted.map((e, i) => makeLine(
+    e.ms, e.raw,
+    i + 1 < sorted.length ? sorted[i + 1].ms : e.ms + 5_000,
+    globalOffset));
 }
 
 /** Last line whose (timeMs + offset) has passed — binary search; null before

@@ -271,6 +271,9 @@
                 transition: color .2s; }
     .lyr-line:hover { background: rgba(255,255,255,.03); }
     .lyr-line.active { color: var(--bone); }
+    /* Karaoke sweep: active line's words start dim, light up as sung. */
+    .lyr-line.active .lyr-w { color: var(--bone-dim); transition: color .12s; }
+    .lyr-line.active .lyr-w.sung { color: var(--bone); }
     .lyr-plain { white-space: pre-wrap; font-size: 14px; line-height: 1.6;
                  color: var(--bone-dim); user-select: text; }
     .lyr-msg { color: var(--bone-faint); font-size: 13px; padding: 10px 4px; }
@@ -351,7 +354,9 @@
         <span id="setup-folder-label">No folder chosen</span>
       </div>
       <button id="btn-connect" class="pill">Connect</button>
-      <button id="btn-demo" class="link" style="margin-top:14px">Preview offline (skip connect)</button>
+      <div id="setup-status" style="margin-top:12px; font-size:13px; min-height:18px;
+           color: var(--rose);"></div>
+      <button id="btn-demo" class="link" style="margin-top:6px">Preview offline (skip connect)</button>
     </div>
   </section>
 

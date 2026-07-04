@@ -1,15 +1,27 @@
 import Foundation
 
+/// One word of a lyric line, for karaoke-style sweep.
+struct LyricWord: Equatable {
+    let timeMs: Int
+    let text: String
+}
+
 /// One timestamped line from a synced (LRC) lyric source.
 ///
 /// `timeMs` is FILE-relative: crops are playback windows over the full file
 /// (see AudioPlayerManager — cropStartTime is a seek offset, never a trim),
 /// so LRC timestamps line up with raw media time, not the cropped timeline.
 /// Display mapping: fileTime = cropStart + player.currentTime.
+///
+/// `words`: exact when the source is enhanced LRC (<mm:ss.xx> word tags —
+/// LRCLIB serves it for some tracks); otherwise estimated by spreading the
+/// words evenly across the line's window. Estimated sweep is approximate by
+/// design — close enough to read along, never claimed to be exact.
 struct LyricLine: Identifiable, Equatable {
     let id: Int      // index in song order — stable ForEach/scrollTo anchor
     let timeMs: Int
     let text: String
+    let words: [LyricWord]
 }
 
 /// Cross-device lyrics cache — users/{uid}/library/{trackId}/lyrics/current.
@@ -122,16 +134,32 @@ enum LRCParser {
         pattern: #"\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]"#)
     private static let offsetRE = try! NSRegularExpression(
         pattern: #"^\[offset:\s*([+-]?\d+)\]$"#, options: .caseInsensitive)
+    // Enhanced-LRC word tags: <mm:ss.xx> inside the line body.
+    private static let wordRE = try! NSRegularExpression(
+        pattern: #"<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?>"#)
+
+    private static func msFrom(_ ns: NSString, _ m: NSTextCheckingResult) -> Int {
+        let mins = Int(ns.substring(with: m.range(at: 1))) ?? 0
+        let secs = Int(ns.substring(with: m.range(at: 2))) ?? 0
+        var frac = 0
+        if m.range(at: 3).location != NSNotFound {
+            let f = ns.substring(with: m.range(at: 3))
+            // ".5" = 500ms, ".55" = 550ms, ".555" = 555ms
+            frac = (Int(f) ?? 0) * (f.count == 1 ? 100 : f.count == 2 ? 10 : 1)
+        }
+        return (mins * 60 + secs) * 1000 + frac
+    }
 
     /// Parses LRC text into time-sorted lines. Handles multiple timestamps per
-    /// line and the [offset:] header (LRC spec: positive = lyrics earlier).
-    /// Empty-text lines are kept — they mark instrumental gaps.
+    /// line, the [offset:] header (LRC spec: positive = lyrics earlier), and
+    /// enhanced-LRC <mm:ss.xx> word tags. Empty-text lines are kept — they
+    /// mark instrumental gaps.
     static func parse(_ lrc: String) -> [LyricLine] {
-        var stamped: [(ms: Int, text: String)] = []
+        var stamped: [(ms: Int, raw: String)] = []
         var globalOffset = 0
 
-        for raw in lrc.components(separatedBy: .newlines) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
+        for rawLine in lrc.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
             let ns = line as NSString
             let full = NSRange(location: 0, length: ns.length)
@@ -146,26 +174,61 @@ enum LRCParser {
             var times: [Int] = []
             for m in tagRE.matches(in: line, range: full) {
                 guard m.range.location == end else { break }
-                let mins = Int(ns.substring(with: m.range(at: 1))) ?? 0
-                let secs = Int(ns.substring(with: m.range(at: 2))) ?? 0
-                var frac = 0
-                if m.range(at: 3).location != NSNotFound {
-                    let f = ns.substring(with: m.range(at: 3))
-                    // ".5" = 500ms, ".55" = 550ms, ".555" = 555ms
-                    frac = (Int(f) ?? 0) * (f.count == 1 ? 100 : f.count == 2 ? 10 : 1)
-                }
-                times.append((mins * 60 + secs) * 1000 + frac)
+                times.append(msFrom(ns, m))
                 end = m.range.location + m.range.length
             }
             guard !times.isEmpty else { continue }
 
-            let text = ns.substring(from: end).trimmingCharacters(in: .whitespaces)
-            for t in times { stamped.append((max(0, t - globalOffset), text)) }
+            let body = ns.substring(from: end)
+            for t in times { stamped.append((max(0, t - globalOffset), body)) }
         }
 
-        return stamped
-            .sorted { $0.ms < $1.ms }
-            .enumerated()
-            .map { LyricLine(id: $0.offset, timeMs: $0.element.ms, text: $0.element.text) }
+        let sorted = stamped.sorted { $0.ms < $1.ms }
+        return sorted.enumerated().map { idx, entry in
+            let nextMs = idx + 1 < sorted.count ? sorted[idx + 1].ms : entry.ms + 5_000
+            return makeLine(id: idx, startMs: entry.ms, raw: entry.raw,
+                            nextMs: nextMs, offset: globalOffset)
+        }
+    }
+
+    /// Word timing: exact from <…> tags when present, else even interpolation
+    /// across the line window (finishing slightly early — natural phrasing).
+    private static func makeLine(id: Int, startMs: Int, raw: String,
+                                 nextMs: Int, offset: Int) -> LyricLine {
+        let ns = raw as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        let tags = wordRE.matches(in: raw, range: full)
+
+        if !tags.isEmpty {
+            var words: [LyricWord] = []
+            let lead = ns.substring(to: tags[0].range.location)
+                .trimmingCharacters(in: .whitespaces)
+            if !lead.isEmpty { words.append(LyricWord(timeMs: startMs, text: lead)) }
+            for (i, m) in tags.enumerated() {
+                let segStart = m.range.location + m.range.length
+                let segEnd = i + 1 < tags.count ? tags[i + 1].range.location : ns.length
+                let text = ns.substring(with: NSRange(location: segStart, length: segEnd - segStart))
+                    .trimmingCharacters(in: .whitespaces)
+                if !text.isEmpty {
+                    words.append(LyricWord(timeMs: max(0, msFrom(ns, m) - offset), text: text))
+                }
+            }
+            return LyricLine(id: id, timeMs: startMs,
+                             text: words.map(\.text).joined(separator: " "),
+                             words: words)
+        }
+
+        let text = raw.trimmingCharacters(in: .whitespaces)
+        let parts = text.split(separator: " ").map(String.init)
+        guard parts.count > 1 else {
+            return LyricLine(id: id, timeMs: startMs, text: text,
+                             words: text.isEmpty ? [] : [LyricWord(timeMs: startMs, text: text)])
+        }
+        let window = min(max(nextMs - startMs, 600), 12_000)
+        let step = Double(window) * 0.92 / Double(parts.count)
+        let words = parts.enumerated().map {
+            LyricWord(timeMs: startMs + Int(Double($0.offset) * step), text: $0.element)
+        }
+        return LyricLine(id: id, timeMs: startMs, text: text, words: words)
     }
 }

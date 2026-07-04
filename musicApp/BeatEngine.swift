@@ -96,18 +96,13 @@ final class BeatEngine {
             let strength = min(2, (onset - fluxMean) / max(fluxDev, 1e-4)) / 2
             // Signed distance from the nearest predicted beat, in beat units.
             let err = phase < 0.5 ? phase : phase - 1
-            // Acquisition vs tracking: unlocked, capture almost any strong onset
-            // (a dead-on tempo prior with an unlucky phase offset would otherwise
-            // never converge — err sits outside a fixed window forever); locked,
-            // tighten to ±0.22 so syncopation can't drag the phase.
-            let win = 0.22 + 0.26 * max(0, 0.3 - confidence) / 0.3
-            if abs(err) < win {
+            if abs(err) < 0.22 {
                 // Onset confirms a predicted beat: pull phase onto it, and if
                 // predictions run consistently early/late the period follows.
                 phase -= err * (0.3 + 0.25 * strength)
                 if phase < 0 { phase += 1; beatParity.toggle() }
                 periodS *= 1 + err * 0.05
-                confidence = min(1, confidence + (win - abs(err)) / win * 0.09 * (0.5 + strength))
+                confidence = min(1, confidence + (0.22 - abs(err)) / 0.22 * 0.09 * (0.5 + strength))
             } else {
                 // Energy between beats: syncopation is normal, so barely punish.
                 confidence = max(0, confidence - 0.015)

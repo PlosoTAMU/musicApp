@@ -40,6 +40,21 @@ export const deriveCreds = (secret: string) => ({
   password: sha("pulsor-key-v1|" + secret),
 });
 
+/** Translate Firebase auth codes into instructions a human can act on. */
+function authError(e: unknown): Error {
+  const code = (e as { code?: string })?.code ?? "";
+  switch (code) {
+    case "auth/operation-not-allowed":
+      return new Error("Email/Password sign-in is disabled — enable it: Firebase console → Authentication → Sign-in method.");
+    case "auth/network-request-failed":
+      return new Error("Can't reach Firebase — check the internet connection.");
+    case "auth/email-already-in-use":
+      return new Error("Secret mismatch — this home exists but the secret differs.");
+    default:
+      return e instanceof Error ? e : new Error(String(e));
+  }
+}
+
 /** Sign in with the derived account; first device ever creates it. */
 export async function bootstrapAuth(secret: string): Promise<string> {
   const auth = getAuth(app);
@@ -52,11 +67,9 @@ export async function bootstrapAuth(secret: string): Promise<string> {
       try {
         return (await createUserWithEmailAndPassword(auth, email, password)).user.uid;
       } catch (e2: unknown) {
-        if ((e2 as { code?: string })?.code === "auth/email-already-in-use")
-          throw new Error("Secret mismatch — this home exists but the secret differs.");
-        throw e2;
+        throw authError(e2);
       }
     }
-    throw e;
+    throw authError(e);
   }
 }

@@ -86,9 +86,7 @@ struct LyricsView: View {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 22) {
                         ForEach(lines) { line in
-                            Text(line.text.isEmpty ? "♪" : line.text)
-                                .font(.system(size: 22, weight: .bold))
-                                .foregroundColor(line.id == activeIdx ? Theme.bone : Theme.boneFaint)
+                            lineView(line, activeIdx: activeIdx, offsetMs: offsetMs)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                                 .id(line.id)
@@ -115,6 +113,31 @@ struct LyricsView: View {
             }
             nudgeBar(offsetMs)
         }
+    }
+
+    /// Active line renders karaoke-style: words sweep bone as their timestamp
+    /// passes (exact for enhanced LRC, interpolated otherwise). Other lines
+    /// stay whole-line faint.
+    @ViewBuilder
+    private func lineView(_ line: LyricLine, activeIdx: Int?, offsetMs: Int) -> some View {
+        if line.id == activeIdx, !line.words.isEmpty {
+            karaokeText(line, offsetMs: offsetMs)
+        } else {
+            Text(line.text.isEmpty ? "♪" : line.text)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundColor(line.id == activeIdx ? Theme.bone : Theme.boneFaint)
+        }
+    }
+
+    private func karaokeText(_ line: LyricLine, offsetMs: Int) -> Text {
+        let fileMs = fileTimeMs
+        var out = Text("")
+        for (i, w) in line.words.enumerated() {
+            let sung = fileMs >= w.timeMs + offsetMs
+            out = out + Text(w.text + (i == line.words.count - 1 ? "" : " "))
+                .foregroundColor(sung ? Theme.bone : Theme.boneDim)
+        }
+        return out.font(.system(size: 22, weight: .bold))
     }
 
     private func autoScroll(lines: [LyricLine], offsetMs: Int, proxy: ScrollViewProxy) {

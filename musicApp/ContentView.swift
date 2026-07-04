@@ -413,6 +413,10 @@ struct UpNextMiniBar: View {
                         size: 26,
                         cornerRadius: 6
                     )
+                    // Fresh view identity per track — async image state can
+                    // never linger and show the PREVIOUS song's art next to
+                    // the new song's title.
+                    .id(next.id)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -823,7 +827,7 @@ struct NowPlayingView: View {
     
     @ViewBuilder
     private var topBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button {
                 animatedDismiss()
             } label: {
@@ -867,26 +871,31 @@ struct NowPlayingView: View {
                 filled: !audioPlayer.effectsBypass
             ))
             
-            Menu {
-                Button(action: { showPlaylistPicker = true }) {
-                    Label("Add to Playlist", systemImage: "plus")
-                }
-                Button(action: { showCropSheet = true }) {
-                    Label("Crop Song", systemImage: "scissors")
-                }
-                Button(action: { showLyrics = true }) {
-                    Label("Lyrics", systemImage: "quote.bubble")
-                }
+            // Every option is a first-class button — no ⋯ menu. Six options
+            // after the dismiss chevron: up next, loop, effects, lyrics,
+            // add-to-playlist, crop.
+            Button {
+                showLyrics = true
             } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(Theme.bone)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Theme.smokeRaised))
-                    .overlay(Circle().strokeBorder(Theme.seam, lineWidth: 1))
+                Image(systemName: "quote.bubble")
             }
+            .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
+
+            Button {
+                showPlaylistPicker = true
+            } label: {
+                Image(systemName: "plus")
+            }
+            .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
+
+            Button {
+                showCropSheet = true
+            } label: {
+                Image(systemName: "scissors")
+            }
+            .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 16)
         .padding(.top, 6)
     }
     
@@ -950,6 +959,9 @@ struct NowPlayingView: View {
                     size: 34,
                     cornerRadius: 7
                 )
+                // Same fix as UpNextMiniBar: identity keyed to the track so
+                // image and title can never belong to different songs.
+                .id(next?.id)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("UP NEXT")
                         .font(Theme.eyebrowFont)

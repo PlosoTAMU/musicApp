@@ -5,7 +5,7 @@ const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require("electro
 
 app.whenReady().then(() => {
   const win = new BrowserWindow({
-    fullscreen: !process.env.PULSOR_SHOT,     // windowed for screenshot runs
+    show: false,                              // shown maximized below (no flash)
     width: 1280,
     height: 800,
     minWidth: 900,
@@ -15,6 +15,9 @@ app.whenReady().then(() => {
     titleBarOverlay: { color: "#0A0809", symbolColor: "#F4EDEA", height: 36 },
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
+  // Maximized, NOT fullscreen — F11 still toggles fullscreen on demand.
+  if (!process.env.PULSOR_SHOT) win.maximize();
+  win.show();
   win.loadFile("index.html");
 
   ipcMain.handle("pick-folder", async () => {

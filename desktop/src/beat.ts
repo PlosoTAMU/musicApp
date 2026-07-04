@@ -67,17 +67,12 @@ export class BeatEngine {
       const strength = Math.min(2, (onset - this.fluxMean) / Math.max(this.fluxDev, 1e-4)) / 2;
       // Signed distance from the nearest predicted beat, in beat units.
       const err = this.phase < 0.5 ? this.phase : this.phase - 1;
-      // Acquisition vs tracking: unlocked, capture almost any strong onset
-      // (a dead-on tempo prior with an unlucky phase offset would otherwise
-      // never converge — err sits outside a fixed window forever); locked,
-      // tighten to ±0.22 so syncopation can't drag the phase.
-      const win = 0.22 + 0.26 * Math.max(0, 0.3 - this.confidence) / 0.3;
-      if (Math.abs(err) < win) {
+      if (Math.abs(err) < 0.22) {
         this.phase -= err * (0.3 + 0.25 * strength);
         if (this.phase < 0) { this.phase += 1; this.beatParity = !this.beatParity; }
         this.periodS *= 1 + err * 0.05;
         this.confidence = Math.min(1,
-          this.confidence + ((win - Math.abs(err)) / win) * 0.09 * (0.5 + strength));
+          this.confidence + ((0.22 - Math.abs(err)) / 0.22) * 0.09 * (0.5 + strength));
       } else {
         // Energy between beats: syncopation is normal, barely punish.
         this.confidence = Math.max(0, this.confidence - 0.015);
