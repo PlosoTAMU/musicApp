@@ -55,20 +55,12 @@ final class PlaybackSyncEngine: ObservableObject {
         self.resolver = resolver
         self.queueSync = QueueSync(
             db: coordinator.db,
-            sessionRef: { [weak coordinator] in
-                coordinator?.sessionID.map {
-                    coordinator!.db.collection("sessions").document($0)
-                }
-            },
+            sessionRef: { [weak coordinator] in coordinator?.sessionRef },
             isOnline: coordinator.$isOnline.eraseToAnyPublisher()
         )
         self.commands = CommandBus(
             db: coordinator.db,
-            sessionRef: { [weak coordinator] in
-                coordinator?.sessionID.map {
-                    coordinator!.db.collection("sessions").document($0)
-                }
-            }
+            sessionRef: { [weak coordinator] in coordinator?.sessionRef }
         )
         wireCoordinator()
         wirePlayerObservation()
@@ -266,6 +258,7 @@ final class PlaybackSyncEngine: ObservableObject {
             positionMs: Int(player.currentTime * 1000),
             anchorMs: ServerClock.shared.nowMs,
             rateX1000: Int(player.effectivePlaybackSpeed * 1000),
+            durationMs: Int(player.duration * 1000),
             rev: 0   // assigned inside the fenced transaction
         )
     }
@@ -301,7 +294,11 @@ final class PlaybackSyncEngine: ObservableObject {
     /// "Play here": fenced epoch bump, then resume audio at the extrapolated
     /// position of the OLD owner — continuity is computed from the pre-takeover
     /// state returned by the transaction, not from a racy follow-up read.
-    func takeOverHere() async throws {
+    ///
+    /// `forcePlay` is the Bluetooth-handoff path: the old owner paused the
+    /// moment its headphones dropped, so the session reads "paused" — but the
+    /// user's intent is continuation, not a paused handover.
+    func takeOverHere(forcePlay: Bool = false) async throws {
         let pre = try await coordinator.takeOver()
         let pb = pre.playback
         let posMs = pb.positionMs(atServerMs: ServerClock.shared.nowMs)
@@ -312,7 +309,8 @@ final class PlaybackSyncEngine: ObservableObject {
             player.queue = resolvedQueue
             // Audio starts exactly at the old owner's extrapolated position;
             // paused handovers arm resume() without scheduling audio.
-            player.play(track, at: Double(posMs) / 1000.0, startPaused: !pb.isPlaying)
+            player.play(track, at: Double(posMs) / 1000.0,
+                        startPaused: !(pb.isPlaying || forcePlay))
         }
         // New epoch, rev 0 — publish our authoritative state immediately.
         publishNow()

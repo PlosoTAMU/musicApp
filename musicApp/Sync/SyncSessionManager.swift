@@ -1,82 +1,104 @@
 import Foundation
+import Combine
+import CryptoKit
 import FirebaseCore
 import FirebaseAuth
 import FirebaseFirestore
 
-/// Top-level entry point. Owns bootstrap (Firebase config + anonymous auth) and
-/// the session lifecycle verbs the UI will eventually call:
+/// Top-level entry point — shared-secret model.
+///
+/// The home secret deterministically derives an email/password pair; every
+/// device that knows the secret signs into the SAME Firebase account, so all
+/// state (session singleton, library, audio) lives under one uid. No pairing,
+/// no codes: devices find each other automatically on launch.
 ///
 ///   let sync = SyncSessionManager(player: audioPlayer, library: { allTracks })
-///   try await sync.bootstrap()
-///   let code = try await sync.startSharing()   // device A — shows 6-digit code
-///   try await sync.join(code: "042917")        // device B
-///   try await sync.playHere()                  // device B takes over playback
-///   sync.leave()
+///   try await sync.connect(secret: "our house phrase")   // once; auto after
+///   try await sync.playHere()                             // fenced takeover
 @MainActor
 final class SyncSessionManager: ObservableObject {
 
-    @Published private(set) var isReady = false
-    @Published private(set) var activeCode: String?
+    @Published private(set) var isConnected = false
 
     let engine: PlaybackSyncEngine
     let coordinator: SessionCoordinator
 
     private let player: AudioPlayerManager
-    private let pairing: SessionPairing
     private var uid: String = ""
+    private(set) var replicator: LibraryReplicator?
+    private(set) var playlistSync: PlaylistSync?
+    private var routeMonitor: RouteHandoffMonitor?
+
+    private static let secretKey = "sync.home.secret"
 
     init(player: AudioPlayerManager, library: @escaping () -> [Track]) {
-        // configure() must precede Firestore.firestore(). Idempotent guard lets
-        // this coexist with a future configure() call in AppDelegate.
         if FirebaseApp.app() == nil { FirebaseApp.configure() }
-
-        let db = Firestore.firestore()
-        // Firestore's own offline mutation queue stays ON for reads (snapshot
-        // cache = instant UI on cold start) but all session WRITES go through
-        // transactions, which never enqueue offline — the coordinator's outbox
-        // is the only replay path, by design.
         self.player = player
-        self.coordinator = SessionCoordinator(db: db)
+        self.coordinator = SessionCoordinator(db: Firestore.firestore())
         self.engine = PlaybackSyncEngine(
             player: player,
             coordinator: coordinator,
             resolver: LibraryTrackResolver(library: library)
         )
-        self.pairing = SessionPairing(db: db)
+        // Bluetooth handoff: headphone route changes drive pause/beacon/takeover.
+        self.routeMonitor = RouteHandoffMonitor(
+            player: player, coordinator: coordinator, engine: engine)
     }
 
-    func bootstrap() async throws {
-        if let user = Auth.auth().currentUser {
-            uid = user.uid
-        } else {
-            uid = try await Auth.auth().signInAnonymously().user.uid
+    /// Derivation must match desktop/src/firebase.ts byte-for-byte.
+    static func deriveCreds(secret: String) -> (email: String, password: String) {
+        func sha(_ s: String) -> String {
+            SHA256.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
         }
-        isReady = true
+        return (email: "\(sha("pulsor-home-v1|" + secret).prefix(24))@pulsor.app",
+                password: sha("pulsor-key-v1|" + secret))
     }
 
-    /// Device A: create a session seeded from current local playback, mint a code.
-    func startSharing() async throws -> String {
-        precondition(isReady, "call bootstrap() first")
-        let initial = PlaybackState(
-            track: player.currentTrack.map(TrackRef.init),
-            isPlaying: player.isPlaying,
-            positionMs: Int(player.currentTime * 1000),
-            anchorMs: ServerClock.shared.nowMs,
-            rateX1000: Int(player.effectivePlaybackSpeed * 1000),
-            rev: 1
-        )
-        let sid = try await coordinator.createSession(
-            uid: uid, playback: initial, queue: player.queue.map(TrackRef.init))
-        let code = try await pairing.createCode(sessionID: sid, uid: uid)
-        activeCode = code
-        return code
+    /// Silent auto-connect with a previously saved secret (call at app launch).
+    /// Idempotent: ContentView's launch task and SyncPanelView's .task can both
+    /// fire without double-attaching listeners.
+    func connectIfConfigured() async {
+        guard !isConnected,
+              let secret = UserDefaults.standard.string(forKey: Self.secretKey) else { return }
+        try? await connect(secret: secret)
     }
 
-    /// Device B: redeem code, become a follower (mirror only, no audio).
-    func join(code: String) async throws {
-        precondition(isReady, "call bootstrap() first")
-        let sid = try await pairing.redeem(code: code)
-        try await coordinator.joinSession(sid, uid: uid)
+    func connect(secret: String) async throws {
+        let creds = Self.deriveCreds(secret: secret)
+        do {
+            uid = try await Auth.auth().signIn(withEmail: creds.email,
+                                               password: creds.password).user.uid
+        } catch {
+            // First device ever creates the home account.
+            do {
+                uid = try await Auth.auth().createUser(withEmail: creds.email,
+                                                       password: creds.password).user.uid
+            } catch {
+                throw SyncError.corrupt  // surfaced as "could not connect"
+            }
+        }
+        try await coordinator.attach(uid: uid)
+        replicator?.activate(uid: uid)
+        playlistSync?.activate(uid: uid)
+        UserDefaults.standard.set(secret, forKey: Self.secretKey)
+        isConnected = true
+    }
+
+    /// Wire two-way playlist replication:
+    ///   sync.attachPlaylists(manager: playlistManager,
+    ///                        download: { downloadManager.getDownload(byID: $0) })
+    func attachPlaylists(manager: PlaylistManager,
+                         download: @escaping (UUID) -> Download?) {
+        playlistSync = PlaylistSync(db: coordinator.db, manager: manager,
+                                    download: download)
+        if !uid.isEmpty { playlistSync?.activate(uid: uid) }
+    }
+
+    /// Wire the upload pipeline to DownloadManager:
+    ///   sync.attachReplication(downloads: downloadManager.$downloads.eraseToAnyPublisher())
+    func attachReplication(downloads: AnyPublisher<[Download], Never>) {
+        replicator = LibraryReplicator(db: coordinator.db, downloads: downloads)
+        if !uid.isEmpty { replicator?.activate(uid: uid) }
     }
 
     /// Handoff: this device becomes the owner and audio continues here.
@@ -84,8 +106,11 @@ final class SyncSessionManager: ObservableObject {
         try await engine.takeOverHere()
     }
 
-    func leave() {
-        coordinator.leave()
-        activeCode = nil
+    /// Forget the home secret; back to setup.
+    func forgetHome() {
+        UserDefaults.standard.removeObject(forKey: Self.secretKey)
+        coordinator.detach()
+        isConnected = false
+        try? Auth.auth().signOut()
     }
 }

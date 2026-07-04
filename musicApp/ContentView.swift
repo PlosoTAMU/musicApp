@@ -2,11 +2,13 @@ import SwiftUI
 import AVFoundation
 import MediaPlayer
 import Accelerate
+import Combine
 
 struct ContentView: View {
-    @StateObject private var audioPlayer = AudioPlayerManager()
-    @StateObject private var downloadManager = DownloadManager()
+    @StateObject private var audioPlayer: AudioPlayerManager
+    @StateObject private var downloadManager: DownloadManager
     @StateObject private var playlistManager = PlaylistManager()
+    @StateObject private var syncManager: SyncSessionManager
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
@@ -18,9 +20,29 @@ struct ContentView: View {
     // For post-download playlist prompt
     @State private var playlistPromptDownload: Download? = nil
     
+    @MainActor
     init() {
         // Theme the UIKit-backed chrome (nav bars + tab bar) before first render.
         Theme.applyChrome()
+
+        // Sync needs the SAME player/download instances the UI observes, so all
+        // three are built here and handed to their StateObjects together.
+        let player = AudioPlayerManager()
+        let downloads = DownloadManager()
+        _audioPlayer = StateObject(wrappedValue: player)
+        _downloadManager = StateObject(wrappedValue: downloads)
+        _syncManager = StateObject(wrappedValue: SyncSessionManager(
+            player: player,
+            library: {
+                // "YouTube Downloads" folderName skips Track's bookmark work —
+                // these are app-documents files, resolvable by URL directly.
+                downloads.downloads.map {
+                    Track(id: $0.id, name: $0.name, url: $0.url,
+                          folderName: "YouTube Downloads",
+                          cropStartTime: $0.cropStartTime, cropEndTime: $0.cropEndTime)
+                }
+            }
+        ))
     }
     
     var body: some View {
@@ -55,12 +77,32 @@ struct ContentView: View {
                 .tabItem {
                     Label("Queue", systemImage: "list.number")
                 }
+
+                SyncPanelView(manager: syncManager)
+                    .tabItem {
+                        Label("Sync", systemImage: "antenna.radiowaves.left.and.right")
+                    }
             }
             .onAppear {
                 startFPSTracking()
                 #if DEBUG
                 MainThreadWatchdog.shared.start()
                 #endif
+                // Cloud replication + strongest cross-device track key. Done here
+                // (not init) so the publishers observe fully-constructed objects.
+                syncManager.attachReplication(
+                    downloads: downloadManager.$downloads.eraseToAnyPublisher())
+                syncManager.attachPlaylists(manager: playlistManager) { [weak downloadManager] id in
+                    downloadManager?.getDownload(byID: id)
+                }
+                TrackRef.ytIDProvider = { [weak downloadManager] track in
+                    downloadManager?.getDownload(byID: track.id)?.videoID
+                }
+            }
+            .task {
+                // Silent reconnect with the saved home secret — the desktop app
+                // does the same on boot, so devices find each other without UI.
+                await syncManager.connectIfConfigured()
             }
 
             VStack(spacing: 0) {
@@ -150,6 +192,20 @@ struct ContentView: View {
                 if !handlingDeepLink {
                     processIncomingShares()
                 }
+            }
+        }
+        // Library changed (download finished, rename, delete) → refresh Siri's
+        // song vocabulary. Launch-only registration meant a song downloaded
+        // mid-session wasn't recognized until the next app launch. Debounced:
+        // batch playlist imports shouldn't hammer the system re-registration.
+        .onReceive(
+            downloadManager.$downloads
+                .map { $0.filter { !$0.pendingDeletion }.map(\.name) }
+                .removeDuplicates()
+                .debounce(for: .seconds(2), scheduler: DispatchQueue.main)
+        ) { _ in
+            if #available(iOS 16.0, *) {
+                MusicAppShortcuts.updateAppShortcutParameters()
             }
         }
         // Listen for completed downloads and show prompt
@@ -557,6 +613,8 @@ struct NowPlayingView: View {
     @State private var showAudioSettings = false
     @State private var showCropSheet = false
     @State private var showUpNext = false
+    @State private var showLyrics = false
+    @StateObject private var lyrics = LyricsService()
     // Panel position, owned by ContentView so the mini player can crossfade with
     // the slide. A full screen below = off-screen (onAppear animates it up);
     // dismiss animates it back down. Offset-only (no SwiftUI .transition).
@@ -710,6 +768,15 @@ struct NowPlayingView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showLyrics) {
+            LyricsView(
+                audioPlayer: audioPlayer,
+                downloadManager: downloadManager,
+                lyrics: lyrics
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
         .alert("Rename Song", isPresented: $showRenameAlert) {
             TextField("Song name", text: $newTrackName)
             Button("Cancel", role: .cancel) { }
@@ -806,6 +873,9 @@ struct NowPlayingView: View {
                 }
                 Button(action: { showCropSheet = true }) {
                     Label("Crop Song", systemImage: "scissors")
+                }
+                Button(action: { showLyrics = true }) {
+                    Label("Lyrics", systemImage: "quote.bubble")
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -1814,7 +1884,11 @@ struct PulsingThumbnailView: View {
                     .shadow(color: .black.opacity(0.8), radius: 25, y: 8)
             }
         }
-        .scaleEffect(1.0 + CGFloat(visualizerState.bassLevel) * 0.20)
+        // Predictive head-nod from BeatEngine: tempo-locked and anticipatory,
+        // not a bass-level follower. bassLevel remains as a subtle secondary
+        // swell so sustained drops still feel heavy between beats.
+        .scaleEffect(1.0 + CGFloat(visualizerState.nod) * 0.17
+                         + CGFloat(visualizerState.bassLevel) * 0.05)
         .onTapGesture {
             onTap?()
         }
@@ -1847,10 +1921,12 @@ struct EdgeVisualizerView: View {
             
             let bins = visualizerState.frequencyBins
             let bass = visualizerState.bassLevel
+            let nod = visualizerState.nod
             guard bins.count >= 100 else { return }
-            
-            // Scale box to match thumbnail pulse
-            let pulseScale = 1.0 + CGFloat(bass) * 0.20
+
+            // Scale box to match the thumbnail's nod (same blend as
+            // PulsingThumbnailView so the frame and image move as one)
+            let pulseScale = 1.0 + CGFloat(nod) * 0.17 + CGFloat(bass) * 0.05
             let boxSize = baseBoxSize * pulseScale
             let halfBox = boxSize / 2
             let scaledCorner = cornerRadius * pulseScale

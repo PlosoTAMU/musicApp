@@ -118,7 +118,12 @@ enum SongLibrary {
             "audio", "hd", "4k", "mv", "m/v"
         ]
         for n in noise {
-            s = s.replacingOccurrences(of: n, with: "", options: [.caseInsensitive])
+            // Word-boundary match — a plain substring replace mangled titles
+            // ("audio" inside "Audiophile" → "phile"), and mangled entity
+            // names are unmatchable when spoken.
+            let pattern = "\\b\(NSRegularExpression.escapedPattern(for: n))\\b"
+            s = s.replacingOccurrences(of: pattern, with: "",
+                                       options: [.regularExpression, .caseInsensitive])
         }
         s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         s = s.trimmingCharacters(in: CharacterSet(charactersIn: " -–—|·"))

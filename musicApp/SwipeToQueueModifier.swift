@@ -6,6 +6,10 @@ struct SwipeToQueueModifier: ViewModifier {
     @State private var offset: CGFloat = 0
     @State private var isArmed = false        // past the trigger threshold
     @State private var justQueued = false     // confirm state held briefly after commit
+    // Latched on the first decisive movement of each drag: true = this drag is
+    // ours (horizontal), false = it's a scroll — ignore it until the finger
+    // lifts. nil = undecided.
+    @State private var claimedDrag: Bool?
 
     private let threshold: CGFloat = 70       // commit point
     private let restWidth: CGFloat = 100      // open/confirm width (and rubber-band point)
@@ -16,7 +20,12 @@ struct SwipeToQueueModifier: ViewModifier {
 
             content
                 .offset(x: offset)
-                .gesture(swipeGesture)
+                // simultaneousGesture, NOT .gesture: a plain DragGesture activates
+                // on 16pt of movement in ANY direction and claims the touch, which
+                // is what made vertical scrolling stutter on rows. Simultaneous
+                // lets the ScrollView pan freely; the axis latch below keeps a
+                // scroll from ever opening the queue panel.
+                .simultaneousGesture(swipeGesture)
         }
         // Clip to the card shape so the green panel never pokes past the corners.
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -59,9 +68,16 @@ struct SwipeToQueueModifier: ViewModifier {
                 guard !justQueued else { return }   // ignore input during the confirm hold
                 let h = g.translation.width
                 let v = abs(g.translation.height)
-                // Engage only on a clearly horizontal, rightward drag so vertical
-                // list scrolling is never stolen.
-                guard h > 0, h > v * 1.6 else { return }
+
+                // Decide ONCE per drag, on the first movement past the minimum:
+                // clearly rightward-horizontal → the queue swipe owns this drag;
+                // anything else → it's a scroll, stay inert until the finger lifts.
+                // Without the latch, a drag that starts vertical but curves right
+                // mid-scroll would suddenly start opening the panel.
+                if claimedDrag == nil {
+                    claimedDrag = h > 0 && h > v * 1.6
+                }
+                guard claimedDrag == true else { return }
 
                 // Track the finger 1:1 up to restWidth, then rubber-band. NO
                 // withAnimation here — the offset must equal the finger, not chase it.
@@ -73,10 +89,12 @@ struct SwipeToQueueModifier: ViewModifier {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
             }
-            .onEnded { g in
-                let h = g.translation.width
-                let v = abs(g.translation.height)
-                let committed = h > v * 1.6 && offset >= threshold
+            .onEnded { _ in
+                // Commit on the latched intent + how far the panel actually got —
+                // re-checking the final h/v ratio here used to cancel legitimate
+                // swipes whose finger drifted vertically at the end.
+                let committed = claimedDrag == true && offset >= threshold
+                claimedDrag = nil
 
                 if committed {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()

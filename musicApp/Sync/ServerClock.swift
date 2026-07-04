@@ -35,11 +35,11 @@ final class ServerClock {
 
     /// One sample: write serverTimestamp to our presence doc, read it back from server.
     /// Presence doc doubles as liveness signal for the session.
-    func sample(db: Firestore, sessionID: String, uid: String) async throws {
-        let ref = db.collection("sessions").document(sessionID)
-            .collection("presence").document(SyncDevice.id)
+    func sample(db: Firestore, uid: String) async throws {
+        let ref = db.collection("users").document(uid)
+            .collection("sync").document("presence_\(SyncDevice.id)")
         let send = Self.localNowMs
-        try await ref.setData(["at": FieldValue.serverTimestamp(), "uid": uid])
+        try await ref.setData(["at": FieldValue.serverTimestamp()])
         let snap = try await ref.getDocument(source: .server)
         let recv = Self.localNowMs
         guard let ts = snap.get("at") as? Timestamp else { return }
@@ -49,10 +49,10 @@ final class ServerClock {
 
     /// Block until at least one sample exists — anchors written with offset 0
     /// would poison every follower's extrapolation.
-    func prime(db: Firestore, sessionID: String, uid: String) async throws {
+    func prime(db: Firestore, uid: String) async throws {
         guard !isSynced else { return }
         for attempt in 0..<3 {
-            do { try await sample(db: db, sessionID: sessionID, uid: uid); return }
+            do { try await sample(db: db, uid: uid); return }
             catch where attempt < 2 {
                 try await Task.sleep(nanoseconds: UInt64(500_000_000 * (attempt + 1)))
             }

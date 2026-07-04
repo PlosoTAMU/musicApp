@@ -34,13 +34,19 @@ struct TrackRef: Equatable {
     let folder: String
     let ytID: String?
 
+    /// Injectable lookup for the strongest identity key. Wire this to
+    /// DownloadManager at startup — `Download.videoID` is persisted per file:
+    ///   TrackRef.ytIDProvider = { t in downloadManager.downloads.first { $0.id == t.id }?.videoID }
+    /// Falls back to the filename heuristic when unset.
+    static var ytIDProvider: ((Track) -> String?)?
+
     init(id: UUID, name: String, folder: String, ytID: String?) {
         self.id = id; self.name = name; self.folder = folder; self.ytID = ytID
     }
 
     init(track: Track) {
         self.init(id: track.id, name: track.name, folder: track.folderName,
-                  ytID: TrackRef.extractYTID(from: track.url))
+                  ytID: TrackRef.ytIDProvider?(track) ?? TrackRef.extractYTID(from: track.url))
     }
 
     /// Best-effort: yt-dlp default template embeds "[<11-char id>]" in the filename.
@@ -94,10 +100,11 @@ struct PlaybackState: Equatable {
     var positionMs: Int      // media position at the anchor instant
     var anchorMs: Int        // ServerClock ms when positionMs was true
     var rateX1000: Int       // effective playback rate ×1000 (affects extrapolation)
+    var durationMs: Int      // cropped track length — follower progress denominator
     var rev: Int             // monotonic per-epoch; (epoch, rev) totally orders writes
 
     static let empty = PlaybackState(track: nil, isPlaying: false, positionMs: 0,
-                                     anchorMs: 0, rateX1000: 1000, rev: 0)
+                                     anchorMs: 0, rateX1000: 1000, durationMs: 0, rev: 0)
 
     /// Follower-side extrapolation — the reason progress_ms never needs streaming.
     func positionMs(atServerMs now: Int) -> Int {
@@ -108,15 +115,17 @@ struct PlaybackState: Equatable {
 
     var dict: [String: Any] {
         var d: [String: Any] = ["playing": isPlaying, "pos": positionMs,
-                                "anchor": anchorMs, "rate": rateX1000, "rev": rev]
+                                "anchor": anchorMs, "rate": rateX1000,
+                                "dur": durationMs, "rev": rev]
         if let track { d["track"] = track.dict }
         return d
     }
 
     init(track: TrackRef?, isPlaying: Bool, positionMs: Int, anchorMs: Int,
-         rateX1000: Int, rev: Int) {
+         rateX1000: Int, durationMs: Int, rev: Int) {
         self.track = track; self.isPlaying = isPlaying; self.positionMs = positionMs
-        self.anchorMs = anchorMs; self.rateX1000 = rateX1000; self.rev = rev
+        self.anchorMs = anchorMs; self.rateX1000 = rateX1000
+        self.durationMs = durationMs; self.rev = rev
     }
 
     init?(dict: [String: Any]?) {
@@ -128,53 +137,73 @@ struct PlaybackState: Equatable {
               let rev = d["rev"] as? Int else { return nil }
         self.init(track: (d["track"] as? [String: Any]).flatMap(TrackRef.init(dict:)),
                   isPlaying: playing, positionMs: pos, anchorMs: anchor,
-                  rateX1000: rate, rev: rev)
+                  rateX1000: rate, durationMs: d["dur"] as? Int ?? 0, rev: rev)
     }
 }
 
 // MARK: - Session document
 
+// Shared-secret model: the secret derives one Firebase account, so every
+// device shares ONE uid. The session is a singleton doc at
+// users/{uid}/sync/session. Device-level ownership stays epoch-fenced.
 struct SessionState {
+
+    /// Bluetooth-handoff beacon: the owner's headphones just disconnected. Any
+    /// device that gains an audio output within the window auto-takes-over —
+    /// "switch the Bluetooth connection to switch playback".
+    struct Handoff {
+        let by: String    // device that lost its route
+        let atMs: Int     // ServerClock ms when it happened
+    }
+
     var epoch: Int
-    var ownerDeviceID: String
-    var ownerUID: String
-    var leaseMs: Int          // last lease renewal (ServerClock ms)
-    var members: [String]     // Firebase UIDs
+    var ownerDeviceID: String   // "" = idle, nobody owns playback yet
+    var leaseMs: Int            // last lease renewal (ServerClock ms)
     var playback: PlaybackState
     var queue: [TrackRef]
     var queueVersion: Int
-    var updatedBy: String     // device id of last writer — anti-echo
+    var updatedBy: String       // device id of last writer — anti-echo
+    var handoff: Handoff?
 
     static let leaseTTLMs = 45_000
+    static let handoffWindowMs = 60_000
 
+    var isIdle: Bool { ownerDeviceID.isEmpty }
     var leaseExpired: Bool { ServerClock.shared.nowMs > leaseMs + Self.leaseTTLMs }
+
+    /// True when ANOTHER device's headphones dropped recently enough that an
+    /// audio-output gain HERE should auto-continue playback.
+    func handoffActive(nowMs: Int) -> Bool {
+        guard let h = handoff, h.by != SyncDevice.id else { return false }
+        return nowMs - h.atMs < Self.handoffWindowMs
+    }
 
     init?(snap: DocumentSnapshot) {
         guard let d = snap.data(),
               let epoch = d["epoch"] as? Int,
               let ownerDev = d["ownerDeviceID"] as? String,
-              let ownerUID = d["ownerUID"] as? String,
               let lease = d["leaseMs"] as? Int,
-              let members = d["members"] as? [String],
               let playback = PlaybackState(dict: d["playback"] as? [String: Any]),
               let qv = d["queueVersion"] as? Int else { return nil }
-        self.epoch = epoch; self.ownerDeviceID = ownerDev; self.ownerUID = ownerUID
-        self.leaseMs = lease; self.members = members; self.playback = playback
+        self.epoch = epoch; self.ownerDeviceID = ownerDev
+        self.leaseMs = lease; self.playback = playback
         self.queue = (d["queue"] as? [[String: Any]])?.compactMap(TrackRef.init(dict:)) ?? []
         self.queueVersion = qv
         self.updatedBy = d["updatedBy"] as? String ?? ""
+        if let h = d["handoff"] as? [String: Any],
+           let by = h["by"] as? String, let at = h["atMs"] as? Int {
+            self.handoff = Handoff(by: by, atMs: at)
+        }
     }
 
-    static func freshDict(ownerUID: String, playback: PlaybackState,
-                          queue: [TrackRef]) -> [String: Any] {
+    /// The lazily-created singleton: idle, unowned. First play() takes over.
+    static func idleDict() -> [String: Any] {
         [
             "epoch": 1,
-            "ownerDeviceID": SyncDevice.id,
-            "ownerUID": ownerUID,
-            "leaseMs": ServerClock.shared.nowMs,
-            "members": [ownerUID],
-            "playback": playback.dict,
-            "queue": queue.map(\.dict),
+            "ownerDeviceID": "",
+            "leaseMs": 0,
+            "playback": PlaybackState.empty.dict,
+            "queue": [[String: Any]](),
             "queueVersion": 1,
             "updatedBy": SyncDevice.id,
         ]

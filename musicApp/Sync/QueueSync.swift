@@ -36,10 +36,12 @@ final class QueueSync {
 
     // MARK: - Public API
 
-    func apply(_ op: QueueOp, basisVersion: Int) async {
+    /// `isReplay` is passed explicitly by flushPending — inferring it from
+    /// pendingReplace was a bug: a LIVE edit made while an offline replay sat
+    /// buffered would inherit replay semantics and could be discarded as stale.
+    func apply(_ op: QueueOp, basisVersion: Int, isReplay: Bool = false) async {
         guard let ref = sessionRef() else { return }
         let dev = SyncDevice.id
-        let isReplay = pendingReplace != nil
         do {
             try await db.txn { txn in
                 let snap = try txn.getDocument(ref)
@@ -74,7 +76,7 @@ final class QueueSync {
 
     private func flushPending() {
         guard let (q, basis) = pendingReplace else { return }
-        Task { await apply(.replaceAll(q), basisVersion: basis) }
+        Task { await apply(.replaceAll(q), basisVersion: basis, isReplay: true) }
     }
 
     // MARK: - Rebase (pure — unit-testable without Firestore)

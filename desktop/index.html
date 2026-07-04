@@ -1,0 +1,474 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Pulsor</title>
+  <style>
+    /* ── Palette: 1:1 from musicApp/Theme.swift ─────────────────────────── */
+    :root {
+      --ink: #0A0809;
+      --smoke: #17100F;
+      --smoke-raised: #211615;
+      --seam: rgba(255,255,255,.07);
+      --bone: #F4EDEA;
+      --bone-dim: rgba(244,237,234,.55);
+      --bone-faint: rgba(244,237,234,.32);
+      --red-light: #FF5E54;
+      --red: #F12B26;
+      --red-deep: #B91414;
+      --rose: #FF6B7D;
+      --danger: #FF6B6B;
+      --red-gradient: linear-gradient(135deg, var(--red-light), var(--red-deep));
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+    [hidden] { display: none !important; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+
+    body {
+      font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+      color: var(--bone);
+      background:
+        radial-gradient(700px at top right, rgba(241,43,38,.10), transparent),
+        radial-gradient(800px at bottom left, rgba(185,20,20,.13), transparent),
+        var(--ink);
+      height: 100vh; overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+
+    header {
+      -webkit-app-region: drag;
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px calc(env(titlebar-area-x, 0px) + 150px) 10px 20px;
+      min-height: 36px;
+    }
+    header button { -webkit-app-region: no-drag; }
+
+    .eyebrow {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 11px; font-weight: 600; letter-spacing: 1.5px;
+      text-transform: uppercase; color: var(--bone-dim);
+    }
+    .eyebrow::before {
+      content: ""; width: 3px; height: 11px; border-radius: 1.5px;
+      background: var(--red);
+    }
+
+    .chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px; font-weight: 600; letter-spacing: .8px;
+      text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
+      background: var(--smoke-raised); border: 1px solid var(--seam);
+      color: var(--bone-dim); max-width: 160px; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .chip.owner { background: var(--red-gradient); color: var(--bone);
+                  border-color: rgba(255,255,255,.18);
+                  box-shadow: 0 3px 10px rgba(241,43,38,.5); }
+    .chip.warn { color: var(--danger); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #46C46E; }
+    .dot.off { background: #E8A33D; }
+
+    #error { color: var(--danger); font-size: 13px; }
+    #busy { color: var(--bone-faint); font-size: 12px; }
+
+    /* ── Setup (first run) ──────────────────────────────────────────────── */
+    #setup {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+    }
+    .setup-card {
+      width: 400px; text-align: center;
+      background: var(--smoke); border: 1px solid var(--seam);
+      border-radius: 20px; padding: 36px 32px;
+    }
+    .empty-disc {
+      width: 84px; height: 84px; border-radius: 50%; margin: 0 auto 16px;
+      background: var(--smoke-raised); border: 1px solid var(--seam);
+      display: flex; align-items: center; justify-content: center; font-size: 32px;
+    }
+    .setup-card h2 { font-size: 20px; font-weight: 800; margin-bottom: 8px; }
+    .setup-card p { font-size: 13px; color: var(--bone-dim); line-height: 1.5;
+                    margin-bottom: 22px; }
+    #secret-input {
+      width: 100%; padding: 12px 16px; text-align: center;
+      font-size: 15px; color: var(--bone); background: var(--ink);
+      border: 1px solid var(--seam); border-radius: 999px; outline: none;
+      font-family: inherit; margin-bottom: 12px;
+    }
+    #secret-input:focus { border-color: rgba(255,94,84,.45); }
+    #secret-input::placeholder { color: var(--bone-faint); }
+    .setup-folder { display: flex; align-items: center; justify-content: center;
+                    gap: 8px; margin-bottom: 18px; font-size: 12px;
+                    color: var(--bone-dim); }
+    #setup-folder-label { max-width: 220px; overflow: hidden;
+                          text-overflow: ellipsis; white-space: nowrap; }
+
+    .pill {
+      width: 100%; padding: 13px; border: 1px solid rgba(255,255,255,.15);
+      border-radius: 999px; background: var(--red-gradient);
+      color: var(--bone); font-size: 16px; font-weight: 700; cursor: pointer;
+      font-family: inherit; transition: transform .15s, opacity .15s;
+      box-shadow: 0 4px 16px rgba(241,43,38,.35);
+    }
+    .pill:active { transform: scale(.97); opacity: .9; }
+    .pill:disabled { filter: grayscale(.6); opacity: .5; cursor: default; }
+
+    button.link {
+      background: none; border: none; color: var(--bone-faint);
+      font-family: inherit; font-size: 12px; cursor: pointer;
+      text-decoration: underline; text-underline-offset: 3px;
+      white-space: nowrap;
+    }
+    button.link:hover { color: var(--bone-dim); }
+
+    /* ── Main: two-column fullscreen ────────────────────────────────────── */
+    #main {
+      flex: 1; display: grid; grid-template-columns: 400px 1fr;
+      gap: 0; min-height: 0;
+    }
+
+    /* Left rail: now playing hero */
+    .rail {
+      display: flex; flex-direction: column; justify-content: center;
+      padding: 12px 36px 24px; border-right: 1px solid var(--seam);
+      min-height: 0;
+    }
+    #track-name {
+      font-size: 30px; font-weight: 800; line-height: 1.2;
+      display: flex; align-items: center; gap: 12px;
+      margin: 18px 0 14px; min-height: 40px;
+    }
+
+    /* Now-playing artwork (YouTube thumb via the track's yt id) */
+    #art {
+      width: 168px; height: 168px; border-radius: 22px; overflow: hidden;
+      background: var(--smoke-raised); border: 1px solid var(--seam);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 46px; color: var(--bone-faint); margin: 10px 0 2px;
+      flex: none;
+    }
+    #art img { width: 100%; height: 100%; object-fit: cover; }
+
+    /* Row thumbnails */
+    .thumb { width: 34px; height: 34px; border-radius: 7px; object-fit: cover;
+             flex: none; background: var(--smoke-raised); }
+
+    /* Beat-locked spectrum (owner-side only; empty while mirroring) */
+    #viz { width: 100%; height: 46px; display: block; margin: 0 0 10px; }
+    /* transform/box-shadow are driven per-frame by the beat engine — a CSS
+       transition on them would smear the nod, so #btn-toggle keeps only the
+       cheap ones. */
+    .transport #btn-toggle { transition: filter .15s, opacity .15s;
+                             will-change: transform, box-shadow; }
+    .eq { display: inline-flex; gap: 2.5px; align-items: flex-end;
+          height: 16px; flex: none; }
+    .eq span { width: 3px; background: var(--red-light); border-radius: 2px;
+               animation: eq .9s ease-in-out infinite alternate; }
+    .eq span:nth-child(1) { height: 8px;  animation-delay: 0s; }
+    .eq span:nth-child(2) { height: 16px; animation-delay: .13s; }
+    .eq span:nth-child(3) { height: 10px; animation-delay: .26s; }
+    @keyframes eq { from { transform: scaleY(.25); } to { transform: scaleY(1); } }
+
+    input[type=range] {
+      -webkit-appearance: none; width: 100%; height: 20px; background: transparent;
+    }
+    input[type=range]::-webkit-slider-runnable-track {
+      height: 4px; border-radius: 2px;
+      background: linear-gradient(to right,
+        var(--red-light) 0%, var(--red) var(--fill, 0%),
+        rgba(244,237,234,.12) var(--fill, 0%));
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+      background: var(--bone); margin-top: -5px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.6);
+    }
+    #time { display: flex; justify-content: space-between;
+            font-size: 12px; font-variant-numeric: tabular-nums;
+            color: var(--bone-dim); margin-top: 2px; }
+
+    .transport { display: flex; justify-content: center; align-items: center;
+                 gap: 26px; margin: 26px 0 8px; }
+    .transport button {
+      width: 52px; height: 52px; border-radius: 50%;
+      background: var(--smoke-raised); border: 1px solid var(--seam);
+      color: var(--bone); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: transform .15s cubic-bezier(.34,1.56,.64,1), opacity .15s, filter .15s;
+    }
+    .transport button:hover { filter: brightness(1.25); }
+    .transport button:active { transform: scale(.9); opacity: .85; }
+    .transport svg { width: 20px; height: 20px; fill: var(--bone); }
+    .transport #btn-toggle {
+      width: 80px; height: 80px;
+      background: var(--red-gradient);
+      border-color: rgba(255,255,255,.20);
+      box-shadow: 0 6px 24px rgba(241,43,38,.55);
+    }
+    .transport #btn-toggle svg { width: 30px; height: 30px; }
+    #btn-playhere { margin-top: 18px; }
+
+    /* Right column: queue + library */
+    .content {
+      display: flex; flex-direction: column; min-height: 0;
+      padding: 12px 28px 0 28px;
+    }
+    .content-head { display: flex; align-items: center; gap: 14px;
+                    margin-bottom: 12px; }
+    #search-input {
+      flex: 1; max-width: 340px; padding: 9px 16px;
+      font-size: 14px; font-family: inherit; color: var(--bone);
+      background: var(--smoke); border: 1px solid var(--seam);
+      border-radius: 999px; outline: none;
+    }
+    #search-input:focus { border-color: rgba(255,94,84,.45); }
+    #search-input::placeholder { color: var(--bone-faint); }
+
+    .panel { background: var(--smoke); border: 1px solid var(--seam);
+             border-radius: 16px; padding: 14px 16px; min-height: 0;
+             display: flex; flex-direction: column; }
+    #upnext-panel { max-height: 30vh; margin-bottom: 14px; }
+    #library-panel { flex: 1; margin-bottom: 14px; }
+    .panel ul { list-style: none; overflow-y: auto; min-height: 0; margin-top: 6px; }
+    .panel li {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 6px; border-bottom: 1px solid var(--seam);
+      font-size: 14px; font-weight: 500; border-radius: 6px;
+    }
+    .panel li:last-child { border-bottom: none; }
+    .panel li:hover { background: rgba(255,255,255,.03); }
+    .panel li .title { flex: 1; overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; }
+    .panel li.ghost .title { color: var(--bone-faint); }
+    .panel li.playing .title { color: var(--red-light); }
+    .panel li.syncing .chip { color: var(--rose);
+      border-color: rgba(255,107,125,.35);
+      animation: pulse 1.2s ease-in-out infinite alternate; }
+    @keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
+    .row-btn {
+      background: none; border: none; color: var(--bone-faint);
+      font-size: 14px; cursor: pointer; padding: 3px 7px;
+      opacity: 0; transition: opacity .15s, color .15s;
+    }
+    .panel li:hover .row-btn { opacity: 1; }
+    .row-btn:hover { color: var(--red-light); }
+    .list-empty { color: var(--bone-faint); font-size: 13px; padding: 12px 4px; }
+    .panel-head { display: flex; align-items: center; }
+    .panel-head .eyebrow { flex: 1; }
+    .count { font-size: 11px; color: var(--bone-faint); }
+
+    /* ── Lyrics panel ───────────────────────────────────────────────────── */
+    #lyrics-panel { max-height: 38vh; margin-bottom: 14px; }
+    #lyrics-panel .row-btn { opacity: 1; font-size: 15px; }
+    #lyrics-sync { display: inline-flex; align-items: center; gap: 2px;
+                   font-variant-numeric: tabular-nums; }
+    #lyrics-body { overflow-y: auto; min-height: 0; margin-top: 6px;
+                   padding: 4px 2px 12px; }
+    .lyr-line { padding: 5px 4px; font-size: 15px; font-weight: 600;
+                color: var(--bone-faint); border-radius: 6px; cursor: pointer;
+                transition: color .2s; }
+    .lyr-line:hover { background: rgba(255,255,255,.03); }
+    .lyr-line.active { color: var(--bone); }
+    .lyr-plain { white-space: pre-wrap; font-size: 14px; line-height: 1.6;
+                 color: var(--bone-dim); user-select: text; }
+    .lyr-msg { color: var(--bone-faint); font-size: 13px; padding: 10px 4px; }
+
+    /* ── Effects (twin of the iOS audio settings sheet) ─────────────────── */
+    #fx { margin-top: 18px; display: grid; gap: 6px; }
+    .fx-row { display: grid; grid-template-columns: 52px 1fr 52px;
+              align-items: center; gap: 10px; font-size: 12px;
+              color: var(--bone-dim); }
+    .fx-row .fx-val { text-align: right; font-variant-numeric: tabular-nums;
+                      color: var(--bone-faint); }
+    .fx-row input[type=range]::-webkit-slider-thumb { width: 11px; height: 11px;
+                                                      margin-top: -3.5px; }
+
+    /* ── Playlists panel ────────────────────────────────────────────────── */
+    #playlists-panel { max-height: 26vh; margin-bottom: 14px; }
+    .pl-new { display: flex; gap: 6px; margin-top: 6px; }
+    #pl-new-input { flex: 1; padding: 6px 12px; font-size: 12px;
+                    font-family: inherit; color: var(--bone);
+                    background: var(--ink); border: 1px solid var(--seam);
+                    border-radius: 999px; outline: none; }
+    #pl-new-input:focus { border-color: rgba(255,94,84,.45); }
+    #pl-new-input::placeholder { color: var(--bone-faint); }
+    #pl-list .row-btn { font-size: 13px; }
+
+    /* ── Download row ───────────────────────────────────────────────────── */
+    .dl-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    #dl-input { flex: 1; max-width: 480px; padding: 8px 14px; font-size: 13px;
+                font-family: inherit; color: var(--bone); background: var(--smoke);
+                border: 1px solid var(--seam); border-radius: 999px; outline: none; }
+    #dl-input:focus { border-color: rgba(255,94,84,.45); }
+    #dl-input::placeholder { color: var(--bone-faint); }
+    #dl-status { font-size: 12px; color: var(--rose); white-space: nowrap;
+                 overflow: hidden; text-overflow: ellipsis; }
+
+    /* ── Handoff banner (popup path when the 60 s auto window has lapsed) ── */
+    #handoff-banner {
+      position: fixed; top: 48px; right: 20px; z-index: 50;
+      display: flex; align-items: center; gap: 12px;
+      background: var(--smoke-raised); border: 1px solid var(--seam);
+      border-radius: 14px; padding: 12px 16px; max-width: 380px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.55); font-size: 13px;
+    }
+    #handoff-banner .pill { width: auto; padding: 8px 16px; font-size: 13px; }
+
+    .statusline {
+      display: flex; align-items: center; gap: 14px;
+      font-size: 12px; color: var(--bone-dim);
+      padding: 8px 20px 12px; border-top: 1px solid var(--seam);
+    }
+    .statusline * { white-space: nowrap; }
+    #repl-status { color: var(--rose); overflow: hidden; text-overflow: ellipsis; }
+    .spacer { flex: 1; }
+    kbd { font: 10px Consolas, monospace; color: var(--bone-faint);
+          border: 1px solid var(--seam); border-radius: 4px; padding: 1px 5px; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="eyebrow">Pulsor</span>
+    <span id="online" class="dot"></span>
+    <span id="busy" hidden>…</span>
+    <span id="error"></span>
+    <span class="spacer" style="flex:1"></span>
+    <span id="role" class="chip" hidden></span>
+  </header>
+
+  <section id="setup">
+    <div class="setup-card">
+      <div class="empty-disc">♫</div>
+      <h2>Connect your home</h2>
+      <p>Enter the same secret phrase here and in the Pulsor iPhone app.
+         Devices sharing the secret find each other automatically —
+         playback, queue, and your library stay in sync.</p>
+      <input id="secret-input" type="password" placeholder="Home secret phrase" />
+      <div class="setup-folder">
+        <button id="btn-setup-folder" class="link">Music folder</button>
+        <span id="setup-folder-label">No folder chosen</span>
+      </div>
+      <button id="btn-connect" class="pill">Connect</button>
+      <button id="btn-demo" class="link" style="margin-top:14px">Preview offline (skip connect)</button>
+    </div>
+  </section>
+
+  <section id="main" hidden>
+    <div class="rail">
+      <div class="eyebrow">Now Playing
+        <span id="owner-dead" class="chip warn" hidden>owner offline</span>
+        <span id="bpm" class="chip" hidden></span>
+      </div>
+      <div id="art">
+        <span id="art-fallback">♫</span>
+        <img id="art-img" hidden alt="" />
+      </div>
+      <div id="track-name">
+        <span class="eq" id="eq" hidden><span></span><span></span><span></span></span>
+        <span id="track-title">Nothing playing</span>
+      </div>
+      <canvas id="viz"></canvas>
+      <input id="progress" type="range" min="0" value="0" />
+      <div id="time"><span id="time-cur">0:00</span><span id="time-dur">0:00</span></div>
+      <div class="transport">
+        <button id="btn-prev" title="Previous">
+          <svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6zM20 5.8v12.4c0 .8-.9 1.3-1.6.9l-9.2-6.2c-.6-.4-.6-1.4 0-1.8l9.2-6.2c.7-.4 1.6.1 1.6.9z"/></svg>
+        </button>
+        <button id="btn-toggle" title="Play/Pause">
+          <svg viewBox="0 0 24 24"><path d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.9-6.2c.6-.4.6-1.4 0-1.8L9.6 4.9c-.7-.4-1.6.1-1.6.9z"/></svg>
+        </button>
+        <button id="btn-next" title="Next">
+          <svg viewBox="0 0 24 24"><path d="M15.5 5H18v14h-2.5zM4 5.8v12.4c0 .8.9 1.3 1.6.9l9.2-6.2c.6-.4.6-1.4 0-1.8L5.6 4.9c-.7-.4-1.6.1-1.6.9z"/></svg>
+        </button>
+      </div>
+      <button id="btn-playhere" class="pill">Play Here</button>
+
+      <div id="fx">
+        <div class="fx-row"><span>Volume</span>
+          <input id="fx-volume" type="range" min="0" max="100" value="100" />
+          <span class="fx-val" id="fx-volume-val">100%</span></div>
+        <div class="fx-row"><span>Speed</span>
+          <input id="fx-speed" type="range" min="50" max="200" value="100" step="5" />
+          <span class="fx-val" id="fx-speed-val">1.00×</span></div>
+        <div class="fx-row"><span>Bass</span>
+          <input id="fx-bass" type="range" min="0" max="12" value="0" />
+          <span class="fx-val" id="fx-bass-val">+0dB</span></div>
+        <div class="fx-row"><span>Reverb</span>
+          <input id="fx-reverb" type="range" min="0" max="100" value="0" />
+          <span class="fx-val" id="fx-reverb-val">0%</span></div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="content-head">
+        <input id="search-input" placeholder="Search your library…" />
+        <button id="btn-lyrics" class="link">Lyrics</button>
+      </div>
+
+      <div class="dl-row">
+        <input id="dl-input" placeholder="Paste a YouTube or Spotify link to download…" />
+        <button id="btn-dl" class="link">Download</button>
+        <span id="dl-status"></span>
+      </div>
+
+      <div class="panel" id="lyrics-panel" hidden>
+        <div class="panel-head">
+          <span class="eyebrow">Lyrics</span>
+          <span class="count" id="lyrics-sync" hidden>
+            <button id="lyr-minus" class="row-btn" title="Lyrics earlier">−</button>
+            <span id="lyr-off">+0.0s</span>
+            <button id="lyr-plus" class="row-btn" title="Lyrics later">+</button>
+          </span>
+        </div>
+        <div id="lyrics-body"></div>
+      </div>
+
+      <div class="panel" id="upnext-panel">
+        <div class="panel-head">
+          <span class="eyebrow">Up Next</span>
+          <span class="count" id="upnext-count"></span>
+        </div>
+        <ul id="queue"></ul>
+      </div>
+
+      <div class="panel" id="playlists-panel">
+        <div class="panel-head">
+          <span class="eyebrow">Playlists</span>
+          <span class="count" id="pl-count"></span>
+        </div>
+        <div class="pl-new">
+          <input id="pl-new-input" placeholder="New playlist…" />
+          <button id="pl-new-btn" class="row-btn" style="opacity:1" title="Create">＋</button>
+        </div>
+        <ul id="pl-list"></ul>
+      </div>
+
+      <div class="panel" id="library-panel">
+        <div class="panel-head">
+          <span class="eyebrow">Library</span>
+          <span class="count" id="lib-status"></span>
+        </div>
+        <ul id="library-list"></ul>
+      </div>
+    </div>
+  </section>
+
+  <div id="handoff-banner" hidden>
+    <span id="handoff-text"></span>
+    <button id="handoff-play" class="pill">Play Here</button>
+    <button id="handoff-dismiss" class="link">Dismiss</button>
+  </div>
+
+  <div class="statusline">
+    <button id="btn-library" class="link">Change music folder</button>
+    <span id="repl-status"></span>
+    <span class="spacer"></span>
+    <span><kbd>Space</kbd> play/pause &nbsp; <kbd>←</kbd><kbd>→</kbd> seek &nbsp; <kbd>L</kbd> lyrics &nbsp; <kbd>F11</kbd> fullscreen</span>
+    <button id="btn-forget" class="link">Forget home</button>
+  </div>
+
+  <script>require("./dist/ui.js");</script>
+</body>
+</html>
