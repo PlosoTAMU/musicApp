@@ -2,15 +2,24 @@ import SwiftUI
 import FirebaseCore // Make sure FirebaseCore is imported
 
 // 1. Define your AppDelegate class to handle Firebase initialization
+// (also the orientation-lock hook — NowPlayingView sets orientationLock;
+// there must be exactly ONE AppDelegate or both declarations fail to build)
 class AppDelegate: NSObject, UIApplicationDelegate {
+    static var orientationLock = UIInterfaceOrientationMask.all
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil
     ) -> Bool {
         // Initialize Firebase
         FirebaseApp.configure()
-        
+
         return true
+    }
+
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        return AppDelegate.orientationLock
     }
 }
 

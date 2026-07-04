@@ -41,13 +41,16 @@ export interface SessionState {
   handoff?: Handoff;
 }
 
-/** Doc shape under libraries/{lib}/tracks — written by LibraryReplicator.swift. */
+/** Doc shape under users/{uid}/library — written by LibraryReplicator.swift.
+ *  LINK-SYNC model: `yt` is the source of truth; each device downloads its
+ *  own audio via yt-dlp. `path` only exists on legacy docs from the old
+ *  Storage-upload model and is no longer read. */
 export interface TrackMeta {
   name: string;
   folder: string;
   yt?: string;
   ext: string;
-  path: string;          // Storage path of the audio binary
+  path?: string;
   by: string;
 }
 

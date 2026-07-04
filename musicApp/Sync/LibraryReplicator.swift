@@ -1,16 +1,15 @@
 import Foundation
 import Combine
 import FirebaseFirestore
-import FirebaseStorage
 
-/// Mobile → cloud replication. Watches DownloadManager's list; any completed
-/// download not yet mirrored is uploaded to Storage with a metadata doc under
-/// libraries/{lib}/tracks. Desktop clients stream down what they lack —
-/// ghost queue entries heal themselves.
+/// Mobile → cloud replication — LINK-SYNC model (free plan, no Storage).
+/// Watches DownloadManager's list; any completed download not yet mirrored
+/// gets a metadata doc under users/{uid}/library with its YouTube id. The
+/// doc IS the track: other devices download their own audio via yt-dlp from
+/// the yt id. No binary ever leaves the device.
 final class LibraryReplicator {
 
     private let db: Firestore
-    private let storage = Storage.storage()
     private var bag = Set<AnyCancellable>()
     private var uid = ""
 
@@ -66,43 +65,27 @@ final class LibraryReplicator {
         let docRef = db.collection("users").document(uid)
             .collection("library").document(id)
         do {
-            // Storage rules reject files ≥100 MB — without this guard the upload
-            // fails forever and re-fires on every downloads change (battery +
-            // cellular drain). Permanent skip, not retry fodder.
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: d.url.path),
-               let size = attrs[.size] as? Int64, size >= 100 * 1024 * 1024 {
-                markUploaded(id)
-                print("⏭️ [Replicator] \(d.name) exceeds 100 MB — skipped")
-                return
-            }
-
             // Another device may have mirrored this track already.
             if try await docRef.getDocument().exists {
                 markUploaded(id)
                 return
             }
 
+            // Metadata only — the yt id is the source of truth; receiving
+            // devices run their own yt-dlp download from it.
             let ext = d.url.pathExtension.isEmpty ? "m4a" : d.url.pathExtension.lowercased()
-            let path = "users/\(uid)/audio/\(id).\(ext)"
-            let meta = StorageMetadata()
-            meta.contentType = "audio/\(ext == "mp3" ? "mpeg" : ext)"
-            _ = try await storage.reference(withPath: path)
-                .putFileAsync(from: d.url, metadata: meta)
-
-            // Metadata doc LAST — desktop listeners only ever see tracks whose
-            // binary is already fully in Storage.
             var doc: [String: Any] = [
-                "name": d.name, "folder": "", "ext": ext, "path": path,
+                "name": d.name, "folder": "", "ext": ext,
                 "by": SyncDevice.id, "at": FieldValue.serverTimestamp(),
             ]
             if let yt = d.videoID { doc["yt"] = yt }
             try await docRef.setData(doc)
 
             markUploaded(id)
-            print("☁️ [Replicator] Uploaded \(d.name)")
+            print("☁️ [Replicator] Mirrored \(d.name)")
         } catch {
             // Left unmarked — retried on the next downloads change or app launch.
-            print("❌ [Replicator] Upload failed for \(d.name): \(error)")
+            print("❌ [Replicator] Mirror failed for \(d.name): \(error)")
         }
     }
 

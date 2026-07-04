@@ -3,7 +3,7 @@
 // changes (row building is the expensive part).
 import { ipcRenderer } from "electron";
 import { pathToFileURL } from "url";
-import { db, storage, bootstrapAuth } from "./firebase";
+import { db, bootstrapAuth } from "./firebase";
 import { SessionCoordinator } from "./coordinator";
 import { SyncEngine } from "./engine";
 import { Replicator } from "./replicator";
@@ -17,7 +17,7 @@ import { PlaylistSync, CloudPlaylist } from "./playlists";
 
 const coord = new SessionCoordinator(db);
 const engine = new SyncEngine(db, coord);
-const replicator = new Replicator(db, storage);
+const replicator = new Replicator(db);
 const lyricsStore = new LyricsStore(db);
 const beatFeed = new BeatFeed();
 const playlistSync = new PlaylistSync(db);

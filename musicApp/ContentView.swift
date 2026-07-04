@@ -2110,15 +2110,6 @@ struct EdgeVisualizerView: View {
 }
 
 
-// MARK: - AppDelegate for orientation lock
-class AppDelegate: NSObject, UIApplicationDelegate {
-    static var orientationLock = UIInterfaceOrientationMask.all
-    
-    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        return AppDelegate.orientationLock
-    }
-}
-
 // MARK: - Auto-Scrolling Text View
 struct ScrollingTextView: View {
     let text: String
