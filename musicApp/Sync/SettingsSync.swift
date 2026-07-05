@@ -63,6 +63,12 @@ final class SettingsSync {
     private func push(speed: Double, bass: Double, reverb: Double) {
         guard !uid.isEmpty else { return }
         if speed == lastAppliedSpeed && bass == lastAppliedBass && reverb == lastAppliedReverb { return }
+
+        // Update lastApplied* to track "last state we believe Firestore already has"
+        lastAppliedSpeed = speed
+        lastAppliedBass = bass
+        lastAppliedReverb = reverb
+
         let doc: [String: Any] = [
             "speed": speed, "bassDb": bass, "reverbPct": reverb,
             "updatedBy": SyncDevice.id, "at": ServerClock.shared.nowMs,
