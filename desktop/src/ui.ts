@@ -14,6 +14,7 @@ import { LyricsStore, LyricLine, parseLRC, activeIndex } from "./lyrics";
 import { BeatFeed, BeatOutput } from "./beat";
 import { downloadTrack } from "./download";
 import { PlaylistSync, CloudPlaylist } from "./playlists";
+import { SettingsSync } from "./settingsSync";
 
 const coord = new SessionCoordinator(db);
 const engine = new SyncEngine(db, coord);
@@ -21,6 +22,7 @@ const replicator = new Replicator(db);
 const lyricsStore = new LyricsStore(db);
 const beatFeed = new BeatFeed();
 const playlistSync = new PlaylistSync(db);
+const settingsSync = new SettingsSync(db);
 
 const SECRET_KEY = "pulsor.secret";
 const DIR_KEY = "sync.music.dir";
@@ -73,6 +75,7 @@ async function connect(secret: string) {
   await withTimeout(coord.attach(uid), "Session load");
   connectStage = "";
   playlistSync.start(uid);
+  settingsSync.start(uid);
   if (musicDir) {
     engine.loadLibrary(musicDir);
     replicator.onChange = renderNow;
@@ -200,9 +203,16 @@ function wire() {
 
   // Effects — speed also republishes rate (followers extrapolate with it).
   bindFx("fx-volume", v => { fx.volume = v / 100; });
-  bindFx("fx-speed", v => { fx.speed = v / 100; }, true);
-  bindFx("fx-bass", v => { fx.bass = v; });
-  bindFx("fx-reverb", v => { fx.reverb = v / 100; });
+  bindFx("fx-speed", v => { fx.speed = v / 100; pushSettingsDebounced(); }, true);
+  bindFx("fx-bass", v => { fx.bass = v; pushSettingsDebounced(); });
+  bindFx("fx-reverb", v => { fx.reverb = v / 100; pushSettingsDebounced(); });
+
+  settingsSync.onRemote = s => {
+    fx.speed = Math.min(Math.max(s.speed, 0.5), 2.0);
+    fx.bass = Math.min(Math.max(s.bassDb, 0), 12);
+    fx.reverb = Math.min(Math.max(s.reverbPct, 0), 100) / 100;
+    initFxSliders(); // updates slider DOM values + calls applyFx()
+  };
 
   // Downloads
   $("btn-dl").onclick = () => void startDownload();
@@ -233,6 +243,14 @@ const fx = ((): { volume: number; speed: number; bass: number; reverb: number } 
   try { return { ...base, ...JSON.parse(localStorage.getItem(FX_KEY) ?? "{}") }; }
   catch { return base; }
 })();
+
+let settingsPushTimer: ReturnType<typeof setTimeout> | null = null;
+function pushSettingsDebounced() {
+  if (settingsPushTimer) clearTimeout(settingsPushTimer);
+  settingsPushTimer = setTimeout(() => {
+    settingsSync.push({ speed: fx.speed, bassDb: fx.bass, reverbPct: fx.reverb * 100 });
+  }, 300);
+}
 
 function applyFx(publishRate = false) {
   const el = engine.player.element;
