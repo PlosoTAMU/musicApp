@@ -88,8 +88,7 @@ final class LibraryReplicator {
         for change in snap.documentChanges {
             let id = change.document.documentID
             if change.type == .removed { meta.removeValue(forKey: id); continue }
-            guard let data = change.document.data(),
-                  let m = TrackMeta(dict: data) else { continue }
+            guard let m = TrackMeta(dict: change.document.data()) else { continue }
             meta[id] = m
             if let yt = m.yt, !hasLocally(m),
                !downloadingYT.contains(yt), !downQueue.contains(where: { $0.yt == yt }) {
