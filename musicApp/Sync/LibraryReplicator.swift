@@ -65,6 +65,12 @@ final class LibraryReplicator {
 
     func activate(uid: String) {
         self.uid = uid
+        // Clear down-sync state to prevent stale metadata from interfering across account switches.
+        meta.removeAll()
+        downQueue.removeAll()
+        downloadingYT.removeAll()
+        downFails.removeAll()
+        processedFailures.removeAll()
         listener?.remove()
         listener = db.collection("users").document(uid).collection("library")
             .addSnapshotListener { [weak self] snap, _ in
