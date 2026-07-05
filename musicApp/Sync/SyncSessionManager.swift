@@ -27,6 +27,7 @@ final class SyncSessionManager: ObservableObject {
     private var uid: String = ""
     private(set) var replicator: LibraryReplicator?
     private(set) var playlistSync: PlaylistSync?
+    private(set) var settingsSync: SettingsSync?
     private var routeMonitor: RouteHandoffMonitor?
 
     private static let secretKey = "sync.home.secret"
@@ -80,6 +81,7 @@ final class SyncSessionManager: ObservableObject {
         try await coordinator.attach(uid: uid)
         replicator?.activate(uid: uid)
         playlistSync?.activate(uid: uid)
+        settingsSync?.activate(uid: uid)
         UserDefaults.standard.set(secret, forKey: Self.secretKey)
         isConnected = true
     }
@@ -110,6 +112,13 @@ final class SyncSessionManager: ObservableObject {
                                        failedDownloads: failedDownloads,
                                        findDuplicate: findDuplicate, startDownload: startDownload)
         if !uid.isEmpty { replicator?.activate(uid: uid) }
+    }
+
+    /// Wire two-way effects-settings sync:
+    ///   sync.attachSettings(player: audioPlayer)
+    func attachSettings(player: AudioPlayerManager) {
+        settingsSync = SettingsSync(db: coordinator.db, player: player)
+        if !uid.isEmpty { settingsSync?.activate(uid: uid) }
     }
 
     /// Handoff: this device becomes the owner and audio continues here.

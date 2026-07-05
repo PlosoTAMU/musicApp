@@ -102,6 +102,7 @@ struct ContentView: View {
                 syncManager.attachPlaylists(manager: playlistManager) { [weak downloadManager] id in
                     downloadManager?.getDownload(byID: id)
                 }
+                syncManager.attachSettings(player: audioPlayer)
                 TrackRef.ytIDProvider = { [weak downloadManager] track in
                     downloadManager?.getDownload(byID: track.id)?.videoID
                 }
