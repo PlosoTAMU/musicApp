@@ -74,6 +74,27 @@ struct TrackRef: Equatable {
     }
 }
 
+// MARK: - Cloud library metadata (LINK-SYNC doc shape)
+// Wire-format twin of desktop/src/protocol.ts's TrackMeta. Written by
+// LibraryReplicator's upload side; read by both the upload-dedupe check and
+// the down-sync listener.
+struct TrackMeta {
+    let name: String
+    let folder: String
+    let yt: String?
+    let ext: String
+    let by: String
+
+    init?(dict: [String: Any]) {
+        guard let name = dict["name"] as? String,
+              let folder = dict["folder"] as? String,
+              let ext = dict["ext"] as? String,
+              let by = dict["by"] as? String else { return nil }
+        self.name = name; self.folder = folder; self.ext = ext; self.by = by
+        self.yt = dict["yt"] as? String
+    }
+}
+
 protocol TrackResolving {
     func resolve(_ ref: TrackRef) -> Track?
 }
