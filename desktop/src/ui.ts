@@ -167,6 +167,7 @@ function wire() {
     localStorage.removeItem(SECRET_KEY);
     replicator.stop();
     playlistSync.stop();
+    settingsSync.stop();
     coord.detach();
     renderNow();
   };
