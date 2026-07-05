@@ -91,7 +91,14 @@ struct ContentView: View {
                 // Cloud replication + strongest cross-device track key. Done here
                 // (not init) so the publishers observe fully-constructed objects.
                 syncManager.attachReplication(
-                    downloads: downloadManager.$downloads.eraseToAnyPublisher())
+                    downloads: downloadManager.$downloads.eraseToAnyPublisher(),
+                    failedDownloads: downloadManager.$failedDownloads.eraseToAnyPublisher(),
+                    findDuplicate: { [weak downloadManager] yt in
+                        downloadManager?.findDuplicateByVideoID(videoID: yt, source: .youtube)
+                    },
+                    startDownload: { [weak downloadManager] url, yt, source, title in
+                        downloadManager?.startBackgroundDownload(url: url, videoID: yt, source: source, title: title)
+                    })
                 syncManager.attachPlaylists(manager: playlistManager) { [weak downloadManager] id in
                     downloadManager?.getDownload(byID: id)
                 }
