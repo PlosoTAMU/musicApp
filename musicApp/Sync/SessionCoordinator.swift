@@ -91,9 +91,13 @@ final class SessionCoordinator: ObservableObject {
             guard let self, let snap else { return }
             Task { @MainActor in self.handleSnapshot(snap) }
         }
-        // Presence + clock refresh: 60s keeps skew bounded and marks us alive.
+        // Clock refresh: keeps skew bounded (engine tolerates ~750ms; device
+        // clocks don't drift anywhere near that fast on this cycle). 5 min
+        // instead of 60s — this fires for every connected device, foreground
+        // or backgrounded (audio background mode keeps it alive), and each
+        // tick is a forced Firestore write + server read.
         clockTimer?.invalidate()   // re-attach must not stack timers
-        clockTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        clockTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { [weak self] in
                 guard let self else { return }
                 let uid = await self.uid

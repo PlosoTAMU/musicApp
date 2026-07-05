@@ -84,8 +84,8 @@ struct ContentView: View {
                     }
             }
             .onAppear {
-                startFPSTracking()
                 #if DEBUG
+                startFPSTracking()
                 MainThreadWatchdog.shared.start()
                 #endif
                 // Cloud replication + strongest cross-device track key. Done here
@@ -449,23 +449,29 @@ struct MiniPlayerBar: View {
     @ObservedObject var downloadManager: DownloadManager
     @Binding var showNowPlaying: Bool
     @State private var backgroundImage: UIImage?
-    
+    // Resolved once per track change (see refreshThumbnailPath()) instead of
+    // recomputed in `body` on every 0.5s playback tick — the lookup involves
+    // an array scan plus a disk `stat`, and the result never changes for the
+    // same track.
+    @State private var cachedThumbnailPath: String?
+
     private var progress: CGFloat {
         guard audioPlayer.duration > 0 else { return 0 }
         return CGFloat(min(max(audioPlayer.currentTime / audioPlayer.duration, 0), 1))
     }
-    
+
     /// Resolve artwork the same way the lists do — through the Download
     /// record's stored thumbnail path — instead of guessing the filename
     /// from the audio URL. Falls back to the audio-derived path.
-    private var currentThumbnailPath: String? {
-        guard let track = audioPlayer.currentTrack else { return nil }
+    private func refreshThumbnailPath() {
+        guard let track = audioPlayer.currentTrack else { cachedThumbnailPath = nil; return }
         if let stored = downloadManager.getDownload(byID: track.id)?.resolvedThumbnailPath,
            FileManager.default.fileExists(atPath: stored) {
-            return stored
+            cachedThumbnailPath = stored
+            return
         }
         let derived = Artwork.thumbnailURL(forAudioFileURL: track.url).path
-        return FileManager.default.fileExists(atPath: derived) ? derived : nil
+        cachedThumbnailPath = FileManager.default.fileExists(atPath: derived) ? derived : nil
     }
     
     var body: some View {
@@ -491,7 +497,7 @@ struct MiniPlayerBar: View {
                 // Left side - thumbnail and text (fully tappable)
                 HStack(spacing: 12) {
                     AsyncThumbnailView(
-                        thumbnailPath: currentThumbnailPath,
+                        thumbnailPath: cachedThumbnailPath,
                         size: 42,
                         cornerRadius: 10
                     )
@@ -573,13 +579,15 @@ struct MiniPlayerBar: View {
         .padding(.horizontal, 12)
         .padding(.bottom, 7)
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
+            refreshThumbnailPath()
             updateBackgroundImage()
         }
         .onAppear {
+            refreshThumbnailPath()
             updateBackgroundImage()
         }
     }
-    
+
     private func updateBackgroundImage() {
         guard let track = audioPlayer.currentTrack else {
             backgroundImage = nil
@@ -587,7 +595,7 @@ struct MiniPlayerBar: View {
         }
         
         let audioURL = track.url
-        let path = currentThumbnailPath
+        let path = cachedThumbnailPath
         // Disk read + crop off the main thread so swapping tracks never
         // hitches the UI (the foreground artwork is handled by AsyncThumbnailView).
         DispatchQueue.global(qos: .userInitiated).async {
@@ -627,6 +635,14 @@ struct NowPlayingView: View {
     @State private var showUpNext = false
     @State private var showLyrics = false
     @StateObject private var lyrics = LyricsService()
+    // Resolved once per track change (see refreshThumbnailImage()) instead of
+    // recomputed in `body` on every 0.5s playback tick.
+    @State private var cachedNowPlayingThumbnail: UIImage?
+    // Title text-width measurement (Core Text) only changes with the track,
+    // not with the 0.5s playback tick — cache it instead of remeasuring every
+    // time titleView's body re-evaluates.
+    @State private var cachedTitleText: String = "Unknown"
+    @State private var cachedTitleWidth: CGFloat = 0
     // Panel position, owned by ContentView so the mini player can crossfade with
     // the slide. A full screen below = off-screen (onAppear animates it up);
     // dismiss animates it back down. Offset-only (no SwiftUI .transition).
@@ -696,6 +712,8 @@ struct NowPlayingView: View {
         }
         .onAppear {
             updateBackgroundImage()
+            refreshThumbnailImage()
+            refreshTitleMetrics()
             lockOrientation(.portrait)
             audioPlayer.startVisualization()
             // Slide up into place (panel starts off-screen below).
@@ -707,6 +725,8 @@ struct NowPlayingView: View {
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             updateBackgroundImage()
+            refreshThumbnailImage()
+            refreshTitleMetrics()
         }
         // Plain .gesture (NOT highPriority) so child controls — the volume bar
         // and progress slider — still receive their own drags. The dismiss drag
@@ -911,7 +931,7 @@ struct NowPlayingView: View {
     private var thumbnailView: some View {
         PulsingThumbnailView(
             visualizerState: audioPlayer.visualizerState,
-            thumbnailImage: getThumbnailImage(for: audioPlayer.currentTrack),
+            thumbnailImage: cachedNowPlayingThumbnail,
             onTap: {
                 if audioPlayer.isPlaying {
                     audioPlayer.pause()
@@ -1022,19 +1042,17 @@ struct NowPlayingView: View {
     private var titleView: some View {
         VStack(spacing: 4) {
             GeometryReader { geometry in
-                let titleText = audioPlayer.currentTrack?.name ?? "Unknown"
-                let textWidth = titleText.widthOfString(usingFont: Theme.roundedUIFont(size: 28, weight: .heavy))
-                let needsScroll = textWidth > geometry.size.width
-                
+                let needsScroll = cachedTitleWidth > geometry.size.width
+
                 ZStack {
                     if needsScroll {
                         ScrollingTextView(
-                            text: titleText,
+                            text: cachedTitleText,
                             font: Theme.display(28),
                             width: geometry.size.width
                         )
                     } else {
-                        Text(titleText)
+                        Text(cachedTitleText)
                             .font(Theme.display(28))
                             .foregroundColor(Theme.bone)
                             .frame(width: geometry.size.width, alignment: .center)
@@ -1168,10 +1186,20 @@ struct NowPlayingView: View {
             backgroundImage = nil
             return
         }
-        
+
+        let audioURL = track.url
         // Screen-aspect crop for the full-screen backdrop
         let screenAspect = UIScreen.main.bounds.width / UIScreen.main.bounds.height
-        backgroundImage = Artwork.croppedBackground(forAudioFileURL: track.url, aspect: screenAspect)
+        // Disk read + crop off the main thread so this doesn't compete with
+        // the sheet's slide-up animation (matches MiniPlayerBar's version).
+        DispatchQueue.global(qos: .userInitiated).async {
+            let cropped = Artwork.croppedBackground(forAudioFileURL: audioURL, aspect: screenAspect)
+            DispatchQueue.main.async {
+                if self.audioPlayer.currentTrack?.url == audioURL {
+                    self.backgroundImage = cropped
+                }
+            }
+        }
     }
     
     private func formatTime(_ time: Double) -> String {
@@ -1180,9 +1208,24 @@ struct NowPlayingView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
     
+    /// Resolves and caches the Now Playing thumbnail for the current track.
+    /// Called on track change (onAppear/onChange), not from `body` — the path
+    /// resolution below never changes for the same track.
+    private func refreshThumbnailImage() {
+        cachedNowPlayingThumbnail = getThumbnailImage(for: audioPlayer.currentTrack)
+    }
+
+    /// Re-measures the title text width once per track change instead of on
+    /// every playback tick — see cachedTitleText/cachedTitleWidth above.
+    private func refreshTitleMetrics() {
+        let text = audioPlayer.currentTrack?.name ?? "Unknown"
+        cachedTitleText = text
+        cachedTitleWidth = text.widthOfString(usingFont: Theme.roundedUIFont(size: 28, weight: .heavy))
+    }
+
     private func getThumbnailImage(for track: Track?) -> UIImage? {
         guard let track = track else { return nil }
-        
+
         // Prefer the Download record's stored thumbnail path (the same source
         // the lists use); fall back to the audio-derived path.
         let pathString: String
@@ -1194,13 +1237,13 @@ struct NowPlayingView: View {
         } else {
             return nil
         }
-        
+
         // ⚡ Use a size-specific cache key so list thumbnails (48px) don't conflict with NowPlaying (200px)
         let cacheKey = pathString + "_nowplaying"
         if let cached = ThumbnailCache.shared.get(cacheKey) {
             return cached
         }
-        
+
         // Load full resolution for NowPlaying (200pt = 600px @3x retina)
         guard let image = UIImage(contentsOfFile: pathString) else { return nil }
         ThumbnailCache.shared.set(cacheKey, image: image)

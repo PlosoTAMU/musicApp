@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import ImageIO
 
 // MARK: - Theme
 // Centralized design system for the entire app.
@@ -368,13 +369,13 @@ enum Artwork {
         thumbnailsDirectory.appendingPathComponent("\(audioURL.lastPathComponent).jpg")
     }
     
-    /// Loads the raw thumbnail image for an audio file, if one exists on disk.
+    /// Loads the thumbnail image for an audio file, if one exists on disk —
+    /// downsampled, since every caller only ever blurs this into a backdrop
+    /// (full-resolution decode buys nothing once blur destroys the detail).
     static func image(forAudioFileURL audioURL: URL) -> UIImage? {
-        let path = thumbnailURL(forAudioFileURL: audioURL).path
-        guard FileManager.default.fileExists(atPath: path) else { return nil }
-        return UIImage(contentsOfFile: path)
+        downsampledImage(atPath: thumbnailURL(forAudioFileURL: audioURL).path)
     }
-    
+
     /// Loads the thumbnail and center-crops it to the given aspect ratio
     /// (width / height). Used for the blurred backgrounds behind the mini
     /// player (wide) and the Now Playing screen (screen aspect).
@@ -382,12 +383,30 @@ enum Artwork {
         guard let original = image(forAudioFileURL: audioURL) else { return nil }
         return crop(original, aspect: aspect)
     }
-    
+
     /// Same crop, but from an explicit on-disk thumbnail path.
     static func croppedBackground(atPath path: String, aspect: CGFloat) -> UIImage? {
-        guard FileManager.default.fileExists(atPath: path),
-              let original = UIImage(contentsOfFile: path) else { return nil }
+        guard let original = downsampledImage(atPath: path) else { return nil }
         return crop(original, aspect: aspect)
+    }
+
+    /// ImageIO thumbnail decode — decodes directly at `maxPixelSize` instead of
+    /// loading the full-resolution source (up to 1920×1080) then discarding
+    /// the extra detail to a blur. 900px covers every backdrop use here at
+    /// full-screen retina width with headroom.
+    private static func downsampledImage(atPath path: String, maxPixelSize: Int = 900) -> UIImage? {
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage)
     }
     
     private static func crop(_ original: UIImage, aspect: CGFloat) -> UIImage {

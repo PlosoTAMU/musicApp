@@ -132,9 +132,10 @@ struct SessionView: View {
                 Text(playback?.track?.name ?? "Nothing playing").font(.headline)
 
                 if let pb = playback, pb.durationMs > 0 {
-                    let live = Double(coordinator.role.isOwner
-                        ? pb.positionMs(atServerMs: ServerClock.shared.nowMs)
-                        : engine.mirrorPositionMs)
+                    // Computed on demand each tick — this TimelineView already
+                    // re-invokes every 0.5s while (and only while) visible, so
+                    // no separate always-on timer/published value is needed.
+                    let live = Double(pb.positionMs(atServerMs: ServerClock.shared.nowMs))
                     let dur = Double(pb.durationMs)
 
                     Slider(

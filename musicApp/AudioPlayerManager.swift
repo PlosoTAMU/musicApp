@@ -102,6 +102,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     // Debounce timer for saving track settings to disk
     private var saveSettingsTimer: Timer?
+
+    // Lock-screen artwork is unchanged for the life of a track — cache the
+    // decoded result instead of re-decoding on every updateNowPlayingInfo() call.
+    private var cachedNowPlayingArtwork: (trackID: UUID, artwork: MPMediaItemArtwork)?
     
     var savedPlaybackSpeed: Double = 1.0
     private var currentPlaybackSessionID = UUID()
@@ -265,10 +269,15 @@ class AudioPlayerManager: NSObject, ObservableObject {
             bassBoost: bassBoost
         )
         
-        // Debounce disk write — coalesce rapid slider changes into a single write
-        saveSettingsTimer?.invalidate()
-        saveSettingsTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-            self?.saveTrackSettingsToDisk()
+        // Debounce disk write — coalesce rapid slider changes into a single write.
+        // Push the existing timer's fire date out rather than invalidating and
+        // reallocating one: this runs on every slider tick during a drag (30-100+/sec).
+        if let timer = saveSettingsTimer, timer.isValid {
+            timer.fireDate = Date().addingTimeInterval(0.5)
+        } else {
+            saveSettingsTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                self?.saveTrackSettingsToDisk()
+            }
         }
     }
     
@@ -604,12 +613,18 @@ class AudioPlayerManager: NSObject, ObservableObject {
         nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
         nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
         
-        if let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
-           let image = UIImage(contentsOfFile: thumbnailPath.path) {
+        // Artwork is unchanged for the whole time a track plays — this runs every
+        // 5s during playback, so decode once per track and reuse instead of
+        // re-reading + re-decoding the same file on every call.
+        if let cached = cachedNowPlayingArtwork, cached.trackID == track.id {
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = cached.artwork
+        } else if let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
+                  let image = UIImage(contentsOfFile: thumbnailPath.path) {
             let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            cachedNowPlayingArtwork = (track.id, artwork)
             nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
         }
-        
+
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
     
@@ -1166,7 +1181,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 reverb2.wetDryMix = plateMix
             }
             
+            #if DEBUG
             print("🌊 Reverb: hall=\(reverb1.wetDryMix)%, plate=\(reverb2.wetDryMix)% (user: \(amount)%)")
+            #endif
         }
     }
     
@@ -1374,7 +1391,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 self.updateNowPlayingInfo()
             }
             
+            #if DEBUG
             print("⚡ Speed: \(self.playbackSpeed)x, overlap: \(timePitch.overlap)")
+            #endif
         }
     }
     
@@ -1394,7 +1413,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 timePitch.overlap = max(timePitch.overlap, 24)
             }
             
+            #if DEBUG
             print("🎵 Pitch: \(self.pitchShift) st, overlap: \(timePitch.overlap)")
+            #endif
         }
     }
     
@@ -1454,7 +1475,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 eq.bands[4].gain = 0
             }
             
+            #if DEBUG
             print("🔊 Bass EQ: sub=\(eq.bands[0].gain)dB, mid=\(eq.bands[1].gain)dB, mud=\(eq.bands[2].gain)dB, presence=\(eq.bands[3].gain)dB, air=\(eq.bands[4].gain)dB")
+            #endif
         }
     }
     

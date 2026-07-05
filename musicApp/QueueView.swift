@@ -1,8 +1,48 @@
 import SwiftUI
 
 struct QueueView: View {
-    @ObservedObject var audioPlayer: AudioPlayerManager
+    // Plain reference, not @ObservedObject: this view needs to react to
+    // currentTrack/queue/previousQueue/playlist-mode changes, but NOT to
+    // currentTime/duration (which tick every 0.5s during playback) —
+    // @ObservedObject's objectWillChange fires on ANY @Published change on
+    // the object, so it can't distinguish between the two. Mirroring just
+    // the fields this view actually needs (below) via onReceive subscribes
+    // to those specific Combine publishers instead of the whole-object signal.
+    let audioPlayer: AudioPlayerManager
     @ObservedObject var downloadManager: DownloadManager
+
+    @State private var currentTrack: Track?
+    @State private var isPlaying = false
+    @State private var isPlaylistMode = false
+    @State private var queue: [Track] = []
+    @State private var previousQueue: [Track] = []
+    @State private var currentPlaylist: [Track] = []
+    @State private var currentIndex: Int = 0
+
+    // Local mirrors of AudioPlayerManager's identically-named computed
+    // properties, verbatim, so this view's rendering doesn't depend on an
+    // unobserved live read of `audioPlayer` for its actual list content.
+    private var upNextTracks: [Track] {
+        if isPlaylistMode && !currentPlaylist.isEmpty {
+            var upcoming: [Track] = []
+            upcoming.append(contentsOf: queue)
+            let nextIndex = currentIndex + 1
+            if nextIndex < currentPlaylist.count {
+                upcoming.append(contentsOf: currentPlaylist[nextIndex...])
+            }
+            return upcoming
+        }
+        return queue
+    }
+
+    private var playlistUpNextTracks: [Track] {
+        guard isPlaylistMode, !currentPlaylist.isEmpty else { return [] }
+        let nextIndex = currentIndex + 1
+        if nextIndex < currentPlaylist.count {
+            return Array(currentPlaylist[nextIndex...])
+        }
+        return []
+    }
 
     var body: some View {
         NavigationView {
@@ -11,25 +51,25 @@ struct QueueView: View {
 
                 VStack(spacing: 0) {
                     // Status strip — what the player is currently drawing from
-                    if audioPlayer.currentTrack != nil {
+                    if currentTrack != nil {
                         HStack(spacing: 8) {
-                            Image(systemName: audioPlayer.isPlaylistMode ? "music.note.list" : "line.3.horizontal")
+                            Image(systemName: isPlaylistMode ? "music.note.list" : "line.3.horizontal")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(Theme.emberLight)
 
-                            Text(audioPlayer.isPlaylistMode ? "PLAYING FROM PLAYLIST" : "PLAYING FROM QUEUE")
+                            Text(isPlaylistMode ? "PLAYING FROM PLAYLIST" : "PLAYING FROM QUEUE")
                                 .font(Theme.eyebrowFont)
                                 .tracking(1.5)
                                 .foregroundColor(Theme.boneDim)
 
                             Spacer()
 
-                            if audioPlayer.isPlaylistMode {
-                                Text("\(audioPlayer.upNextTracks.count + 1) songs")
+                            if isPlaylistMode {
+                                Text("\(upNextTracks.count + 1) songs")
                                     .font(Theme.caption(11))
                                     .foregroundColor(Theme.boneFaint)
                             } else {
-                                Text("\(audioPlayer.previousQueue.count + 1 + audioPlayer.queue.count) songs")
+                                Text("\(previousQueue.count + 1 + queue.count) songs")
                                     .font(Theme.caption(11))
                                     .foregroundColor(Theme.boneFaint)
                             }
@@ -41,7 +81,7 @@ struct QueueView: View {
                         .padding(.bottom, 6)
                     }
 
-                    if audioPlayer.currentTrack == nil && audioPlayer.previousQueue.isEmpty {
+                    if currentTrack == nil && previousQueue.isEmpty {
                         VStack {
                             Spacer()
                             EmptyStateView(
@@ -51,17 +91,18 @@ struct QueueView: View {
                             )
                             Spacer()
                         }
-                    } else if audioPlayer.currentTrack == nil && !audioPlayer.previousQueue.isEmpty {
+                    } else if currentTrack == nil && !previousQueue.isEmpty {
                         // Show only previous songs when playback has ended
                         List {
                             Section(header: SectionEyebrow("Previously Played")) {
-                                ForEach(audioPlayer.previousQueue) { track in
+                                ForEach(previousQueue) { track in
                                     QueueTrackRow(
                                         track: track,
                                         downloadManager: downloadManager,
                                         isPlaying: false,
                                         isPrevious: true,
-                                        audioPlayer: audioPlayer
+                                        audioPlayer: audioPlayer,
+                                        isEnginePlaying: isPlaying
                                     )
                                     .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
                                     .listRowBackground(Color.clear)
@@ -75,15 +116,16 @@ struct QueueView: View {
                     } else {
                         List {
                             // Previous songs (most recent at bottom)
-                            if !audioPlayer.previousQueue.isEmpty {
+                            if !previousQueue.isEmpty {
                                 Section(header: SectionEyebrow("Previous")) {
-                                    ForEach(audioPlayer.previousQueue) { track in
+                                    ForEach(previousQueue) { track in
                                         QueueTrackRow(
                                             track: track,
                                             downloadManager: downloadManager,
                                             isPlaying: false,
                                             isPrevious: true,
-                                            audioPlayer: audioPlayer
+                                            audioPlayer: audioPlayer,
+                                            isEnginePlaying: isPlaying
                                         )
                                         .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
                                         .listRowBackground(Color.clear)
@@ -95,7 +137,7 @@ struct QueueView: View {
                             // Current track
                             Section(header: HStack {
                                 SectionEyebrow("Now Playing")
-                                if audioPlayer.isPlaying {
+                                if isPlaying {
                                     HStack(spacing: 4) {
                                         Circle()
                                             .fill(Theme.emberLight)
@@ -108,11 +150,12 @@ struct QueueView: View {
                                 }
                             }) {
                                 QueueTrackRow(
-                                    track: audioPlayer.currentTrack!,
+                                    track: currentTrack!,
                                     downloadManager: downloadManager,
                                     isPlaying: true,
                                     isPrevious: false,
-                                    audioPlayer: audioPlayer
+                                    audioPlayer: audioPlayer,
+                                    isEnginePlaying: isPlaying
                                 )
                                 .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
                                 .listRowBackground(Color.clear)
@@ -120,17 +163,18 @@ struct QueueView: View {
                             }
 
                             // Up next
-                            if audioPlayer.isPlaylistMode {
+                            if isPlaylistMode {
                                 // Show queued songs first (user-added)
-                                if !audioPlayer.queue.isEmpty {
+                                if !queue.isEmpty {
                                     Section(header: SectionEyebrow("Up Next")) {
-                                        ForEach(audioPlayer.queue) { track in
+                                        ForEach(queue) { track in
                                             QueueTrackRow(
                                                 track: track,
                                                 downloadManager: downloadManager,
                                                 isPlaying: false,
                                                 isPrevious: false,
-                                                audioPlayer: audioPlayer
+                                                audioPlayer: audioPlayer,
+                                                isEnginePlaying: isPlaying
                                             )
                                             .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
                                             .listRowBackground(Color.clear)
@@ -146,7 +190,7 @@ struct QueueView: View {
                                 }
 
                                 // Then show remaining playlist tracks
-                                let playlistUpNext = audioPlayer.playlistUpNextTracks
+                                let playlistUpNext = playlistUpNextTracks
                                 if !playlistUpNext.isEmpty {
                                     Section(header: SectionEyebrow("Up Next from Playlist")) {
                                         ForEach(playlistUpNext) { track in
@@ -155,7 +199,8 @@ struct QueueView: View {
                                                 downloadManager: downloadManager,
                                                 isPlaying: false,
                                                 isPrevious: false,
-                                                audioPlayer: audioPlayer
+                                                audioPlayer: audioPlayer,
+                                                isEnginePlaying: isPlaying
                                             )
                                             .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
                                             .listRowBackground(Color.clear)
@@ -164,15 +209,16 @@ struct QueueView: View {
                                     }
                                 }
                             } else {
-                                if !audioPlayer.queue.isEmpty {
+                                if !queue.isEmpty {
                                     Section(header: SectionEyebrow("Up Next")) {
-                                        ForEach(audioPlayer.queue) { track in
+                                        ForEach(queue) { track in
                                             QueueTrackRow(
                                                 track: track,
                                                 downloadManager: downloadManager,
                                                 isPlaying: false,
                                                 isPrevious: false,
-                                                audioPlayer: audioPlayer
+                                                audioPlayer: audioPlayer,
+                                                isEnginePlaying: isPlaying
                                             )
                                             .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
                                             .listRowBackground(Color.clear)
@@ -215,10 +261,10 @@ struct QueueView: View {
                         // it reshuffles three sections at once (now-playing →
                         // previous, up-next → now-playing), and animating that
                         // whole diff is what looked choppy. Instant is cleaner.
-                        .animation(.spring(response: 0.38, dampingFraction: 0.9), value: audioPlayer.queue.count)
-                        .animation(.spring(response: 0.38, dampingFraction: 0.9), value: audioPlayer.previousQueue.count)
+                        .animation(.spring(response: 0.38, dampingFraction: 0.9), value: queue.count)
+                        .animation(.spring(response: 0.38, dampingFraction: 0.9), value: previousQueue.count)
                         .safeAreaInset(edge: .bottom) {
-                            Color.clear.frame(height: audioPlayer.currentTrack != nil ? 65 : 0)
+                            Color.clear.frame(height: currentTrack != nil ? 65 : 0)
                         }
                     }
                 }
@@ -226,7 +272,7 @@ struct QueueView: View {
             .navigationTitle("Queue")
             .toolbar {
                 // Show "Clear All" if there are ANY upcoming tracks (queue or playlist)
-                if !audioPlayer.queue.isEmpty || !audioPlayer.previousQueue.isEmpty || audioPlayer.isPlaylistMode {
+                if !queue.isEmpty || !previousQueue.isEmpty || isPlaylistMode {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button {
                             audioPlayer.clearQueueAndExitPlaylist()
@@ -239,6 +285,22 @@ struct QueueView: View {
                 }
             }
         }
+        .onAppear {
+            currentTrack = audioPlayer.currentTrack
+            isPlaying = audioPlayer.isPlaying
+            isPlaylistMode = audioPlayer.isPlaylistMode
+            queue = audioPlayer.queue
+            previousQueue = audioPlayer.previousQueue
+            currentPlaylist = audioPlayer.currentPlaylist
+            currentIndex = audioPlayer.currentIndex
+        }
+        .onReceive(audioPlayer.$currentTrack) { currentTrack = $0 }
+        .onReceive(audioPlayer.$isPlaying) { isPlaying = $0 }
+        .onReceive(audioPlayer.$isPlaylistMode) { isPlaylistMode = $0 }
+        .onReceive(audioPlayer.$queue) { queue = $0 }
+        .onReceive(audioPlayer.$previousQueue) { previousQueue = $0 }
+        .onReceive(audioPlayer.$currentPlaylist) { currentPlaylist = $0 }
+        .onReceive(audioPlayer.$currentIndex) { currentIndex = $0 }
     }
 }
 
@@ -248,7 +310,10 @@ struct QueueTrackRow: View {
     @ObservedObject var downloadManager: DownloadManager
     let isPlaying: Bool
     let isPrevious: Bool
-    @ObservedObject var audioPlayer: AudioPlayerManager
+    let audioPlayer: AudioPlayerManager
+    /// Global engine playing/paused state — mirrored by the parent, not
+    /// observed here (see QueueView's comment on why).
+    let isEnginePlaying: Bool
 
     @State private var showRenameAlert = false
     @State private var newName: String = ""
@@ -269,7 +334,7 @@ struct QueueTrackRow: View {
                     .opacity(isPrevious ? 0.55 : 1.0)
 
                     // Pause glyph over the artwork while this row is playing
-                    if isPlaying && audioPlayer.isPlaying {
+                    if isPlaying && isEnginePlaying {
                         RoundedRectangle(cornerRadius: 10)
                             .fill(Color.black.opacity(0.45))
                         Image(systemName: "pause.fill")
@@ -302,7 +367,7 @@ struct QueueTrackRow: View {
                         audioPlayer.playFromQueue(track)
                     }
                 } else {
-                    if audioPlayer.isPlaying {
+                    if isEnginePlaying {
                         audioPlayer.pause()
                     } else {
                         audioPlayer.resume()
@@ -340,7 +405,7 @@ struct QueueTrackRow: View {
             }
 
             // Live EQ beside the playing track
-            if isPlaying && audioPlayer.isPlaying {
+            if isPlaying && isEnginePlaying {
                 EQIndicator()
             }
         }

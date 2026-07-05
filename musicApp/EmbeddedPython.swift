@@ -17,12 +17,8 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
     // Progress monitoring
     private var progressTimer: Timer?
     private var currentProgressFile: String?
-    
-    // FIXED: Title monitoring
-    private var titleTimer: Timer?
-    private var currentTitleFile: String?
-    private var titleHasBeenFetched: Set<String> = [] // Track which videoIDs have had titles fetched
-    
+    private var currentProgressVideoID: String?
+
     // FIXED: Callback for title updates
     var onTitleFetched: ((String, String) -> Void)? // (videoID, title) -> Void
     
@@ -141,11 +137,8 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
             pythonQueue.async { [weak self] in
                 do {
                     // Start progress monitoring
-                    self?.startProgressMonitoring(outputDir: outputDir.path)
-                    
-                    // FIXED: Start title monitoring
-                    self?.startTitleMonitoring(videoID: videoID)
-                    
+                    self?.startProgressMonitoring(outputDir: outputDir.path, videoID: videoID)
+
                     self?.updateStatus("Downloading")
                     self?.updateProgress(0.1)
                     
@@ -157,10 +150,7 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
                     
                     // Stop progress monitoring
                     self?.stopProgressMonitoring()
-                    
-                    // FIXED: Stop title monitoring
-                    self?.stopTitleMonitoring()
-                    
+
                     // Compress it with proper naming
                     print("📄 [downloadAudio] Compressing audio")
                     let compressedURL = (try? self?.compressAudio(inputURL: downloadedURL, title: title, outputDir: outputDir)) ?? downloadedURL
@@ -178,7 +168,6 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
                     continuation.resume(returning: (compressedURL, title))
                 } catch {
                     self?.stopProgressMonitoring()
-                    self?.stopTitleMonitoring() // FIXED: Also stop title monitoring on error
                     self?.updateStatus("Failed")
                     self?.updateProgress(0.0)
                     continuation.resume(throwing: error)
@@ -190,11 +179,12 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
     
     // MARK: - Progress Monitoring
     
-    private func startProgressMonitoring(outputDir: String) {
+    private func startProgressMonitoring(outputDir: String, videoID: String) {
         stopProgressMonitoring() // Clean up any existing timer
-        
+
         DispatchQueue.main.async { [weak self] in
             self?.currentProgressFile = outputDir
+            self?.currentProgressVideoID = videoID.isEmpty ? nil : videoID
             self?.progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
                 self?.checkDownloadProgress()
             }
@@ -204,108 +194,43 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
     func executePythonScript(_ script: String) -> Bool {
         return executePython(script) != nil
     }
-    
+
     private func stopProgressMonitoring() {
         DispatchQueue.main.async { [weak self] in
             self?.progressTimer?.invalidate()
             self?.progressTimer = nil
             self?.currentProgressFile = nil
+            self?.currentProgressVideoID = nil
         }
     }
     
-    // MARK: - Title Monitoring
-    
-    // FIXED: Monitor title file and notify callback when title is fetched
-    private func startTitleMonitoring(videoID: String) {
-        stopTitleMonitoring() // Clean up any existing timer
-        
-        guard !videoID.isEmpty else { return }
-        
-        let tempDir = FileManager.default.temporaryDirectory
-        let titleFile = tempDir.appendingPathComponent("\(videoID)_title.txt").path
-        
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            // Don't re-fetch if already fetched
-            guard !self.titleHasBeenFetched.contains(videoID) else {
-                print("📝 [TitleMonitoring] Title already fetched for: \(videoID)")
+    // yt-dlp's format preference here is '140/bestaudio[ext=m4a]/bestaudio/best' —
+    // 140 (m4a) resolves almost always; these cover the rare fallback cases.
+    private static let progressCandidateExtensions = ["m4a", "webm", "opus", "mp3", "aac"]
+
+    private func checkDownloadProgress() {
+        guard let outputDir = currentProgressFile, let videoID = currentProgressVideoID else { return }
+
+        // Check the specific expected partial-file path (outtmpl is
+        // '%(id)s.%(ext)s') instead of listing the whole Music directory —
+        // this ran every 0.5s for the length of every download and scaled
+        // with total library size, not just this one download.
+        for ext in Self.progressCandidateExtensions {
+            for suffix in [".part", ".ytdl"] {
+                let filePath = (outputDir as NSString).appendingPathComponent("\(videoID).\(ext)\(suffix)")
+                guard let attrs = try? FileManager.default.attributesOfItem(atPath: filePath),
+                      let fileSize = attrs[.size] as? Int64 else { continue }
+
+                // Estimate progress based on typical audio file sizes (5-15MB)
+                let estimatedTotal: Double = 10_000_000 // 10MB estimate
+                let progress = min(Double(fileSize) / estimatedTotal, 0.65) // Cap at 65% during download
+
+                updateProgress(0.1 + progress * 0.6) // Scale to 10-70% range
+
+                let sizeMB = Double(fileSize) / 1_000_000
+                updateStatus(String(format: "Downloading %.1f MB", sizeMB))
                 return
             }
-            
-            print("📝 [TitleMonitoring] Starting title monitoring for: \(videoID)")
-            
-            self.currentTitleFile = titleFile
-            self.titleTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
-                self?.checkTitleFile(videoID: videoID)
-            }
-        }
-    }
-    
-    private func stopTitleMonitoring() {
-        DispatchQueue.main.async { [weak self] in
-            self?.titleTimer?.invalidate()
-            self?.titleTimer = nil
-            self?.currentTitleFile = nil
-        }
-    }
-    
-    private func checkTitleFile(videoID: String) {
-        guard let titleFilePath = currentTitleFile,
-              FileManager.default.fileExists(atPath: titleFilePath) else {
-            return
-        }
-        
-        do {
-            let title = try String(contentsOfFile: titleFilePath, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            guard !title.isEmpty else { return }
-            
-            // Mark as fetched
-            titleHasBeenFetched.insert(videoID)
-            
-            // Call the callback on main thread
-            DispatchQueue.main.async { [weak self] in
-                self?.onTitleFetched?(videoID, title)
-                print("📝 [TitleMonitoring] Title fetched: \(title)")
-            }
-            
-            // Stop monitoring once we've got the title
-            stopTitleMonitoring()
-            
-            // Clean up title file
-            try? FileManager.default.removeItem(atPath: titleFilePath)
-        } catch {
-            // Ignore read errors, will retry on next timer tick
-        }
-    }
-    
-    private func checkDownloadProgress() {
-        guard let outputDir = currentProgressFile else { return }
-        
-        // Check for .part files (in-progress downloads)
-        do {
-            let contents = try FileManager.default.contentsOfDirectory(atPath: outputDir)
-            
-            for file in contents where file.hasSuffix(".part") || file.hasSuffix(".ytdl") {
-                let filePath = (outputDir as NSString).appendingPathComponent(file)
-                
-                if let attrs = try? FileManager.default.attributesOfItem(atPath: filePath),
-                   let fileSize = attrs[.size] as? Int64 {
-                    
-                    // Estimate progress based on typical audio file sizes (5-15MB)
-                    let estimatedTotal: Double = 10_000_000 // 10MB estimate
-                    let progress = min(Double(fileSize) / estimatedTotal, 0.65) // Cap at 65% during download
-                    
-                    updateProgress(0.1 + progress * 0.6) // Scale to 10-70% range
-                    
-                    let sizeMB = Double(fileSize) / 1_000_000
-                    updateStatus(String(format: "Downloading %.1f MB", sizeMB))
-                }
-            }
-        } catch {
-            // Ignore errors during progress checking
         }
     }
 
@@ -372,14 +297,11 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
         let filename = fileURL.lastPathComponent
         let thumbnailsDir = getThumbnailsDirectory()
         let thumbnailPath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
-        
-        // Check if file exists AND is readable
-        if FileManager.default.fileExists(atPath: thumbnailPath.path),
-        let _ = UIImage(contentsOfFile: thumbnailPath.path) {
-            return thumbnailPath
-        }
-        
-        return nil
+
+        // Existence check only — every caller decodes the image itself right
+        // after this returns, so a decode-just-to-verify here was a pure
+        // duplicate (a corrupt file just fails that caller's own decode).
+        return FileManager.default.fileExists(atPath: thumbnailPath.path) ? thumbnailPath : nil
     }
     
     
@@ -643,17 +565,21 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func ensureThumbnail(for fileURL: URL, videoID: String) {
-        guard !videoID.isEmpty else { return }
-        
+    /// `completion` reports whether a valid thumbnail exists after this call
+    /// (already present, or freshly fetched) — used by callers that want to
+    /// back off retrying a permanently-unfetchable thumbnail (`false`).
+    func ensureThumbnail(for fileURL: URL, videoID: String, completion: ((Bool) -> Void)? = nil) {
+        guard !videoID.isEmpty else { completion?(false); return }
+
         // If thumbnail already exists and is valid, skip
         if let existingPath = getThumbnailPath(for: fileURL) {
             if let img = UIImage(contentsOfFile: existingPath.path),
             img.size.width > 150 {
+                completion?(true)
                 return
             }
         }
-        
+
         let filename = fileURL.lastPathComponent
         let thumbnailsDir = getThumbnailsDirectory()
         let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
@@ -701,6 +627,7 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
                         
                         if let _ = UIImage(contentsOfFile: savePath.path) {
                             print("✅ [ensureThumbnail] Saved for \(videoID): \(Int(image.size.width))x\(Int(image.size.height))")
+                            completion?(true)
                             return
                         } else {
                             try? FileManager.default.removeItem(at: savePath)
@@ -717,6 +644,7 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
             }
             
             print("❌ [ensureThumbnail] All URLs failed for videoID: \(videoID)")
+            completion?(false)
         }
     }
     

@@ -21,7 +21,12 @@ struct Download: Identifiable, Codable {
     var spotifyTitle: String?       // Title returned by Spotify oEmbed (Spotify tracks only)
     var youtubeSearchQuery: String? // Query used to find the YouTube video
     var youtubeURL: String?         // Final YouTube URL that was downloaded
-    
+    // Set when a thumbnail fetch exhausts all URLs/attempts, so a
+    // permanently-unfetchable thumbnail isn't retried on every cold launch —
+    // see DownloadManager.validateAndFixThumbnails().
+    var thumbnailFetchFailedAtMs: Int64?
+
+
     // ⚡ PERF: Cache the thumbnails directory path once instead of calling
     // FileManager.default.urls(for:in:) on every row render in the list
     private static let thumbnailsDirectory: String = {

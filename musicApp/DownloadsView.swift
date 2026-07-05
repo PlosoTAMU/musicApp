@@ -3,13 +3,19 @@ import SwiftUI
 struct DownloadsView: View {
     @ObservedObject var downloadManager: DownloadManager
     @ObservedObject var playlistManager: PlaylistManager
-    @ObservedObject var audioPlayer: AudioPlayerManager
+    // Plain reference, not @ObservedObject: this view and its rows never need
+    // to react to currentTime/duration (ticking every 0.5s during playback),
+    // only to currentTrack/isPlaying — mirrored below via onReceive instead
+    // of subscribing to the whole object's combined objectWillChange.
+    let audioPlayer: AudioPlayerManager
     @Binding var showFolderPicker: Bool
     @Binding var showYouTubeDownload: Bool
     @State private var showAddToPlaylist: Download?
     @State private var searchText = ""
     @State private var hasCurrentTrack = false
     @State private var hasActiveDownload = false
+    @State private var currentTrack: Track?
+    @State private var isPlaying = false
     
     var filteredDownloads: [Download] {
         if searchText.isEmpty {
@@ -37,6 +43,8 @@ struct DownloadsView: View {
                             DownloadRow(
                                 download: download,
                                 audioPlayer: audioPlayer,
+                                isCurrentlyPlaying: currentTrack?.id == download.id,
+                                isEnginePlaying: isPlaying,
                                 onAddToPlaylist: {
                                     showAddToPlaylist = download
                                 },
@@ -80,6 +88,10 @@ struct DownloadsView: View {
             }
             .onReceive(audioPlayer.$currentTrack) { track in
                 hasCurrentTrack = track != nil
+                currentTrack = track
+            }
+            .onReceive(audioPlayer.$isPlaying) { playing in
+                isPlaying = playing
             }
             .onReceive(downloadManager.$activeDownloads) { active in
                 hasActiveDownload = !active.isEmpty
@@ -129,19 +141,20 @@ struct DownloadsView: View {
 
 struct DownloadRow: View {
     let download: Download
-    @ObservedObject var audioPlayer: AudioPlayerManager
+    // Plain reference — used only for method calls (play/pause/etc.) in
+    // action closures below. Rendering state comes from the parent's
+    // mirrored isCurrentlyPlaying/isEnginePlaying, not observed here.
+    let audioPlayer: AudioPlayerManager
+    let isCurrentlyPlaying: Bool
+    let isEnginePlaying: Bool
     let onAddToPlaylist: () -> Void
     let onDelete: () -> Void
     let onRename: (String) -> Void
     let onRedownload: () -> Void
-    
+
     @State private var showRenameAlert = false
     @State private var newName: String = ""
     @State private var showSongInfo = false
-    
-    private var isCurrentlyPlaying: Bool {
-        audioPlayer.currentTrack?.id == download.id
-    }
     
     var body: some View {
         HStack(spacing: 12) {
@@ -155,7 +168,7 @@ struct DownloadRow: View {
                     )
                     
                     // Pause icon overlay while this track is playing
-                    if isCurrentlyPlaying && audioPlayer.isPlaying {
+                    if isCurrentlyPlaying && isEnginePlaying {
                         RoundedRectangle(cornerRadius: 10)
                             .fill(Color.black.opacity(0.4))
                             .frame(width: 48, height: 48)
@@ -215,7 +228,7 @@ struct DownloadRow: View {
             }
             
             // Animated EQ bars while this track is playing
-            if isCurrentlyPlaying && audioPlayer.isPlaying {
+            if isCurrentlyPlaying && isEnginePlaying {
                 EQIndicator()
             }
             

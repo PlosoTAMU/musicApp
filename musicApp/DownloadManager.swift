@@ -225,7 +225,9 @@ class DownloadManager: ObservableObject {
                     if self.findDuplicateByVideoID(videoID: track.videoID, source: source) == nil {
                         tracksToQueue.append(track)
                     } else {
+                        #if DEBUG
                         print("⏭️ [Playlist] Skipping already-downloaded: \(track.title)")
+                        #endif
                     }
                 }
                 
@@ -1319,35 +1321,41 @@ class DownloadManager: ObservableObject {
             $0.source == source &&
             !$0.pendingDeletion
         }) {
+            #if DEBUG
             print("🔍 [Duplicate] Found exact match by videoID: \(existing.name)")
+            #endif
             return existing
         }
-        
+
         if source == .youtube {
             let cleanVideoID = videoID.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
-            
+
             if let existing = downloads.first(where: { download in
                 guard download.source == .youtube,
                       !download.pendingDeletion,
                       let storedID = download.videoID else { return false }
-                
+
                 let cleanStoredID = storedID.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
                 return cleanStoredID == cleanVideoID
             }) {
+                #if DEBUG
                 print("🔍 [Duplicate] Found match by cleaned videoID: \(existing.name)")
+                #endif
                 return existing
             }
-            
+
             if let existing = downloads.first(where: { download in
                 guard download.source == .youtube, !download.pendingDeletion else { return false }
                 let filename = download.url.lastPathComponent
                 return filename.contains(videoID)
             }) {
+                #if DEBUG
                 print("🔍 [Duplicate] Found match by filename: \(existing.name)")
+                #endif
                 return existing
             }
         }
-        
+
         if source == .spotify {
             if let existing = downloads.first(where: { download in
                 guard download.source == .spotify,
@@ -1355,12 +1363,16 @@ class DownloadManager: ObservableObject {
                       let storedID = download.videoID else { return false }
                 return storedID == videoID
             }) {
+                #if DEBUG
                 print("🔍 [Duplicate] Found Spotify match: \(existing.name)")
+                #endif
                 return existing
             }
         }
-        
+
+        #if DEBUG
         print("✅ [Duplicate] No duplicate found for videoID: \(videoID)")
+        #endif
         return nil
     }
     
@@ -1411,11 +1423,13 @@ class DownloadManager: ObservableObject {
                 
                 loadedDownloads[i].pendingDeletion = false
                 
+                #if DEBUG
                 if !FileManager.default.fileExists(atPath: correctPath.path) {
                     print("⚠️ [DownloadManager] Missing file: \(filename) at \(correctPath.path)")
                 } else {
                     print("✅ [DownloadManager] Found file: \(filename)")
                 }
+                #endif
             }
             
             loadedDownloads = loadedDownloads.filter { download in
@@ -1595,43 +1609,79 @@ class DownloadManager: ObservableObject {
         }
     }
     
+    // Backoff before retrying a thumbnail that exhausted every URL/attempt —
+    // matches LyricsService's notFoundRetryMs pattern, so a permanently
+    // unfetchable thumbnail (deleted/private video) doesn't repeat the same
+    // up-to-14-request chain on every single cold launch.
+    private static let thumbnailRetryBackoffMs: Int64 = 7 * 24 * 3600 * 1000
+
+    private func shouldRetryThumbnail(_ download: Download) -> Bool {
+        guard let failedAtMs = download.thumbnailFetchFailedAtMs else { return true }
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        return nowMs - failedAtMs > Self.thumbnailRetryBackoffMs
+    }
+
+    private func recordThumbnailFetchFailed(downloadID: UUID) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let idx = self.downloads.firstIndex(where: { $0.id == downloadID }) else { return }
+            self.downloads[idx].thumbnailFetchFailedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+            self.saveDownloads()
+        }
+    }
+
     // FIXED: Validate and regenerate missing thumbnails on boot
     private func validateAndFixThumbnails() {
+        #if DEBUG
         print("🔍 [DownloadManager] Validating thumbnails...")
+        #endif
         var needsSave = false
-        
+
         for (index, download) in downloads.enumerated() {
             // FIXED: Use resolvedThumbnailPath instead of raw thumbnailPath
             if let resolvedPath = download.resolvedThumbnailPath {
                 if FileManager.default.fileExists(atPath: resolvedPath) {
+                    #if DEBUG
                     print("✅ [DownloadManager] Thumbnail found for: \(download.name)")
-                    
+                    #endif
+
                     // FIXED: Migrate old absolute paths to just filename
                     if let oldPath = download.thumbnailPath, oldPath.contains("/") {
                         downloads[index].thumbnailPath = (oldPath as NSString).lastPathComponent
                         needsSave = true
                     }
                 } else {
+                    #if DEBUG
                     print("⚠️ [DownloadManager] Missing thumbnail for: \(download.name)")
-                    
-                    if let videoID = download.videoID, !videoID.isEmpty {
-                        EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID)
+                    #endif
+
+                    if let videoID = download.videoID, !videoID.isEmpty, shouldRetryThumbnail(download) {
+                        let downloadID = download.id
+                        EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID) { [weak self] found in
+                            if !found { self?.recordThumbnailFetchFailed(downloadID: downloadID) }
+                        }
                     }
                 }
-            } else if let videoID = download.videoID, !videoID.isEmpty {
+            } else if let videoID = download.videoID, !videoID.isEmpty, shouldRetryThumbnail(download) {
+                #if DEBUG
                 print("🔄 [DownloadManager] No thumbnail path for: \(download.name), generating...")
-                EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID)
+                #endif
+                let downloadID = download.id
+                EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID) { [weak self] found in
+                    if !found { self?.recordThumbnailFetchFailed(downloadID: downloadID) }
+                }
             }
         }
-        
+
         if needsSave {
             saveDownloads()
         }
-        
+
         // Purge orphaned thumbnails (thumbnails with no matching audio file)
         purgeOrphanedThumbnails()
-        
+
+        #if DEBUG
         print("✅ [DownloadManager] Thumbnail validation complete")
+        #endif
     }
     
     private func purgeOrphanedThumbnails() {

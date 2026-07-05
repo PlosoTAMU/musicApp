@@ -69,9 +69,16 @@ final class PlaylistSync {
 
     private func applyRemote(_ snap: QuerySnapshot) {
         var changed = false
-        for doc in snap.documents {
-            guard let id = UUID(uuidString: doc.documentID) else { continue }
-            let d = doc.data()
+        // documentChanges, not the full documents list — this only re-derives
+        // playlists that actually changed in this snapshot instead of every
+        // playlist on every update (deletes are tombstones via a `deleted`
+        // field, not real doc removal, so `.removed` here is a rare/
+        // out-of-band case — just drop it from the cache, matching this
+        // function's prior behavior of never explicitly untracking those).
+        for change in snap.documentChanges {
+            guard let id = UUID(uuidString: change.document.documentID) else { continue }
+            if change.type == .removed { cloud.removeValue(forKey: id); continue }
+            let d = change.document.data()
             let incoming = CloudDoc(
                 name: d["name"] as? String ?? "",
                 trackIDs: ((d["tracks"] as? [[String: Any]]) ?? [])

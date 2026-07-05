@@ -28,9 +28,10 @@ final class PlaybackSyncEngine: ObservableObject {
     private let queueSync: QueueSync
     private let commands: CommandBus
 
-    // Follower-side mirror for UI.
+    // Follower-side mirror for UI. Position is computed on demand from this
+    // (see SyncPanelView) rather than republished on a timer — the panel's
+    // own TimelineView already ticks it, and only while visible.
     @Published private(set) var mirror: PlaybackState?
-    @Published private(set) var mirrorPositionMs: Int = 0
     /// Remote queue entries with no matching local file (UI can offer download).
     @Published private(set) var ghostQueue: [TrackRef] = []
 
@@ -46,7 +47,6 @@ final class PlaybackSyncEngine: ObservableObject {
     private var suppressConsumePublish = false
 
     private var anchorTimer: Timer?
-    private var mirrorTimer: Timer?
 
     init(player: AudioPlayerManager, coordinator: SessionCoordinator,
          resolver: TrackResolving) {
@@ -278,13 +278,6 @@ final class PlaybackSyncEngine: ObservableObject {
             Task { @MainActor in
                 guard let self, self.coordinator.role.isOwner, self.player.isPlaying else { return }
                 self.publishNow()
-            }
-        }
-        // Follower UI tick: extrapolated progress without any network traffic.
-        mirrorTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let m = self.mirror, !self.coordinator.role.isOwner else { return }
-                self.mirrorPositionMs = m.positionMs(atServerMs: ServerClock.shared.nowMs)
             }
         }
     }
