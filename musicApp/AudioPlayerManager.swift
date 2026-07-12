@@ -1718,7 +1718,36 @@ class AudioPlayerManager: NSObject, ObservableObject {
             updateNowPlayingInfo()
         }
     }
-    
+
+    /// Position sampled at call time. `currentTime` is refreshed by a 0.5 s
+    /// timer, so reads of it are up to 500 ms stale — sync anchors must pair
+    /// the position with the instant the server clock is read. Same math as
+    /// updateTime(); when the node can't be sampled (paused, stopped, engine
+    /// not rendering) `lastRenderTime`/`playerTime` return nil and we fall
+    /// back to the cached `currentTime` (last timer tick, or the exact value
+    /// seek wrote).
+    func liveCurrentTime() -> Double {
+        guard let player = playerNode,
+              let file = audioFile,
+              let nodeTime = player.lastRenderTime,
+              let playerTime = player.playerTime(forNodeTime: nodeTime) else {
+            return currentTime
+        }
+        let sampleRate = file.fileFormat.sampleRate
+        return min(seekOffset + Double(playerTime.sampleTime) / sampleRate, duration)
+    }
+
+    /// Runs `body` on the main queue after all transport work already enqueued
+    /// on `audioQueue` has drained. pause/resume/seek mutate observable state
+    /// via audioQueue → main hops, so post-command state cannot be read
+    /// synchronously after those calls return; both queues are serial, so this
+    /// double hop is ordered strictly after those mutations land.
+    func afterTransportSettles(_ body: @escaping () -> Void) {
+        audioQueue.async {
+            DispatchQueue.main.async { body() }
+        }
+    }
+
     deinit {
         stopTimeUpdates()
         NotificationCenter.default.removeObserver(self)

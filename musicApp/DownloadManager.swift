@@ -366,8 +366,8 @@ class DownloadManager: ObservableObject {
             
             // ✅ CRITICAL: Use the stored downloadVideoID, NOT the original videoID parameter
             // This ensures we fetch the thumbnail for the CORRECT video (YouTube video after Spotify conversion)
-            print("🖼️ [Queue] Fetching thumbnail for videoID: \(downloadVideoID), file: \(fileURL.lastPathComponent)")
-            let thumbnailPath = await self.fetchThumbnailWithRetries(for: fileURL, videoID: downloadVideoID, attempts: 5)
+            print("🖼️ [Queue] Fetching thumbnail for videoID: \(downloadVideoID)")
+            let thumbnailPath = await self.fetchThumbnailWithRetries(videoID: downloadVideoID, attempts: 5)
             
             if thumbnailPath != nil {
                 print("✅ [Queue] Thumbnail fetched successfully")
@@ -669,15 +669,20 @@ class DownloadManager: ObservableObject {
     // Helper function to fetch thumbnail with retries (Swift 6 concurrency-safe)
     /// Guaranteed thumbnail fetch — tries every known YouTube thumbnail URL quality
     /// Returns the saved thumbnail file URL, or nil only if the video truly has no thumbnail.
-    private func fetchThumbnailWithRetries(for fileURL: URL, videoID: String, attempts: Int) async -> URL? {
+    // FIXED: Saved as Thumbnails/<videoID>.jpg, not <audio filename>.jpg. The
+    // audio filename is derived from the display title, and titles get reused
+    // across DIFFERENT videos (title twins, renames, redownloads) — under that
+    // key, the exists-short-circuit below silently handed a new song the
+    // previous song's artwork, permanently. The videoID IS the artwork's
+    // identity, so under this key the short-circuit is always correct.
+    private func fetchThumbnailWithRetries(videoID: String, attempts: Int) async -> URL? {
         guard !videoID.isEmpty else { return nil }
-        
-        let filename = fileURL.lastPathComponent
+
         let thumbnailsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Thumbnails", isDirectory: true)
         try? FileManager.default.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
-        let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
-        
+        let savePath = thumbnailsDir.appendingPathComponent("\(videoID).jpg")
+
         // If already exists and is valid, return immediately
         if FileManager.default.fileExists(atPath: savePath.path),
         let img = UIImage(contentsOfFile: savePath.path),
@@ -1507,7 +1512,7 @@ class DownloadManager: ObservableObject {
                 )
                 
                 // Get thumbnail with retries (avoiding var capture in concurrent code)
-                let thumbnailPath = await self.fetchThumbnailWithRetries(for: newFileURL, videoID: videoID, attempts: 5)
+                let thumbnailPath = await self.fetchThumbnailWithRetries(videoID: videoID, attempts: 5)
                 
                 // Validate the new file is playable
                 let testFile = try AVAudioFile(forReading: newFileURL)
@@ -1574,12 +1579,17 @@ class DownloadManager: ObservableObject {
                         
                         // NOW mark old file for deletion (only if it's different from new file)
                         if oldFileURL != finalURL && FileManager.default.fileExists(atPath: oldFileURL.path) {
+                            // Same videoID → the new record shares the old
+                            // "<videoID>.jpg" thumbnail; don't delete it with
+                            // the old audio file.
+                            let sharesThumbnail = oldThumbnailPath != nil
+                                && oldThumbnailPath == thumbnailPath?.lastPathComponent
                             // Create a temporary download object just for deletion
                             let oldDownloadForDeletion = Download(
                                 id: UUID(),  // Different ID so it doesn't conflict
                                 name: "Old version",
                                 url: oldFileURL,
-                                thumbnailPath: oldThumbnailPath,
+                                thumbnailPath: sharesThumbnail ? nil : oldThumbnailPath,
                                 videoID: nil,
                                 source: download.source
                             )
@@ -1629,45 +1639,74 @@ class DownloadManager: ObservableObject {
         }
     }
 
-    // FIXED: Validate and regenerate missing thumbnails on boot
+    // A videoID-keyed thumbnail landed on disk — point the record at it.
+    // Main queue for the same reason as recordThumbnailFetchFailed above.
+    private func adoptKeyedThumbnail(downloadID: UUID, filename: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let idx = self.downloads.firstIndex(where: { $0.id == downloadID }) else { return }
+            guard self.downloads[idx].thumbnailPath != filename else { return }
+            self.downloads[idx].thumbnailPath = filename
+            self.downloads[idx].thumbnailFetchFailedAtMs = nil
+            self.saveDownloads()
+            self.notifyChange()
+        }
+    }
+
+    // FIXED: Validate and regenerate missing thumbnails on boot.
+    // Also migrates records to the videoID-keyed scheme: legacy thumbnails
+    // were keyed by audio filename, a reusable key under which a track could
+    // inherit a DIFFERENT song's artwork (see fetchThumbnailWithRetries).
+    // Every record with a videoID converges on "<videoID>.jpg" — adopted
+    // directly when the file already exists, refetched from its own videoID
+    // otherwise. Legacy art keeps displaying until its replacement lands.
     private func validateAndFixThumbnails() {
         #if DEBUG
         print("🔍 [DownloadManager] Validating thumbnails...")
         #endif
         var needsSave = false
 
+        let thumbnailsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Thumbnails", isDirectory: true)
+
         for (index, download) in downloads.enumerated() {
-            // FIXED: Use resolvedThumbnailPath instead of raw thumbnailPath
-            if let resolvedPath = download.resolvedThumbnailPath {
-                if FileManager.default.fileExists(atPath: resolvedPath) {
+            // FIXED: Migrate old absolute paths to just filename
+            if let oldPath = download.thumbnailPath, oldPath.contains("/") {
+                downloads[index].thumbnailPath = (oldPath as NSString).lastPathComponent
+                needsSave = true
+            }
+
+            // No videoID → nothing to fetch from; the record keeps whatever
+            // legacy thumbnail it has.
+            guard let videoID = download.videoID, !videoID.isEmpty else { continue }
+
+            let keyedFilename = "\(videoID).jpg"
+            let keyedPath = thumbnailsDir.appendingPathComponent(keyedFilename).path
+
+            if downloads[index].thumbnailPath == keyedFilename {
+                if FileManager.default.fileExists(atPath: keyedPath) {
                     #if DEBUG
                     print("✅ [DownloadManager] Thumbnail found for: \(download.name)")
                     #endif
-
-                    // FIXED: Migrate old absolute paths to just filename
-                    if let oldPath = download.thumbnailPath, oldPath.contains("/") {
-                        downloads[index].thumbnailPath = (oldPath as NSString).lastPathComponent
-                        needsSave = true
-                    }
-                } else {
-                    #if DEBUG
-                    print("⚠️ [DownloadManager] Missing thumbnail for: \(download.name)")
-                    #endif
-
-                    if let videoID = download.videoID, !videoID.isEmpty, shouldRetryThumbnail(download) {
-                        let downloadID = download.id
-                        EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID) { [weak self] found in
-                            if !found { self?.recordThumbnailFetchFailed(downloadID: downloadID) }
-                        }
-                    }
+                    continue
                 }
-            } else if let videoID = download.videoID, !videoID.isEmpty, shouldRetryThumbnail(download) {
-                #if DEBUG
-                print("🔄 [DownloadManager] No thumbnail path for: \(download.name), generating...")
-                #endif
+                // Keyed record but file missing — refetch below.
+            } else if FileManager.default.fileExists(atPath: keyedPath) {
+                // Keyed file already on disk (duplicate of the same video, or
+                // a heal that landed before its record saved) — adopt it.
+                downloads[index].thumbnailPath = keyedFilename
+                downloads[index].thumbnailFetchFailedAtMs = nil
+                needsSave = true
+                continue
+            }
+
+            if shouldRetryThumbnail(download) {
                 let downloadID = download.id
-                EmbeddedPython.shared.ensureThumbnail(for: download.url, videoID: videoID) { [weak self] found in
-                    if !found { self?.recordThumbnailFetchFailed(downloadID: downloadID) }
+                EmbeddedPython.shared.ensureThumbnail(videoID: videoID) { [weak self] found in
+                    if found {
+                        self?.adoptKeyedThumbnail(downloadID: downloadID, filename: keyedFilename)
+                    } else {
+                        self?.recordThumbnailFetchFailed(downloadID: downloadID)
+                    }
                 }
             }
         }
@@ -1694,10 +1733,19 @@ class DownloadManager: ObservableObject {
         ) else { return }
         
         // Build set of all thumbnail filenames that belong to a known download
-        let knownThumbnailFilenames = Set(
+        var knownThumbnailFilenames = Set(
             downloads.compactMap { $0.thumbnailPath }
                      .map { ($0 as NSString).lastPathComponent }
         )
+        // Protect both key generations for live downloads: the legacy
+        // audio-filename key (lock-screen artwork still resolves through it)
+        // and the videoID key (a heal may land before its record saves).
+        for download in downloads {
+            knownThumbnailFilenames.insert("\(download.url.lastPathComponent).jpg")
+            if let videoID = download.videoID, !videoID.isEmpty {
+                knownThumbnailFilenames.insert("\(videoID).jpg")
+            }
+        }
         
         var deletedCount = 0
         for thumbnailFile in thumbnailFiles {

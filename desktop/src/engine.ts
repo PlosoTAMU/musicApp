@@ -92,6 +92,15 @@ export class SyncEngine {
   /** Owner playing the queue: CAS-pop heads; ghost heads are consumed and skipped. */
   private trackEnded() {
     if (this.coord.role !== "owner") return;
+    // Loop: restart the same track instead of consuming the queue (also catches
+    // the "next" command, matching iOS next()). publish() only re-anchors pos 0
+    // for followers — same track ref, so no track change goes out.
+    if (this.player.loop && this.player.current) {
+      this.player.seekMs(0);
+      this.player.resume();
+      this.publish();
+      return;
+    }
     const remoteQ = this.coord.remote?.queue ?? [];
     const basis = this.coord.remote?.queueVersion ?? 0;
     for (const head of remoteQ) {
@@ -202,9 +211,36 @@ export class SyncEngine {
 
   // ── Mirror helpers ──────────────────────────────────────────────────────
 
+  // Display slew — every fresh anchor moves raw extrapolation by up to
+  // ±500 ms; jumping the shown position each snapshot reads as stutter.
+  // Errors ≤ SNAP_MS converge via rate warp (≤ ±MAX_WARP, aimed at ~CONVERGE_MS);
+  // beyond that (seek/track change) or on pause, snap.
+  private static readonly SNAP_MS = 750;
+  private static readonly MAX_WARP = 0.04;
+  private static readonly CONVERGE_MS = 2_000;
+  private disp: { pos: number; at: number; trackId: string | null } | null = null;
+
   mirrorPositionMs(): number {
     const pb = this.coord.remote?.playback;
-    return pb ? positionAt(pb, serverClock.nowMs) : 0;
+    if (!pb) { this.disp = null; return 0; }
+    const target = positionAt(pb, serverClock.nowMs);
+    const now = Date.now();
+    const trackId = pb.track?.id ?? null;
+    const d = this.disp;
+    if (!pb.playing || !d || d.trackId !== trackId
+        || Math.abs(target - d.pos) > SyncEngine.SNAP_MS) {
+      this.disp = { pos: target, at: now, trackId };
+      return target;
+    }
+    // Advance displayed at session rate, warped toward the target.
+    const dt = now - d.at;
+    const ideal = d.pos + (dt * pb.rate) / 1000;
+    const err = target - ideal;
+    const warp = Math.max(-SyncEngine.MAX_WARP,
+      Math.min(SyncEngine.MAX_WARP, err / SyncEngine.CONVERGE_MS));
+    const pos = ideal + dt * warp;
+    this.disp = { pos, at: now, trackId };
+    return pos;
   }
 
   isGhost(ref: TrackRef): boolean {

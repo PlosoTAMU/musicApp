@@ -8,9 +8,11 @@ struct DownloadsView: View {
     // only to currentTrack/isPlaying — mirrored below via onReceive instead
     // of subscribing to the whole object's combined objectWillChange.
     let audioPlayer: AudioPlayerManager
+    @ObservedObject var syncManager: SyncSessionManager
     @Binding var showFolderPicker: Bool
     @Binding var showYouTubeDownload: Bool
     @State private var showAddToPlaylist: Download?
+    @State private var showHomeSync = false
     @State private var searchText = ""
     @State private var hasCurrentTrack = false
     @State private var hasActiveDownload = false
@@ -83,6 +85,18 @@ struct DownloadsView: View {
                 }
             }
             .navigationTitle("Downloads")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showHomeSync = true
+                    } label: {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                    }
+                }
+            }
+            .sheet(isPresented: $showHomeSync) {
+                HomeSyncSheet(manager: syncManager)
+            }
             .safeAreaInset(edge: .bottom) {
                 Color.clear.frame(height: hasCurrentTrack ? (hasActiveDownload ? 130 : 65) : (hasActiveDownload ? 65 : 0))
             }

@@ -41,6 +41,8 @@ final class SessionCoordinator: ObservableObject {
     private var listener: ListenerRegistration?
     private var leaseTimer: Timer?
     private var clockTimer: Timer?
+    private var listenRetryTask: Task<Void, Never>?
+    private var listenRetryDelay: TimeInterval = 2
 
     // Single-slot outbox: latest-state-wins, never a replay log.
     private var outbox: PlaybackState?
@@ -76,6 +78,7 @@ final class SessionCoordinator: ObservableObject {
         stopLease()
         clockTimer?.invalidate(); clockTimer = nil
         retryTask?.cancel(); retryTask = nil
+        listenRetryTask?.cancel(); listenRetryTask = nil
         outbox = nil
         uid = ""
         role = .none
@@ -87,8 +90,13 @@ final class SessionCoordinator: ObservableObject {
     private func listen() {
         guard let ref = sessionRef else { return }
         listener?.remove()
-        listener = ref.addSnapshotListener(includeMetadataChanges: true) { [weak self] snap, _ in
-            guard let self, let snap else { return }
+        listener = ref.addSnapshotListener(includeMetadataChanges: true) { [weak self] snap, error in
+            guard let self else { return }
+            if let error {
+                Task { @MainActor in self.handleListenError(error) }
+                return
+            }
+            guard let snap else { return }
             Task { @MainActor in self.handleSnapshot(snap) }
         }
         // Clock refresh: keeps skew bounded (engine tolerates ~750ms; device
@@ -107,7 +115,25 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
+    /// Terminal listen error (the SDK gave up retrying internally, e.g. a
+    /// stream reset it can't recover) → mark offline and re-subscribe from
+    /// scratch with backoff, so a wedged listener can't leave the app
+    /// permanently "offline" until restart.
+    private func handleListenError(_ error: Error) {
+        print("👑→👤 [Sync] listener error (\(error.localizedDescription)) — will re-subscribe")
+        isOnline = false
+        listenRetryTask?.cancel()
+        let delay = listenRetryDelay
+        listenRetryDelay = min(listenRetryDelay * 2, 30)
+        listenRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.listen()
+        }
+    }
+
     private func handleSnapshot(_ snap: DocumentSnapshot) {
+        listenRetryDelay = 2
         let wasOnline = isOnline
         isOnline = !snap.metadata.isFromCache
         if !wasOnline && isOnline { flushOutbox() }   // reconnect → reconcile

@@ -2,6 +2,7 @@
 // audio) — acceptable for a personal local app loading only local content;
 // revisit before ever loading remote pages.
 const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require("electron");
+const path = require("path");
 
 app.whenReady().then(() => {
   const win = new BrowserWindow({
@@ -11,6 +12,7 @@ app.whenReady().then(() => {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: "#0A0809",
+    icon: path.join(__dirname, "build", "icon.png"),
     titleBarStyle: "hidden",
     titleBarOverlay: { color: "#0A0809", symbolColor: "#F4EDEA", height: 36 },
     webPreferences: { nodeIntegration: true, contextIsolation: false },

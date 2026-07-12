@@ -29,8 +29,8 @@ final class PlaybackSyncEngine: ObservableObject {
     private let commands: CommandBus
 
     // Follower-side mirror for UI. Position is computed on demand from this
-    // (see SyncPanelView) rather than republished on a timer — the panel's
-    // own TimelineView already ticks it, and only while visible.
+    // rather than republished on a timer — a consumer can tick its own display
+    // (e.g. a TimelineView) only while visible.
     @Published private(set) var mirror: PlaybackState?
     /// Remote queue entries with no matching local file (UI can offer download).
     @Published private(set) var ghostQueue: [TrackRef] = []
@@ -116,7 +116,14 @@ final class PlaybackSyncEngine: ObservableObject {
         case .previous: player.previous()
         case .seek(let ms): player.seek(to: Double(ms) / 1000.0)
         }
-        // Each of these mutates player state → observers fire → fenced publish.
+        // Direct publish removes the observer's 200 ms debounce from the remote
+        // command round trip. Transport mutations land via audioQueue → main
+        // hops, so the publish rides the same path — a synchronous publishNow()
+        // here would snapshot pre-command state. The debounced observer publish
+        // still fires afterwards; the duplicate is harmless (rev is monotonic).
+        player.afterTransportSettles { [weak self] in
+            Task { @MainActor in self?.publishNow() }
+        }
     }
 
     // MARK: - Local player observation (owner publish pipeline)
@@ -255,7 +262,10 @@ final class PlaybackSyncEngine: ObservableObject {
         PlaybackState(
             track: player.currentTrack.map(TrackRef.init),
             isPlaying: player.isPlaying,
-            positionMs: Int(player.currentTime * 1000),
+            // liveCurrentTime, not currentTime: the cached value is refreshed
+            // on a 0.5 s timer, and a position up to 500 ms stale paired with
+            // a fresh anchorMs skews every follower's extrapolation.
+            positionMs: Int(player.liveCurrentTime() * 1000),
             anchorMs: ServerClock.shared.nowMs,
             rateX1000: Int(player.effectivePlaybackSpeed * 1000),
             durationMs: Int(player.duration * 1000),

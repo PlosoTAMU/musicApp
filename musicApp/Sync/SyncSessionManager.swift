@@ -56,8 +56,7 @@ final class SyncSessionManager: ObservableObject {
     }
 
     /// Silent auto-connect with a previously saved secret (call at app launch).
-    /// Idempotent: ContentView's launch task and SyncPanelView's .task can both
-    /// fire without double-attaching listeners.
+    /// Idempotent: safe to call more than once without double-attaching listeners.
     func connectIfConfigured() async {
         guard !isConnected,
               let secret = UserDefaults.standard.string(forKey: Self.secretKey) else { return }

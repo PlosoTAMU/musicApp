@@ -8,6 +8,8 @@
 // its native container (m4a/webm/opus), all of which the scanner + Chromium
 // already handle.
 import { spawn } from "child_process";
+import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 
 export interface DownloadProgress {
@@ -25,12 +27,58 @@ async function spotifyToSearch(url: string): Promise<string> {
   return `ytsearch1:${title}`;
 }
 
-/** Downloads one track into `dir`. Rejects with a readable message when
- *  yt-dlp is missing so the UI can say so instead of failing silently. */
+// ── yt-dlp resolution: PATH if already installed, else a one-time download
+// cached under the user's home dir. No Python/package manager assumed —
+// yt-dlp ships self-contained platform binaries on GitHub releases.
+const YTDLP_DIR = path.join(os.homedir(), ".pulsor");
+const YTDLP_BIN = path.join(YTDLP_DIR, process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
+const YTDLP_ASSET: Record<string, string> = {
+  win32: "yt-dlp.exe",
+  darwin: "yt-dlp_macos",   // standalone, no system Python required
+  linux: "yt-dlp_linux",    // standalone, no system Python required
+};
+
+let ytdlpPath: Promise<string> | undefined;
+
+function isOnPath(): Promise<boolean> {
+  return new Promise(resolve => {
+    const p = spawn("yt-dlp", ["--version"], { windowsHide: true });
+    p.on("error", () => resolve(false));
+    p.on("close", code => resolve(code === 0));
+  });
+}
+
+async function downloadYtDlpBinary(onProgress: (p: DownloadProgress) => void): Promise<void> {
+  const asset = YTDLP_ASSET[process.platform] ?? YTDLP_ASSET.linux;
+  const url = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset}`;
+  onProgress({ label: "Downloading yt-dlp…" });
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Could not download yt-dlp (${res.status})`);
+  fs.mkdirSync(YTDLP_DIR, { recursive: true });
+  fs.writeFileSync(YTDLP_BIN, Buffer.from(await res.arrayBuffer()), { mode: 0o755 });
+}
+
+/** Resolves to a runnable yt-dlp command: "yt-dlp" if it's on PATH, else the
+ *  cached download (fetched once, reused after). Memoized per app run. */
+function ensureYtDlp(onProgress: (p: DownloadProgress) => void): Promise<string> {
+  if (!ytdlpPath) ytdlpPath = (async () => {
+    if (fs.existsSync(YTDLP_BIN)) return YTDLP_BIN;
+    if (await isOnPath()) return "yt-dlp";
+    await downloadYtDlpBinary(onProgress);
+    return YTDLP_BIN;
+  })().catch(e => { ytdlpPath = undefined; throw e; }); // let a failed fetch retry next call
+  return ytdlpPath;
+}
+
+/** Downloads one track into `dir`, auto-fetching yt-dlp itself on first run
+ *  if it's not already installed. */
 export async function downloadTrack(
   url: string, dir: string, onProgress: (p: DownloadProgress) => void,
 ): Promise<void> {
-  const target = /open\.spotify\.com/.test(url) ? await spotifyToSearch(url) : url;
+  const [target, bin] = await Promise.all([
+    /open\.spotify\.com/.test(url) ? spotifyToSearch(url) : Promise.resolve(url),
+    ensureYtDlp(onProgress),
+  ]);
 
   const args = [
     "-f", "bestaudio[ext=m4a]/bestaudio",
@@ -40,7 +88,7 @@ export async function downloadTrack(
   ];
 
   await new Promise<void>((resolve, reject) => {
-    const p = spawn("yt-dlp", args, { windowsHide: true });
+    const p = spawn(bin, args, { windowsHide: true });
 
     p.stdout.on("data", (b: Buffer) => {
       const m = PROGRESS_RE.exec(b.toString());
@@ -52,7 +100,7 @@ export async function downloadTrack(
 
     p.on("error", (e: NodeJS.ErrnoException) => {
       reject(e.code === "ENOENT"
-        ? new Error("yt-dlp not found — install it and add it to PATH")
+        ? new Error("yt-dlp not found and auto-download failed — check your connection")
         : e);
     });
     p.on("close", code => {

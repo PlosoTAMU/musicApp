@@ -158,7 +158,7 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
                     self?.updateProgress(0.9)
                     
                     // Store metadata mapping with thumbnail
-                    self?.saveMetadata(fileURL: compressedURL, title: title, thumbnailURL: thumbnailURL)
+                    self?.saveMetadata(fileURL: compressedURL, title: title, thumbnailURL: thumbnailURL, videoID: videoID)
                     
                     self?.updateStatus("Complete!")
                     self?.updateProgress(1.0)
@@ -271,15 +271,21 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
     
     // MARK: - Metadata Management
     
-    private func saveMetadata(fileURL: URL, title: String, thumbnailURL: String? = nil) {
+    private func saveMetadata(fileURL: URL, title: String, thumbnailURL: String? = nil, videoID: String? = nil) {
         let metadataURL = getMetadataFileURL()
         var metadata = loadMetadata()
-        
+
         let filename = fileURL.lastPathComponent
         var trackMetadata: [String: String] = ["title": title]
-        
+
         if let thumbnailURL = thumbnailURL {
             trackMetadata["thumbnail"] = thumbnailURL
+        }
+
+        // Lets getThumbnailPath(for:) resolve the videoID-keyed thumbnail from
+        // just the audio URL (lock-screen artwork path).
+        if let videoID = videoID, !videoID.isEmpty {
+            trackMetadata["video_id"] = videoID
         }
         
         metadata[filename] = trackMetadata
@@ -296,12 +302,30 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
     func getThumbnailPath(for fileURL: URL) -> URL? {
         let filename = fileURL.lastPathComponent
         let thumbnailsDir = getThumbnailsDirectory()
-        let thumbnailPath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
 
-        // Existence check only — every caller decodes the image itself right
+        // Existence checks only — every caller decodes the image itself right
         // after this returns, so a decode-just-to-verify here was a pure
         // duplicate (a corrupt file just fails that caller's own decode).
-        return FileManager.default.fileExists(atPath: thumbnailPath.path) ? thumbnailPath : nil
+
+        // Current scheme first: thumbnails are keyed by videoID (see
+        // DownloadManager.fetchThumbnailWithRetries) — the metadata sidecar
+        // maps filename → video_id for callers that only know the audio URL.
+        // A leftover legacy file may hold a DIFFERENT song's artwork (the bug
+        // the videoID keying fixed), so the keyed file must win.
+        if let videoID = loadMetadata()[filename]?["video_id"], !videoID.isEmpty {
+            let keyedPath = thumbnailsDir.appendingPathComponent("\(videoID).jpg")
+            if FileManager.default.fileExists(atPath: keyedPath.path) {
+                return keyedPath
+            }
+        }
+
+        // Legacy scheme: Thumbnails/<audio filename>.jpg.
+        let thumbnailPath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+        if FileManager.default.fileExists(atPath: thumbnailPath.path) {
+            return thumbnailPath
+        }
+
+        return nil
     }
     
     
@@ -568,21 +592,22 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
     /// `completion` reports whether a valid thumbnail exists after this call
     /// (already present, or freshly fetched) — used by callers that want to
     /// back off retrying a permanently-unfetchable thumbnail (`false`).
-    func ensureThumbnail(for fileURL: URL, videoID: String, completion: ((Bool) -> Void)? = nil) {
+    /// Saved as Thumbnails/<videoID>.jpg — keyed by videoID like
+    /// DownloadManager.fetchThumbnailWithRetries, so the file's name always
+    /// identifies whose artwork it holds.
+    func ensureThumbnail(videoID: String, completion: ((Bool) -> Void)? = nil) {
         guard !videoID.isEmpty else { completion?(false); return }
 
-        // If thumbnail already exists and is valid, skip
-        if let existingPath = getThumbnailPath(for: fileURL) {
-            if let img = UIImage(contentsOfFile: existingPath.path),
-            img.size.width > 150 {
-                completion?(true)
-                return
-            }
-        }
-
-        let filename = fileURL.lastPathComponent
         let thumbnailsDir = getThumbnailsDirectory()
-        let savePath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
+        let savePath = thumbnailsDir.appendingPathComponent("\(videoID).jpg")
+
+        // If thumbnail already exists and is valid, skip — safe under this
+        // key: same videoID means same artwork by definition.
+        if let img = UIImage(contentsOfFile: savePath.path),
+        img.size.width > 150 {
+            completion?(true)
+            return
+        }
         
         Task {
             let thumbnailURLs: [String] = [

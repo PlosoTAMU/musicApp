@@ -9,9 +9,10 @@ import FirebaseFirestore
 /// `offset = serverMs − midpoint(send, recv)` and keep the median of recent samples —
 /// median is robust against RTT spikes (cell network, backgrounding).
 ///
-/// Note: our sample spans TWO round trips (write-ack, then server read), which widens
-/// the uncertainty window vs classic NTP. The median over 9 samples absorbs this;
-/// empirical accuracy is well under the 750 ms drift threshold the engine tolerates.
+/// Note: the server stamps during the WRITE commit, so the NTP midpoint must span
+/// send → write-ack only. The follow-up read merely fetches the stamped value; letting
+/// its latency into the midpoint would bias every sample low by ~½–1 RTT — a systematic
+/// error the median cannot remove. Mirror any change here in desktop/src/serverClock.ts.
 final class ServerClock {
     static let shared = ServerClock()
 
@@ -25,38 +26,52 @@ final class ServerClock {
 
     var nowMs: Int { Int(Self.localNowMs + lock.withLock { offsetMs }) }
 
-    func ingest(serverMs: Double, sendLocalMs: Double, recvLocalMs: Double) {
+    func ingest(serverMs: Double, sendLocalMs: Double, ackLocalMs: Double) {
         lock.withLock {
-            samples.append(serverMs - (sendLocalMs + recvLocalMs) / 2)
+            samples.append(serverMs - (sendLocalMs + ackLocalMs) / 2)
             if samples.count > 9 { samples.removeFirst(samples.count - 9) }
             offsetMs = samples.sorted()[samples.count / 2]
         }
     }
 
-    /// One sample: write serverTimestamp to our presence doc, read it back from server.
+    /// One sample: write serverTimestamp to our presence doc, bracket the WRITE with
+    /// local timestamps, then read the stamped value back. The read's own latency must
+    /// stay out of the midpoint — the stamp was assigned within [send, ack].
     /// Presence doc doubles as liveness signal for the session.
     func sample(db: Firestore, uid: String) async throws {
         let ref = db.collection("users").document(uid)
             .collection("sync").document("presence_\(SyncDevice.id)")
         let send = Self.localNowMs
         try await ref.setData(["at": FieldValue.serverTimestamp()])
+        let ack = Self.localNowMs
         let snap = try await ref.getDocument(source: .server)
-        let recv = Self.localNowMs
         guard let ts = snap.get("at") as? Timestamp else { return }
         ingest(serverMs: Double(ts.seconds) * 1000 + Double(ts.nanoseconds) / 1_000_000,
-               sendLocalMs: send, recvLocalMs: recv)
+               sendLocalMs: send, ackLocalMs: ack)
     }
 
-    /// Block until at least one sample exists — anchors written with offset 0
-    /// would poison every follower's extrapolation.
+    /// Block until the median has real support — anchors written with offset 0
+    /// would poison every follower's extrapolation, and a lone sample leaves the
+    /// median hostage to one RTT spike until the periodic resampler catches up.
+    /// Three sequential samples (~3 round trips, no sleeps on success) give it a
+    /// meaningful window immediately. Throws only if no sample landed at all.
     func prime(db: Firestore, uid: String) async throws {
         guard !isSynced else { return }
-        for attempt in 0..<3 {
-            do { try await sample(db: db, uid: uid); return }
-            catch where attempt < 2 {
-                try await Task.sleep(nanoseconds: UInt64(500_000_000 * (attempt + 1)))
+        var taken = 0
+        var lastError: Error?
+        for attempt in 0..<5 {
+            do {
+                try await sample(db: db, uid: uid)
+                taken += 1
+                if taken == 3 { return }
+            } catch {
+                lastError = error
+                if attempt < 4 {
+                    try await Task.sleep(nanoseconds: 300_000_000)
+                }
             }
         }
+        if taken == 0, let error = lastError { throw error }
     }
 }
 

@@ -20,13 +20,14 @@ const app = initializeApp(firebaseConfig);
 
 // ignoreUndefinedProperties: optional TrackRef fields (`yt`, `track`) are
 // simply omitted — matching how the Swift side skips nil keys.
-// experimentalForceLongPolling: Electron's renderer breaks Firestore's
-// streaming transport (WebChannel) — the first getDoc never resolves and
-// connect spins forever. Long-polling always works; slight latency cost is
-// irrelevant for this app's tiny docs.
+// experimentalAutoDetectLongPolling: Electron's renderer historically broke
+// Firestore's streaming transport (WebChannel), so long polling was forced —
+// at a 300-700 ms per-request cost that also biased clock samples. Auto-detect
+// tries streaming and falls back to long polling by itself when streaming
+// fails, so this is strictly no-worse than forcing it.
 export const db = initializeFirestore(app, {
   ignoreUndefinedProperties: true,
-  experimentalForceLongPolling: true,
+  experimentalAutoDetectLongPolling: true,
 });
 export const storage = getStorage(app);
 

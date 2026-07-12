@@ -54,13 +54,14 @@ struct ContentView: View {
                     downloadManager: downloadManager,
                     playlistManager: playlistManager,
                     audioPlayer: audioPlayer,
+                    syncManager: syncManager,
                     showFolderPicker: $showFolderPicker,
                     showYouTubeDownload: $showYouTubeDownload
                 )
                 .tabItem {
                     Label("Downloads", systemImage: "arrow.down.circle")
                 }
-                
+
                 PlaylistsView(
                     playlistManager: playlistManager,
                     downloadManager: downloadManager,
@@ -69,7 +70,7 @@ struct ContentView: View {
                 .tabItem {
                     Label("Playlists", systemImage: "music.note.list")
                 }
-                
+
                 QueueView(
                     audioPlayer: audioPlayer,
                     downloadManager: downloadManager
@@ -77,11 +78,6 @@ struct ContentView: View {
                 .tabItem {
                     Label("Queue", systemImage: "list.number")
                 }
-
-                SyncPanelView(manager: syncManager)
-                    .tabItem {
-                        Label("Sync", systemImage: "antenna.radiowaves.left.and.right")
-                    }
             }
             .onAppear {
                 #if DEBUG
@@ -147,6 +143,7 @@ struct ContentView: View {
                     audioPlayer: audioPlayer,
                     downloadManager: downloadManager,
                     playlistManager: playlistManager,
+                    syncManager: syncManager,
                     isPresented: $showNowPlaying,
                     panelOffset: $nowPlayingOffset
                 )
@@ -623,8 +620,10 @@ struct NowPlayingView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @ObservedObject var downloadManager: DownloadManager
     @ObservedObject var playlistManager: PlaylistManager
+    @ObservedObject var syncManager: SyncSessionManager
     @Binding var isPresented: Bool
     @State private var isSeeking = false
+    @State private var switchingHere = false
     @State private var localSeekPosition: Double = 0
     @State private var showPlaylistPicker = false
     @State private var backgroundImage: UIImage?
@@ -659,7 +658,14 @@ struct NowPlayingView: View {
             }
         )
     }
-    
+
+    /// Another device currently owns the shared session — this screen shows
+    /// what's playing there but can't control it until you take over.
+    private var isRemoteControlled: Bool {
+        syncManager.coordinator.role == .follower &&
+        !(syncManager.coordinator.remote?.ownerDeviceID.isEmpty ?? true)
+    }
+
     var body: some View {
         PerformanceMonitor.shared.recordViewUpdate("NowPlayingView")
         
@@ -702,6 +708,12 @@ struct NowPlayingView: View {
                 // More bottom → volume bar rises out of the bottom edge-swipe zone.
                 .padding(.top, 50)
                 .padding(.bottom, 30)
+                .blur(radius: isRemoteControlled ? 18 : 0)
+                .allowsHitTesting(!isRemoteControlled)
+
+                if isRemoteControlled {
+                    remoteLockOverlay
+                }
             }
             // Single source of truth for present, drag, and dismiss motion.
             .offset(y: panelOffset)
@@ -852,7 +864,43 @@ struct NowPlayingView: View {
         }
         .ignoresSafeArea()
     }
-    
+
+    @ViewBuilder
+    private var remoteLockOverlay: some View {
+        VStack(spacing: 16) {
+            Text("Playing on your other device")
+                .font(Theme.body(15, weight: .semibold))
+                .foregroundColor(Theme.bone)
+            if let name = syncManager.coordinator.remote?.playback.track?.name {
+                Text(name)
+                    .font(Theme.caption(13))
+                    .foregroundColor(Theme.boneDim)
+                    .lineLimit(1)
+            }
+            Button(switchingHere ? "Switching…" : "Play Here") {
+                switchingHere = true
+                Task {
+                    defer { switchingHere = false }
+                    try? await syncManager.playHere()
+                }
+            }
+            .buttonStyle(PillButtonStyle())
+            .disabled(switchingHere)
+            .frame(maxWidth: 220)
+        }
+        .padding(28)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Theme.smokeRaised)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(Theme.seam, lineWidth: 1)
+                )
+        )
+        .shadow(color: .black.opacity(0.5), radius: 20)
+        .padding(.horizontal, 40)
+    }
+
     @ViewBuilder
     private var topBar: some View {
         HStack(spacing: 8) {
@@ -2046,12 +2094,9 @@ struct EdgeVisualizerView: View {
             return
         }
         
-        let filename = track.url.lastPathComponent.replacingOccurrences(of: ".mp3", with: "")
-        let thumbnailsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Thumbnails", isDirectory: true)
-        let thumbnailPath = thumbnailsDir.appendingPathComponent("\(filename).jpg")
-        
-        guard FileManager.default.fileExists(atPath: thumbnailPath.path),
+        // Resolves both thumbnail schemes (legacy audio-filename key and the
+        // current videoID key) instead of hand-building the legacy path.
+        guard let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
               let image = UIImage(contentsOfFile: thumbnailPath.path) else {
             barHSB = Array(repeating: (h: 0, s: 0, b: 1.0), count: 100)
             return

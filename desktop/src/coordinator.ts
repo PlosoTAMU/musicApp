@@ -46,6 +46,8 @@ export class SessionCoordinator {
   private outbox?: PlaybackState;
   private retryTimer?: ReturnType<typeof setTimeout>;
   private retryDelay = 2000;
+  private listenRetryTimer?: ReturnType<typeof setTimeout>;
+  private listenRetryDelay = 2000;
 
   constructor(readonly db: Firestore) {}
 
@@ -74,8 +76,34 @@ export class SessionCoordinator {
     this.role = "follower";
     this.myEpoch = 0;
 
+    this.listen(ref);
+
+    this.clockTimer = setInterval(() => {
+      if (this.uid) serverClock.sample(this.db, this.uid).catch(() => {});
+    }, 60_000);
+    this.onChange?.();
+  }
+
+  detach() {
+    this.unsub?.(); this.unsub = undefined;
+    if (this.leaseTimer) clearInterval(this.leaseTimer);
+    if (this.clockTimer) clearInterval(this.clockTimer);
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.listenRetryTimer) clearTimeout(this.listenRetryTimer);
+    this.outbox = undefined;
+    this.role = "none"; this.myEpoch = 0; this.remote = undefined; this.uid = "";
+    this.demo = false;
+    this.onChange?.();
+  }
+
+  /** (Re)subscribes the session listener. On a terminal listen error (the SDK
+   *  gives up retrying internally — e.g. a stream reset it can't recover),
+   *  mark offline and resubscribe from scratch with backoff, so a wedged
+   *  listener can't leave the app permanently "offline" until restart. */
+  private listen(ref: DocumentReference) {
     this.unsub?.();
     this.unsub = onSnapshot(ref, { includeMetadataChanges: true }, snap => {
+      this.listenRetryDelay = 2000;
       const wasOnline = this.online;
       this.online = !snap.metadata.fromCache;
       if (!wasOnline && this.online) this.flushOutbox();
@@ -89,23 +117,15 @@ export class SessionCoordinator {
         if (state.updatedBy !== DEVICE_ID) this.onRemote?.(state);
       }
       this.onChange?.();
+    }, err => {
+      console.log(`[sync] listener error (${err.code}) — will re-subscribe`);
+      this.online = false;
+      this.onChange?.();
+      if (this.listenRetryTimer) clearTimeout(this.listenRetryTimer);
+      const d = this.listenRetryDelay;
+      this.listenRetryDelay = Math.min(this.listenRetryDelay * 2, 30_000);
+      this.listenRetryTimer = setTimeout(() => { if (this.uid) this.listen(ref); }, d);
     });
-
-    this.clockTimer = setInterval(() => {
-      if (this.uid) serverClock.sample(this.db, this.uid).catch(() => {});
-    }, 60_000);
-    this.onChange?.();
-  }
-
-  detach() {
-    this.unsub?.(); this.unsub = undefined;
-    if (this.leaseTimer) clearInterval(this.leaseTimer);
-    if (this.clockTimer) clearInterval(this.clockTimer);
-    if (this.retryTimer) clearTimeout(this.retryTimer);
-    this.outbox = undefined;
-    this.role = "none"; this.myEpoch = 0; this.remote = undefined; this.uid = "";
-    this.demo = false;
-    this.onChange?.();
   }
 
   // ── Takeover (returns pre-takeover state for handover continuity) ─────

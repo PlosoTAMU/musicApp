@@ -1,6 +1,7 @@
-// Fullscreen desktop UI. Two render paths: renderNow() on the 500 ms
-// extrapolation tick (cheap), renderLibrary() only on scan/search/queue
-// changes (row building is the expensive part).
+// Fullscreen desktop UI. Three render paths: renderPosition() at rAF while
+// playing (slider + clock only), renderNow() on the 500 ms extrapolation tick
+// (cheap), renderLibrary() only on scan/search/queue changes (row building is
+// the expensive part).
 import { ipcRenderer } from "electron";
 import { pathToFileURL } from "url";
 import { db, bootstrapAuth } from "./firebase";
@@ -132,15 +133,13 @@ function wire() {
   // Transport (command-bus bridge: local when owner, command doc otherwise)
   $("btn-prev").onclick = () => engine.prev();
   $("btn-next").onclick = () => engine.next();
-  $("btn-toggle").onclick = () => {
-    coord.remote?.playback.playing ? engine.pause() : engine.play();
-  };
+  $("btn-toggle").onclick = toggleCmd;
   $("btn-playhere").onclick = () => run(() => engine.takeOverHere());
 
   const slider = $("progress") as HTMLInputElement;
   slider.oninput = () => { dragMs = Number(slider.value); };
   slider.onchange = () => {
-    if (dragMs !== null) { engine.seekMs(dragMs); dragMs = null; }
+    if (dragMs !== null) { seekCmd(dragMs); dragMs = null; }
   };
 
   // Library
@@ -183,8 +182,8 @@ function wire() {
   window.addEventListener("keydown", e => {
     if ((e.target as HTMLElement).tagName === "INPUT") return;
     if (e.code === "Space") { e.preventDefault(); ($("btn-toggle") as HTMLButtonElement).click(); }
-    if (e.code === "ArrowRight") engine.seekMs(currentPosMs() + 10_000);
-    if (e.code === "ArrowLeft") engine.seekMs(Math.max(0, currentPosMs() - 10_000));
+    if (e.code === "ArrowRight") seekCmd(currentPosMs() + 10_000);
+    if (e.code === "ArrowLeft") seekCmd(Math.max(0, currentPosMs() - 10_000));
     if (e.code === "KeyL") ($("btn-lyrics") as HTMLButtonElement).click();
   });
   ipcRenderer.on("media", (_e, t: string) => {
@@ -201,6 +200,29 @@ function wire() {
   };
   $("lyr-minus").onclick = () => nudgeLyrics(-500);
   $("lyr-plus").onclick = () => nudgeLyrics(500);
+
+  // Rail action row (twin of the iOS Now Playing top bar).
+  $("rail-loop").onclick = () => {
+    engine.player.loop = !engine.player.loop;
+    renderNow();
+  };
+  $("rail-fx").onclick = () => {
+    fx.bypass = !fx.bypass;
+    // Effective rate changed → owner must re-anchor followers (publish() is a
+    // no-op for other roles), same as iOS republishing on $effectsBypass.
+    applyFx(true);
+    renderNow();
+  };
+  $("rail-lyrics").onclick = () => ($("btn-lyrics") as HTMLButtonElement).click();
+  $("rail-addpl").onclick = () => {
+    const ref = coord.remote?.playback.track;
+    if (!ref) { showHint("Nothing playing"); return; }
+    const open = openPlaylistId ? playlistSync.get(openPlaylistId) : undefined;
+    if (!open) { showHint("Open a playlist below first — then this adds the current song"); return; }
+    void playlistSync.addTrack(open.id,
+      ref.yt ? { id: ref.id, name: ref.name, yt: ref.yt } : { id: ref.id, name: ref.name });
+    showHint(`Added “${ref.name}” to “${open.name}”`);
+  };
 
   // Effects — speed also republishes rate (followers extrapolate with it).
   bindFx("fx-volume", v => { fx.volume = v / 100; });
@@ -236,11 +258,50 @@ function wire() {
 const currentPosMs = () =>
   coord.role === "owner" ? engine.player.posMs : engine.mirrorPositionMs();
 
+// ── Optimistic follower echo ───────────────────────────────────────────────
+// A follower command round-trips 0.7–2 s; patch the mirror immediately — the
+// next authoritative snapshot overwrites it wholesale (coordinator replaces
+// coord.remote on every snapshot), so no rollback logic is needed.
+
+function toggleCmd() {
+  const pb = coord.remote?.playback;
+  const playing = !!pb?.playing;
+  playing ? engine.pause() : engine.play();
+  if (!pb || coord.role === "owner") return;
+  pb.pos = Math.round(currentPosMs()); // re-anchor at the shown position
+  pb.anchor = serverClock.nowMs;
+  pb.playing = !playing;
+  renderNow();
+}
+
+function seekCmd(ms: number) {
+  engine.seekMs(ms);
+  const pb = coord.remote?.playback;
+  if (!pb || coord.role === "owner") return;
+  pb.pos = Math.round(ms);
+  pb.anchor = serverClock.nowMs;
+  renderNow();
+}
+
+// Transient statusline hint — borrows #repl-status for a few seconds; the
+// 500 ms renderNow tick hands it back to the replicator automatically.
+let hint = "";
+let hintUntil = 0;
+function showHint(text: string) {
+  hint = text;
+  hintUntil = Date.now() + 3_500;
+  renderNow();
+}
+
 // ── Effects (element + Web Audio graph; persisted per install) ─────────────
 
 const FX_KEY = "fx.v1";
-const fx = ((): { volume: number; speed: number; bass: number; reverb: number } => {
-  const base = { volume: 1, speed: 1, bass: 0, reverb: 0 };
+// bypass mirrors iOS effectsBypass: mutes the applied effects without touching
+// the stored slider values. Local-only on both platforms (not in the settings
+// doc); volume is not an effect and stays live while bypassed.
+const fx = ((): { volume: number; speed: number; bass: number; reverb: number;
+                  bypass: boolean } => {
+  const base = { volume: 1, speed: 1, bass: 0, reverb: 0, bypass: false };
   try { return { ...base, ...JSON.parse(localStorage.getItem(FX_KEY) ?? "{}") }; }
   catch { return base; }
 })();
@@ -256,11 +317,12 @@ function pushSettingsDebounced() {
 function applyFx(publishRate = false) {
   const el = engine.player.element;
   el.volume = fx.volume;
-  el.defaultPlaybackRate = fx.speed; // survives src changes
-  el.playbackRate = fx.speed;
+  const rate = fx.bypass ? 1 : fx.speed;   // bypass → neutral, sliders keep values
+  el.defaultPlaybackRate = rate; // survives src changes
+  el.playbackRate = rate;
   (el as HTMLAudioElement & { preservesPitch: boolean }).preservesPitch = true;
-  beatFeed.setBassDb(fx.bass);
-  beatFeed.setReverbMix(fx.reverb);
+  beatFeed.setBassDb(fx.bypass ? 0 : fx.bass);
+  beatFeed.setReverbMix(fx.bypass ? 0 : fx.reverb);
   localStorage.setItem(FX_KEY, JSON.stringify(fx));
   $("fx-volume-val").textContent = `${Math.round(fx.volume * 100)}%`;
   $("fx-speed-val").textContent = `${fx.speed.toFixed(2)}×`;
@@ -527,7 +589,7 @@ function renderLyrics() {
     const d = document.createElement("div");
     d.className = "lyr-line";
     d.textContent = line.text || "♪";
-    d.onclick = () => engine.seekMs(Math.max(0, line.timeMs + lyricsOffsetMs));
+    d.onclick = () => seekCmd(Math.max(0, line.timeMs + lyricsOffsetMs));
     body.appendChild(d);
   }
   updateLyricsHighlight();
@@ -565,6 +627,31 @@ function nudgeLyrics(deltaMs: number) {
 
 // ── Render: cheap path (position, chips, status) ───────────────────────────
 
+/** Position-only update (slider + clock text) — cheap enough for the fast
+ *  tick; renderNow calls it too so the two paths can't disagree. */
+function renderPosition() {
+  const pb = coord.remote?.playback;
+  const live = currentPosMs();
+  const dur = coord.role === "owner" ? engine.player.durMs : (pb?.dur ?? 0);
+  const shown = dragMs ?? Math.min(live, dur);
+  const slider = $("progress") as HTMLInputElement;
+  slider.max = String(Math.max(dur, 1));
+  if (dragMs === null) slider.value = String(shown);
+  slider.style.setProperty("--fill", `${dur > 0 ? (shown / dur) * 100 : 0}%`);
+  $("time-cur").textContent = mmss(shown);
+  $("time-dur").textContent = mmss(dur);
+}
+
+// Fast position tick — rAF while playing (owner or mirror) so the slider
+// moves smoothly; the full renderNow stays on its 500 ms interval.
+function positionLoop() {
+  requestAnimationFrame(positionLoop);
+  if (coord.role === "none") return;
+  const playing = coord.role === "owner"
+    ? engine.player.playing : !!coord.remote?.playback.playing;
+  if (playing) renderPosition();
+}
+
 function renderNow() {
   const connected = coord.role !== "none";
   $("setup").hidden = connected;
@@ -588,7 +675,13 @@ function renderNow() {
   const pb = s?.playback;
   const idle = !s?.ownerDeviceID;
   $("owner-dead").hidden = !(coord.role !== "owner" && !idle && s && leaseExpired(s, serverClock.nowMs));
-  ($("btn-playhere") as HTMLButtonElement).hidden = coord.role === "owner";
+
+  // Someone else owns the session — lock the rail behind a "Play Here" prompt
+  // instead of leaving transport controls live for a device that isn't playing.
+  const remoteActive = coord.role !== "owner" && !idle;
+  $("rail-content").classList.toggle("blurred", remoteActive);
+  $("rail-lock").hidden = !remoteActive;
+  $("rail-lock-track").textContent = pb?.track?.name ?? "";
   ($("btn-playhere") as HTMLButtonElement).disabled = busy || !coord.online;
 
   $("track-title").textContent = pb?.track?.name ?? (idle ? "Pick a song →" : "Nothing playing");
@@ -612,18 +705,16 @@ function renderNow() {
     }
   }
 
-  const live = currentPosMs();
-  const dur = coord.role === "owner" ? engine.player.durMs : (pb?.dur ?? 0);
-  const shown = dragMs ?? Math.min(live, dur);
-  const slider = $("progress") as HTMLInputElement;
-  slider.max = String(Math.max(dur, 1));
-  if (dragMs === null) slider.value = String(shown);
-  slider.style.setProperty("--fill", `${dur > 0 ? (shown / dur) * 100 : 0}%`);
-  $("time-cur").textContent = mmss(shown);
-  $("time-dur").textContent = mmss(dur);
+  renderPosition();
+
+  // Rail action toggles — filled treatment matches the iOS top bar (fx button
+  // is lit while effects are ACTIVE, i.e. not bypassed).
+  $("rail-loop").classList.toggle("on", engine.player.loop);
+  $("rail-fx").classList.toggle("on", !fx.bypass);
+  $("rail-lyrics").classList.toggle("on", lyricsOpen);
 
   $("lib-status").textContent = `${engine.library.length} local tracks`;
-  $("repl-status").textContent = replicator.status;
+  $("repl-status").textContent = Date.now() < hintUntil ? hint : replicator.status;
 
   if (lyricsOpen) {
     const cur = pb?.track?.id ?? null;
@@ -837,6 +928,7 @@ wire();
 if (musicDir) engine.loadLibrary(musicDir);
 renderAll();
 requestAnimationFrame(vizLoop);
+requestAnimationFrame(positionLoop);
 initFxSliders();
 void outputSet().then(s => { knownOutputs = s; });
 navigator.mediaDevices.addEventListener("devicechange", () => void handleDeviceChange());

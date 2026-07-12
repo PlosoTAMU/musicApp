@@ -82,6 +82,9 @@ export class LocalPlayer {
   private el = new Audio();
   current?: LocalTrack;
   queue: LocalTrack[] = [];
+  /** Repeat the current track at end-of-track — local-only, like iOS
+   *  isLoopEnabled (neither side syncs it). Honored in engine.trackEnded. */
+  loop = false;
   onEnded?: () => void;
   onChange?: () => void;
 

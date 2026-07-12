@@ -4,7 +4,7 @@
   "private": true,
   "main": "main.js",
   "scripts": {
-    "bundle": "esbuild src/ui.ts --bundle --outfile=dist/bundle.js --platform=browser --format=cjs --external:electron --external:fs --external:path --external:crypto --external:child_process --external:url",
+    "bundle": "esbuild src/ui.ts --bundle --outfile=dist/bundle.js --platform=browser --format=cjs --external:electron --external:fs --external:path --external:crypto --external:child_process --external:url --external:os",
     "build": "tsc && npm run bundle",
     "start": "npm run build && electron .",
     "dist": "npm run build && electron-builder --win"
@@ -26,6 +26,7 @@
     "files": [
       "main.js",
       "index.html",
+      "build/icon.png",
       "dist/**",
       "node_modules/**"
     ]
