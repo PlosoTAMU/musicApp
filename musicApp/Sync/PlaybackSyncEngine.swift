@@ -139,9 +139,21 @@ final class PlaybackSyncEngine: ObservableObject {
         player.$isPlaying
             .dropFirst()
             .removeDuplicates()
-            .sink { [weak self] _ in
-                self?.resetSeekDetection()
-                self?.publishTrigger.send()
+            .sink { [weak self] playing in
+                guard let self else { return }
+                self.resetSeekDetection()
+                // Implicit takeover: the iOS UI plays audio by calling the
+                // player directly (this engine only observes), and a follower
+                // never has local audio unless the user just started a song
+                // HERE — the remote mirror is display-only. So isPlaying → true
+                // while not owner means "play here": claim the session so this
+                // playback publishes. Twin of desktop engine.playLocal()'s
+                // takeOver(). Owner pause/resume falls through to publishTrigger.
+                if playing && !self.coordinator.role.isOwner {
+                    self.claimSessionForLocalPlayback()
+                } else {
+                    self.publishTrigger.send()
+                }
             }
             .store(in: &bag)
 
