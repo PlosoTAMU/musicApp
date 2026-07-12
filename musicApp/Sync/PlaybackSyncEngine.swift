@@ -36,6 +36,7 @@ final class PlaybackSyncEngine: ObservableObject {
     @Published private(set) var ghostQueue: [TrackRef] = []
 
     private var bag = Set<AnyCancellable>()
+    private var isApplyingRemotePlaybackCommand = false
     private let publishTrigger = PassthroughSubject<Void, Never>()
 
     // Seek detection state.
@@ -109,6 +110,9 @@ final class PlaybackSyncEngine: ObservableObject {
     }
 
     private func applyCommand(_ cmd: SyncCommand) {
+        isApplyingRemotePlaybackCommand = true
+        defer { isApplyingRemotePlaybackCommand = false }
+        
         switch cmd {
         case .play: player.resume()
         case .pause: player.pause()
@@ -203,8 +207,11 @@ final class PlaybackSyncEngine: ObservableObject {
 
     private func handleLocalTrackChange(_ newTrack: Track?) {
         resetSeekDetection()
-        guard coordinator.role.isOwner else { return }
+        if player.isPlaying {
+            takeOverForLocalPlaybackIfNeeded()
+        }
 
+        guard coordinator.role.isOwner else { return }
         // next() consumed the queue head → CAS pop instead of bulk overwrite,
         // so a follower's concurrent insert survives.
         if let remoteHead = coordinator.remote?.queue.first,
@@ -285,6 +292,14 @@ final class PlaybackSyncEngine: ObservableObject {
         )
     }
 
+
+    private func takeOverForLocalPlaybackIfNeeded() {
+        guard !isApplyingRemotePlaybackCommand else { return }
+        guard !coordinator.role.isOwner else { return }
+
+        takeOver()
+    }
+
     private func publishNow() {
         guard coordinator.role.isOwner else { return }
         let state = snapshotState()
@@ -303,6 +318,21 @@ final class PlaybackSyncEngine: ObservableObject {
             }
         }
     }
+
+
+    private func claimSessionForLocalPlayback() {
+        Task { @MainActor in
+            do {
+                _ = try await coordinator.takeOver()
+                publishNow()
+            } catch {
+                print("[PlaybackSyncEngine] local playback takeover failed:", error)
+                publishTrigger.send()
+            }
+        }
+    }
+
+
 
     // MARK: - Handover (the takeover path)
 
