@@ -207,9 +207,6 @@ final class PlaybackSyncEngine: ObservableObject {
 
     private func handleLocalTrackChange(_ newTrack: Track?) {
         resetSeekDetection()
-        if player.isPlaying {
-            takeOverForLocalPlaybackIfNeeded()
-        }
 
         guard coordinator.role.isOwner else { return }
         // next() consumed the queue head → CAS pop instead of bulk overwrite,
@@ -293,12 +290,7 @@ final class PlaybackSyncEngine: ObservableObject {
     }
 
 
-    private func takeOverForLocalPlaybackIfNeeded() {
-        guard !isApplyingRemotePlaybackCommand else { return }
-        guard !coordinator.role.isOwner else { return }
-
-        _ = try await coordinator.takeOver()
-    }
+    
 
     private func publishNow() {
         guard coordinator.role.isOwner else { return }
