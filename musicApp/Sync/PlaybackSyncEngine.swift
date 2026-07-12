@@ -297,7 +297,7 @@ final class PlaybackSyncEngine: ObservableObject {
         guard !isApplyingRemotePlaybackCommand else { return }
         guard !coordinator.role.isOwner else { return }
 
-        takeOver()
+        _ = try await coordinator.takeOver()
     }
 
     private func publishNow() {
