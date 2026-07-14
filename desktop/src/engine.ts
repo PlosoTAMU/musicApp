@@ -9,6 +9,7 @@ import {
   PlaybackState, SessionState, TrackRef, positionAt, sameId,
 } from "./protocol";
 import { serverClock } from "./serverClock";
+import { nextPlaylistIndex } from "./listOps";
 
 export class SyncEngine {
   readonly player = new LocalPlayer();
@@ -33,12 +34,31 @@ export class SyncEngine {
     if (this.history.length > SyncEngine.HISTORY_MAX) this.history.shift();
   }
 
-  // Playlist wrap — twin of iOS isPlaylistMode. Armed by playAll(), so a played
-  // playlist keeps going and wraps to the top when the queue drains. Owner-local
-  // (not synced): the wrap just re-fills the shared queue, which followers see.
-  // Cleared by a direct single-track play (playLocal) or clearQueue — exiting
-  // "playlist mode" the same way iOS play(_:) does.
+  // Playlist mode — twin of iOS currentPlaylist/currentIndex. Owner-local and NOT
+  // synced (iOS never syncs currentPlaylist): the shared queue stays the user
+  // queue and drains first (interleave), then the playlist advances by index and
+  // wraps. Armed by playAll(); cleared by a direct single-track play (playLocal),
+  // clearQueue, or losing ownership — exiting "playlist mode" like iOS play(_:).
   private playlistLoop: LocalTrack[] | null = null;
+  private playlistIndex = 0;
+
+  /** True on the owner while a playlist is driving playback. */
+  get inPlaylistMode(): boolean { return !!this.playlistLoop; }
+
+  /** Upcoming playlist tracks after the current one — the "Up Next from Playlist"
+   *  section (twin of iOS playlistUpNextTracks). Owner-only; empty on followers. */
+  get playlistUpNext(): LocalTrack[] {
+    return this.playlistLoop ? this.playlistLoop.slice(this.playlistIndex + 1) : [];
+  }
+
+  /** Snap playlistIndex to a track that belongs to the playlist but was played out
+   *  of band (a queued duplicate, or prev) — twin of iOS play(_:) maintaining
+   *  currentIndex, so the next advance doesn't immediately replay it. */
+  private notePlaylistPos(t?: LocalTrack) {
+    if (!t || !this.playlistLoop) return;
+    const i = this.playlistLoop.findIndex(x => sameId(x.id, t.id));
+    if (i >= 0) this.playlistIndex = i;
+  }
 
   /** Injected by ui.ts — maps a yt id to the current crop window. */
   cropLookup: (yt?: string) => { startMs?: number; endMs?: number } = () => ({});
@@ -91,6 +111,13 @@ export class SyncEngine {
   // ── Remote → local ──────────────────────────────────────────────────────
 
   private handleRemote(s: SessionState) {
+    // Lost ownership → drop our owner-local playlist (iOS: currentPlaylist doesn't
+    // survive handover). trackEnded is role-gated, but this also stops a stale
+    // playlist from resuming if we regain ownership without a fresh playAll.
+    if (this.coord.role !== "owner" && this.playlistLoop) {
+      this.playlistLoop = null;
+      this.playlistIndex = 0;
+    }
     this.ghostQueue = s.queue.filter(r => !resolve(r, this.library));
     this.player.queue = s.queue
       .map(r => resolve(r, this.library))
@@ -138,6 +165,7 @@ export class SyncEngine {
         this.coord.remote?.queueVersion ?? 0);
     }
     this.applyCrop(prev);
+    this.notePlaylistPos(prev);
     this.player.play(prev);
   }
 
@@ -161,23 +189,22 @@ export class SyncEngine {
       else void this.queueSync.apply({ kind: "consumeHead", expected: head.id }, basis);
       if (local) {
         this.pushHistory(this.player.current);   // remember what we're leaving
+        this.notePlaylistPos(local);             // a queued playlist track keeps index in step
         this.applyCrop(local);
         this.player.play(local);
         this.publish();
         return;
       }
     }
-    // Queue drained. In playlist mode, wrap to the top instead of stopping —
-    // twin of iOS next()'s currentIndex = (i+1) % count.
+    // Queue drained. In playlist mode, advance to the next playlist track and wrap
+    // — twin of iOS next()'s currentIndex = (i+1) % count. The playlist is
+    // owner-local; nothing is written to the shared queue.
     if (this.playlistLoop && this.playlistLoop.length) {
-      const list = this.playlistLoop;
+      this.playlistIndex = nextPlaylistIndex(this.playlistIndex, this.playlistLoop.length);
+      const t = this.playlistLoop[this.playlistIndex];
       this.pushHistory(this.player.current);
-      this.applyCrop(list[0]);
-      this.player.play(list[0]);
-      const refs = list.slice(1).map(toRef);
-      if (this.coord.demo) this.demoQueue(() => refs);
-      else void this.queueSync.apply({ kind: "replaceAll", queue: refs },
-        this.coord.remote?.queueVersion ?? 0);
+      this.applyCrop(t);
+      this.player.play(t);
       this.publish();
       return;
     }
@@ -220,6 +247,7 @@ export class SyncEngine {
    *  A direct single-track play exits playlist wrap, matching iOS play(_:). */
   async playLocal(t: LocalTrack) {
     this.playlistLoop = null;
+    this.playlistIndex = 0;
     if (this.coord.role !== "owner") {
       await this.coord.takeOver();
       this.becomeCommandTarget();
@@ -229,25 +257,40 @@ export class SyncEngine {
     this.publish();
   }
 
-  /** Play a whole list: first track now, rest replace the shared queue. Arms
-   *  playlist wrap so playback continues past the queue and loops to the top. */
+  /** Play a whole list: play the first track now and arm playlist mode. The shared
+   *  (user) queue is left untouched — iOS loadPlaylist doesn't clear it, and
+   *  trackEnded drains it first so any queued songs interleave before the playlist
+   *  resumes. */
   async playAll(ts: LocalTrack[]) {
     if (!ts.length) return;
-    await this.playLocal(ts[0]);   // clears playlistLoop…
-    this.playlistLoop = ts;        // …then arm it with the full set
-    const refs = ts.slice(1).map(toRef);
-    if (this.coord.demo) { this.demoQueue(() => refs); return; }
-    void this.queueSync.apply({ kind: "replaceAll", queue: refs },
-      this.coord.remote?.queueVersion ?? 0);
+    await this.playLocal(ts[0]);   // takes over + plays ts[0] + clears the old loop
+    this.playlistLoop = ts;
+    this.playlistIndex = 0;
   }
 
   /** Clear the shared queue and exit playlist wrap — twin of
    *  clearQueueAndExitPlaylist(). Owner-only (queue is session-shared). */
   clearQueue() {
     this.playlistLoop = null;
+    this.playlistIndex = 0;
     if (this.coord.demo) { this.demoQueue(() => []); return; }
     void this.queueSync.apply({ kind: "replaceAll", queue: [] },
       this.coord.remote?.queueVersion ?? 0);
+  }
+
+  /** Click an "Up Next from Playlist" row: jump to that track, stay in playlist
+   *  mode, leave the user queue intact (queued songs still interleave next). Owner
+   *  only — playlistLoop is owner-local. Distinct from playFromQueue, which removes
+   *  from the user queue and exits playlist mode. */
+  playFromPlaylist(t: LocalTrack) {
+    if (!this.playlistLoop) return;
+    const i = this.playlistLoop.findIndex(x => sameId(x.id, t.id));
+    if (i < 0) return;
+    this.pushHistory(this.player.current);
+    this.playlistIndex = i;
+    this.applyCrop(t);
+    this.player.play(t);
+    this.publish();
   }
 
   /** Append to the shared queue (intent op — safe against concurrent edits). */
