@@ -33,3 +33,9 @@ export function moveIndex<T>(list: T[], from: number, to: number): T[] {
   out.splice(dest, 0, item);
   return out;
 }
+
+/** Next index in a wrapping playlist — twin of iOS next()'s (i+1) % count.
+ *  Returns 0 for an empty playlist. */
+export function nextPlaylistIndex(i: number, len: number): number {
+  return len > 0 ? (i + 1) % len : 0;
+}
