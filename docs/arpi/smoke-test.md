@@ -88,3 +88,26 @@ Two devices (real secret; desktop owns a playlist):
 Two devices (real secret):
 - [ ] Reorder / clear the queue on desktop → the phone's queue reflects it (and vice-versa).
 - [ ] Rename / reorder / delete a playlist on desktop → the phone reflects it.
+
+---
+
+## Phase 4 — Web Audio rebuild (pitch, effects, crop)
+
+Single device (offline preview + a local library):
+- [ ] Play a track; move **Pitch** to +7 → melody rises, tempo unchanged. Back to 0 → clean audio again (0 st is an exact passthrough).
+- [ ] Pitch at −12 and +12: some granular artifacts are acceptable, but **no dropouts/silence/stutter**; the beat visualizer keeps drawing.
+- [ ] **Speed** 1.5× with pitch 0 → no chipmunk effect (preservesPitch still owns speed).
+- [ ] **Bass** slider now spans **−10..+20 dB**: at +20 loud but not muddy (300 Hz scoop working); at −10 audibly thinner. Label shows signed values (−10dB … +20dB).
+- [ ] **Fx bypass** (rail button) neutralizes speed+pitch+bass+reverb at once; sliders keep their values; volume stays live.
+- [ ] **Per-track memory**: set 1.5× / +3 st / +10 dB on song A; play song B → sliders snap to defaults; back to A → sliders *and* audio restore. Relaunch the app, play A → still restored.
+- [ ] **Crop editor**: ⋯ → **Crop…** on a YouTube-sourced track → modal with full/cropped durations, seek bar, −5s/⏯/+5s/End transport, Start/End sliders + clickable m:ss chips (inline edit; Enter commits, Esc cancels). Start can't pass End−0.5s and vice versa.
+- [ ] Preview **loops inside the crop window**; releasing the Start slider previews from the start; releasing End previews the last 3 s. Editing pauses the main player and resumes it on close.
+- [ ] **Reset** restores 0..full; **Apply Crop** on the near-full range removes the crop.
+- [ ] After Apply: rail shows the **✂ CROPPED** chip; the progress bar's duration equals the cropped length; playback stops/advances at the crop end.
+- [ ] Crop the **currently-playing** track → it restarts inside the new window without a stall.
+- [ ] Worklet fallback: temporarily rename `dist/pitchWorklet.js` → app still plays; Pitch slider is disabled; bass/reverb/crop all still work. (Rename it back.)
+
+Two devices (real secret; phone nearby):
+- [ ] Set bass **+18** on the phone → desktop applies +18 (old 0..12 clamp is gone). Set −10 on desktop → phone shows −10.
+- [ ] Change tracks on desktop while the phone follows → desktop's restored per-track speed/bass/reverb reach the phone; **pitch never appears on iOS** (local-only).
+- [ ] Apply a crop on desktop → the phone's copy of the track picks up the same crop (doc round-trip); Reset+Apply clears it on both; the ✂ badge tracks both ways.

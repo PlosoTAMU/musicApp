@@ -23,10 +23,13 @@ audit findings (see `docs/arpi/desktop-parity-findings.md`), strict priority ord
 - 2026-07-14 P3 queue reorder bug caught by the logic gate: dropping a row onto the row *directly below* it made rebase(move) anchor to the just-removed row → item flung to tail. Guarded with an adjacent-below no-op (matches `moveIndex`'s playlist behavior).
 - 2026-07-14 Pure list logic (shuffle / fmtDuration / moveIndex reorder) split into `desktop/src/listOps.ts` so it's Node-testable without a DOM — same pattern as P2's `urls.ts`.
 - 2026-07-14 P3 item 16 DONE (faithful iOS, approach A): playlist is now owner-local (playlistLoop + playlistIndex, not synced). playAll no longer dumps the remainder into the shared queue; trackEnded drains the shared user-queue first (interleave) then advances the playlist by (i+1)%len. Up Next split into user queue + owner-only "Up Next from Playlist" (rows jump via playFromPlaylist). Tradeoff accepted: playlist mode doesn't survive cross-device handover (= iOS). Spec: `docs/superpowers/specs/2026-07-14-desktop-playlist-interleave-design.md`.
+- 2026-07-14 P4 pitch = hand-rolled streaming WSOLA granular shifter in an AudioWorklet (pitchShifter.ts core + pitchWorklet.ts entry), NOT vendored soundtouch-js — the npm worklet build wants a decoded buffer, not a MediaElementSource stream; the pure core is Node-testable. Pitch is LOCAL-only (iOS doesn't sync it) and adds ~95 ms latency only while active (0 st = exact passthrough).
+- 2026-07-14 P4 graph ownership moved beat.ts → audioGraph.ts (src → pitch → EQ×5 → analyser → dry/wet → dest, twin of the iOS chain); BeatFeed only binds the analyser. Speed stays on the element (playbackRate + preservesPitch) so follower rate extrapolation is untouched. Worklet loads from a Blob URL (fs read) — file:// module fetch is CORS-hostile; load failure degrades to a disabled pitch slider.
+- 2026-07-14 P4 crop editor gated to yt-bearing tracks — crop lives on the yt-keyed library doc; local-only files have no doc to carry it. Known parity edge, recorded here.
 
 ## ASSUMPTIONS
 - [unconfirmed] Firestore doc contracts stay frozen; parity work must not change wire field names (they are the cross-platform contract — see SettingsSync.swift header).
-- [unconfirmed] A pure-JS pitch shifter (SoundTouch-style / phase vocoder) can be vendored offline; no CDN (Electron renderer, but nodeIntegration on so npm dep is fine).
+- [confirmed] A pure-JS pitch shifter can be vendored offline: P4 hand-rolled one (pitchShifter.ts), verified by Node sine tests; no CDN, no npm dep.
 - [confirmed] `beat.ts` already taps the <audio> element via a Web Audio MediaElementSource — P4 consolidates onto that graph rather than adding a second one.
 - [confirmed] Engine command-bus already supports follower→owner control; remote-control work is UI-side (ui.ts render + controls), not protocol.
 
@@ -39,11 +42,11 @@ audit findings (see `docs/arpi/desktop-parity-findings.md`), strict priority ord
 - **Phase 1** (playback control parity): prev-track history (engine.ts), single-click play (ui.ts rowClick), full remote control (index.html + ui.ts, unblur + banner), on-screen seek ±10s. Gate: tsc+bundle green; `rebase` logic 11/11 PASS. Smoke checklist in smoke-test.md.
 - **Phase 2** (library management): rename/delete(5s undo)/song-info/redownload via a reusable context menu (right-click + ⋯), duplicate detection, failed-downloads panel, text-input modal (Electron has no window.prompt). New pure `urls.ts` (extractYtId + isBarePlaylistURL). FS edits reconcile to cloud like startDownload. Gate: tsc+bundle green; urls logic 14/14 PASS.
 - **Phase 3** (queue & playlist parity): playlist shuffle (Shuffle all) [#2]; queue drag-reorder + Clear-All + click-queued-to-play [#9]; playlist rename/track-reorder/cover-art/count·duration [#10]; add-to-playlist picker from any row + now-playing rail + post-download prompt [#11]; playlist delete confirm [U4]; playlist mode — interleave + wrap + Up Next split (owner-local `playlistLoop`+index) [#7]; empty-queue hint [U11]. New pure `listOps.ts` (shuffle/fmtDuration/moveIndex). Fixed a queue-reorder tail bug (see DECISIONS). Gate: tsc+bundle green; Phase-3 logic 39/39 PASS.
+- **Phase 4** (Web Audio rebuild): one graph in new `audioGraph.ts` [18]; bass −10..+20 dB with iOS 5-band shaping + settingsSync clamp fix [#14/19]; pitch ±12 st via vendored WSOLA AudioWorklet, local-only [#8/20]; per-track fx memory `trackFx.ts` [#15/21]; crop editor `cropSheet.ts` + replicator.setCrop + ✂ CROPPED badge [#5/22]. New pure `fxMath.ts` + `pitchShifter.ts`. Gates: tsc + both bundles green; logic 23/23 (fxMath) + 8/8 (pitch DSP: 440→880/220/659 Hz ±5%, exact 0-st passthrough) + 6/6 (trackFx) PASS. GUI smoke deferred to user (smoke-test.md Phase 4).
 
 ## OPEN  (unanswered / deferred / known issues)
-- Pitch-shift library choice (vendored soundtouch-js vs. hand-rolled) — decide at P4 start.
-- Crop editor on desktop needs a preview player that doesn't fight the main player (iOS uses a throwaway AVAudioPlayer) — mirror that with a second <audio>.
 - How to verify Firestore-touching changes offline: use `--btn-demo` (offline preview) path for playback UX; sync writes verified by reading back the doc only when a real home secret is available.
+- Crop on local-only (no yt) files: no cloud doc to carry the window — deferred unless the user wants a local-crop store.
 - Local artwork for folder-imported files (no yt id) — desktop currently only has i.ytimg thumbs; may need on-disk embedded-art extraction (deferred to P5, low priority).
 
 ## RULED OUT  (approaches abandoned + why)
