@@ -627,7 +627,7 @@ const fileDurationSec = (p: string): Promise<number | undefined> =>
     a.src = pathToFileURL(p).href;
   });
 
-function loadLyrics() {
+function loadLyrics(force = false) {
   const ref = coord.remote?.playback.track;
   const seq = ++lyricsSeq;
   lyricsTrackId = ref?.id ?? null;
@@ -641,7 +641,7 @@ function loadLyrics() {
     // (exact /api/get only — fuzzy search stays off without the guard).
     const local = resolve(ref, engine.library);
     const dur = local ? await fileDurationSec(local.path) : undefined;
-    const doc = await lyricsStore.get(coord.uid, ref.id, ref.name, dur);
+    const doc = await lyricsStore.get(coord.uid, ref.id, ref.name, dur, force);
     if (seq !== lyricsSeq) return; // panel moved on to another track
 
     lyricsOffsetMs = doc.offsetMs ?? 0;
@@ -667,6 +667,15 @@ function renderLyrics() {
     const d = document.createElement("div");
     d.className = "lyr-msg"; d.textContent = lyricsMsg;
     body.appendChild(d);
+    // "Try Again" on the terminal not-found/instrumental states — twin of
+    // iOS unavailableView. Forces a fresh LRCLIB fetch past both caches.
+    if (lyricsMsg === "No lyrics found" || lyricsMsg === "Instrumental track") {
+      const b = document.createElement("button");
+      b.className = "pill lyr-retry";
+      b.textContent = "Try Again";
+      b.onclick = () => loadLyrics(true);
+      body.appendChild(b);
+    }
     return;
   }
   if (lyricsPlain) {
