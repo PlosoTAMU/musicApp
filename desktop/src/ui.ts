@@ -21,6 +21,7 @@ import { PlaylistSync, CloudPlaylist } from "./playlists";
 import { SettingsSync } from "./settingsSync";
 import { extractYtId } from "./urls";
 import { shuffle, fmtDuration, moveIndex } from "./listOps";
+import { TrackFxStore } from "./trackFx";
 
 const coord = new SessionCoordinator(db);
 const engine = new SyncEngine(db, coord);
@@ -28,6 +29,7 @@ const replicator = new Replicator(db);
 const lyricsStore = new LyricsStore(db);
 const beatFeed = new BeatFeed();
 const graph = new AudioGraph();
+const trackFx = new TrackFxStore(localStorage);
 const playlistSync = new PlaylistSync(db);
 const settingsSync = new SettingsSync(db);
 
@@ -296,6 +298,16 @@ function wire() {
   };
   $("handoff-dismiss").onclick = hideHandoffBanner;
 
+  // Per-track fx restore — twin of iOS applyTrackSettings. Restoring also
+  // republishes the (speed/bass/reverb) settings doc: like iOS, the sync
+  // carries "whichever effective settings are currently audible".
+  engine.player.onTrack = t => {
+    const s = trackFx.get(t.id);
+    fx.speed = s.speed; fx.pitch = s.pitch; fx.reverb = s.reverb; fx.bass = s.bass;
+    initFxSliders(); // slider DOM + applyFx()
+    pushSettingsDebounced();
+  };
+
   coord.onChange = renderAll;
   engine.onChange = renderAll;
   setInterval(renderNow, 500);
@@ -370,6 +382,10 @@ function applyFx(publishRate = false) {
   graph.setBassDb(fx.bypass ? 0 : fx.bass);
   graph.setReverbMix(fx.bypass ? 0 : fx.reverb);
   graph.setPitchSemitones(fx.bypass ? 0 : fx.pitch);
+  // Remember the audible values for this track — twin of iOS
+  // saveCurrentTrackSettings firing on every effect didSet.
+  const cur = engine.player.current;
+  if (cur) trackFx.set(cur.id, { speed: fx.speed, pitch: fx.pitch, reverb: fx.reverb, bass: fx.bass });
   localStorage.setItem(FX_KEY, JSON.stringify(fx));
   $("fx-volume-val").textContent = `${Math.round(fx.volume * 100)}%`;
   $("fx-speed-val").textContent = `${fx.speed.toFixed(2)}×`;

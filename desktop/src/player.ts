@@ -87,6 +87,9 @@ export class LocalPlayer {
   loop = false;
   onEnded?: () => void;
   onChange?: () => void;
+  /** Fires whenever play() starts a track — ui.ts restores per-track fx here
+   *  (twin of iOS applyTrackSettings being called from play(_:)). */
+  onTrack?: (t: LocalTrack) => void;
 
   // Crop window (metadata — the file is untouched). All public positions are
   // crop-relative: 0 == cropStart, durMs == cropEnd - cropStart. This matches
@@ -134,6 +137,7 @@ export class LocalPlayer {
    *  discard the queued pre-metadata seek, so paused handovers landed at 0:00. */
   play(t: LocalTrack, atMs = 0, startPaused = false) {
     this.current = t;
+    this.onTrack?.(t);
     this.endFired = false;
     this.el.src = pathToFileURL(t.path).href;  // implicit load()
     this.el.currentTime = (atMs + this.cropStartMs) / 1000;  // crop-relative → absolute
