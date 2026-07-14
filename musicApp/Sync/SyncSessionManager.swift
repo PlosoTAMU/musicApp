@@ -31,6 +31,7 @@ final class SyncSessionManager: ObservableObject {
     private var routeMonitor: RouteHandoffMonitor?
 
     private static let secretKey = "sync.home.secret"
+    private var forwarding = Set<AnyCancellable>()
 
     init(player: AudioPlayerManager, library: @escaping () -> [Track]) {
         if FirebaseApp.app() == nil { FirebaseApp.configure() }
@@ -44,6 +45,16 @@ final class SyncSessionManager: ObservableObject {
         // Bluetooth handoff: headphone route changes drive pause/beacon/takeover.
         self.routeMonitor = RouteHandoffMonitor(
             player: player, coordinator: coordinator, engine: engine)
+
+        // Views observe syncManager; changes actually happen on the nested
+        // coordinator/engine. Forward their objectWillChange so role flips and
+        // mirror updates re-render SwiftUI without each view observing both.
+        coordinator.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &forwarding)
+        engine.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &forwarding)
     }
 
     /// Derivation must match desktop/src/firebase.ts byte-for-byte.

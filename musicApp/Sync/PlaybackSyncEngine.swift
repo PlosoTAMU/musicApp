@@ -34,6 +34,17 @@ final class PlaybackSyncEngine: ObservableObject {
     @Published private(set) var mirror: PlaybackState?
     /// Remote queue entries with no matching local file (UI can offer download).
     @Published private(set) var ghostQueue: [TrackRef] = []
+    /// Remote track resolved against the local library — gives remote-mode UI
+    /// artwork/file paths without exposing the resolver. nil while a track is
+    /// playing remotely = ghost (not replicated to this device yet).
+    @Published private(set) var mirrorTrack: Track?
+
+    /// Another device currently owns the shared session — views become a live
+    /// remote (mirror display + command-bus controls) while this is true.
+    var isRemoteControlled: Bool {
+        coordinator.role == .follower &&
+        !(coordinator.remote?.ownerDeviceID.isEmpty ?? true)
+    }
 
     private var bag = Set<AnyCancellable>()
     private var isApplyingRemotePlaybackCommand = false
@@ -96,6 +107,7 @@ final class PlaybackSyncEngine: ObservableObject {
 
     private func handleRemote(_ state: SessionState) {
         mirror = state.playback
+        mirrorTrack = state.playback.track.flatMap { resolver.resolve($0) }
 
         // Queue: resolve remote refs to local tracks; track ghosts separately.
         let resolvedPairs = state.queue.map { ($0, resolver.resolve($0)) }
@@ -362,7 +374,36 @@ final class PlaybackSyncEngine: ObservableObject {
     func requestSeek(ms: Int) { route(.seek(ms: ms)) }
 
     private func route(_ cmd: SyncCommand) {
-        if coordinator.role.isOwner { applyCommand(cmd) }
-        else { commands.send(cmd) }
+        if coordinator.role.isOwner {
+            applyCommand(cmd)
+        } else {
+            commands.send(cmd)
+            patchMirror(cmd)
+        }
+    }
+
+    /// Optimistic follower echo — twin of desktop ui.ts toggleCmd/seekCmd.
+    /// A command round-trips 0.7–2 s; patch the mirror immediately so the UI
+    /// responds now. The next authoritative snapshot replaces the whole mirror
+    /// (handleRemote overwrites it), so no rollback logic is needed.
+    private func patchMirror(_ cmd: SyncCommand) {
+        guard var pb = mirror else { return }
+        let now = ServerClock.shared.nowMs
+        switch cmd {
+        case .play:
+            pb.positionMs = pb.positionMs(atServerMs: now)
+            pb.anchorMs = now
+            pb.isPlaying = true
+        case .pause:
+            pb.positionMs = pb.positionMs(atServerMs: now)
+            pb.anchorMs = now
+            pb.isPlaying = false
+        case .seek(let ms):
+            pb.positionMs = ms
+            pb.anchorMs = now
+        case .next, .previous:
+            return  // target track unknown until the owner's snapshot arrives
+        }
+        mirror = pb
     }
 }
