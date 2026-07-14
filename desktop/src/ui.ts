@@ -15,6 +15,7 @@ import { serverClock } from "./serverClock";
 import { LocalTrack, norm, resolve } from "./player";
 import { LyricsStore, LyricLine, parseLRC, activeIndex } from "./lyrics";
 import { BeatFeed, BeatOutput } from "./beat";
+import { AudioGraph } from "./audioGraph";
 import { downloadTrack } from "./download";
 import { PlaylistSync, CloudPlaylist } from "./playlists";
 import { SettingsSync } from "./settingsSync";
@@ -26,6 +27,7 @@ const engine = new SyncEngine(db, coord);
 const replicator = new Replicator(db);
 const lyricsStore = new LyricsStore(db);
 const beatFeed = new BeatFeed();
+const graph = new AudioGraph();
 const playlistSync = new PlaylistSync(db);
 const settingsSync = new SettingsSync(db);
 
@@ -265,14 +267,16 @@ function wire() {
   };
 
   // Effects — speed also republishes rate (followers extrapolate with it).
+  // Pitch is LOCAL-ONLY (iOS doesn't sync it) — no settings push.
   bindFx("fx-volume", v => { fx.volume = v / 100; });
   bindFx("fx-speed", v => { fx.speed = v / 100; pushSettingsDebounced(); }, true);
+  bindFx("fx-pitch", v => { fx.pitch = v; });
   bindFx("fx-bass", v => { fx.bass = v; pushSettingsDebounced(); });
   bindFx("fx-reverb", v => { fx.reverb = v / 100; pushSettingsDebounced(); });
 
   settingsSync.onRemote = s => {
     fx.speed = Math.min(Math.max(s.speed, 0.5), 2.0);
-    fx.bass = Math.min(Math.max(s.bassDb, 0), 12);
+    fx.bass = Math.min(Math.max(s.bassDb, -10), 20); // iOS range — clamp fix [#14]
     fx.reverb = Math.min(Math.max(s.reverbPct, 0), 100) / 100;
     initFxSliders(); // updates slider DOM values + calls applyFx()
   };
@@ -341,9 +345,9 @@ const FX_KEY = "fx.v1";
 // bypass mirrors iOS effectsBypass: mutes the applied effects without touching
 // the stored slider values. Local-only on both platforms (not in the settings
 // doc); volume is not an effect and stays live while bypassed.
-const fx = ((): { volume: number; speed: number; bass: number; reverb: number;
-                  bypass: boolean } => {
-  const base = { volume: 1, speed: 1, bass: 0, reverb: 0, bypass: false };
+const fx = ((): { volume: number; speed: number; pitch: number; bass: number;
+                  reverb: number; bypass: boolean } => {
+  const base = { volume: 1, speed: 1, pitch: 0, bass: 0, reverb: 0, bypass: false };
   try { return { ...base, ...JSON.parse(localStorage.getItem(FX_KEY) ?? "{}") }; }
   catch { return base; }
 })();
@@ -363,12 +367,14 @@ function applyFx(publishRate = false) {
   el.defaultPlaybackRate = rate; // survives src changes
   el.playbackRate = rate;
   (el as HTMLAudioElement & { preservesPitch: boolean }).preservesPitch = true;
-  beatFeed.setBassDb(fx.bypass ? 0 : fx.bass);
-  beatFeed.setReverbMix(fx.bypass ? 0 : fx.reverb);
+  graph.setBassDb(fx.bypass ? 0 : fx.bass);
+  graph.setReverbMix(fx.bypass ? 0 : fx.reverb);
+  graph.setPitchSemitones(fx.bypass ? 0 : fx.pitch);
   localStorage.setItem(FX_KEY, JSON.stringify(fx));
   $("fx-volume-val").textContent = `${Math.round(fx.volume * 100)}%`;
   $("fx-speed-val").textContent = `${fx.speed.toFixed(2)}×`;
-  $("fx-bass-val").textContent = `+${fx.bass}dB`;
+  $("fx-pitch-val").textContent = `${fx.pitch > 0 ? "+" : ""}${fx.pitch}st`;
+  $("fx-bass-val").textContent = `${fx.bass > 0 ? "+" : ""}${fx.bass}dB`;
   $("fx-reverb-val").textContent = `${Math.round(fx.reverb * 100)}%`;
   // Rate feeds follower extrapolation — re-anchor immediately, not on the
   // next transition.
@@ -383,6 +389,7 @@ function bindFx(id: string, set: (v: number) => void, publishRate = false) {
 function initFxSliders() {
   ($("fx-volume") as HTMLInputElement).value = String(Math.round(fx.volume * 100));
   ($("fx-speed") as HTMLInputElement).value = String(Math.round(fx.speed * 100));
+  ($("fx-pitch") as HTMLInputElement).value = String(fx.pitch);
   ($("fx-bass") as HTMLInputElement).value = String(fx.bass);
   ($("fx-reverb") as HTMLInputElement).value = String(Math.round(fx.reverb * 100));
   applyFx();
@@ -523,11 +530,18 @@ function vizLoop(now: number) {
   vizIdle = false;
 
   // First playing frame after a click — the gesture Web Audio needs.
-  if (!beatFeed.attached) {
-    beatFeed.attach(engine.player.element);
-    applyFx(); // bass/reverb setters were no-ops before the graph existed
+  // attach() is async (worklet module load); frames until then just skip.
+  if (!graph.attached) {
+    if (!graph.attaching) {
+      void graph.attach(engine.player.element).then(() => {
+        beatFeed.bind(graph.analyser!, graph.sampleRate);
+        ($("fx-pitch") as HTMLInputElement).disabled = !graph.pitchAvailable;
+        applyFx(); // graph setters were no-ops before the graph existed
+      });
+    }
+    return;
   }
-  beatFeed.resume();
+  graph.resume();
 
   const curId = engine.player.current?.id ?? null;
   if (curId !== vizTrackId) {
