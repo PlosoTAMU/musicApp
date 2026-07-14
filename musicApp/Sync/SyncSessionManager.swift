@@ -106,21 +106,19 @@ final class SyncSessionManager: ObservableObject {
         if !uid.isEmpty { playlistSync?.activate(uid: uid) }
     }
 
-    /// Wire the upload/download pipeline to DownloadManager:
-    ///   sync.attachReplication(
-    ///     downloads: downloadManager.$downloads.eraseToAnyPublisher(),
-    ///     failedDownloads: downloadManager.$failedDownloads.eraseToAnyPublisher(),
-    ///     findDuplicate: { yt in downloadManager.findDuplicateByVideoID(videoID: yt, source: .youtube) },
-    ///     startDownload: { url, yt, source, title in
-    ///       downloadManager.startBackgroundDownload(url: url, videoID: yt, source: source, title: title)
-    ///     })
     func attachReplication(downloads: AnyPublisher<[Download], Never>,
                            failedDownloads: AnyPublisher<[FailedDownload], Never>,
+                           metaChanges: AnyPublisher<Download, Never>,
+                           deletions: AnyPublisher<Download, Never>,
                            findDuplicate: @escaping (String) -> Download?,
-                           startDownload: @escaping (String, String, DownloadSource, String) -> Void) {
+                           startDownload: @escaping (String, String, DownloadSource, String) -> Void,
+                           applyMeta: @escaping (String, TrackMeta) -> Void,
+                           applyDeletion: @escaping (String) -> Void) {
         replicator = LibraryReplicator(db: coordinator.db, downloads: downloads,
                                        failedDownloads: failedDownloads,
-                                       findDuplicate: findDuplicate, startDownload: startDownload)
+                                       metaChanges: metaChanges, deletions: deletions,
+                                       findDuplicate: findDuplicate, startDownload: startDownload,
+                                       applyMeta: applyMeta, applyDeletion: applyDeletion)
         if !uid.isEmpty { replicator?.activate(uid: uid) }
     }
 

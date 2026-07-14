@@ -89,11 +89,20 @@ struct ContentView: View {
                 syncManager.attachReplication(
                     downloads: downloadManager.$downloads.eraseToAnyPublisher(),
                     failedDownloads: downloadManager.$failedDownloads.eraseToAnyPublisher(),
+                    metaChanges: downloadManager.trackMetaChanged.eraseToAnyPublisher(),
+                    deletions: downloadManager.trackDeleted.eraseToAnyPublisher(),
                     findDuplicate: { [weak downloadManager] yt in
                         downloadManager?.findDuplicateByVideoID(videoID: yt, source: .youtube)
                     },
                     startDownload: { [weak downloadManager] url, yt, source, title in
                         downloadManager?.startBackgroundDownload(url: url, videoID: yt, source: source, title: title)
+                    },
+                    applyMeta: { [weak downloadManager] yt, m in
+                        downloadManager?.applyRemoteMeta(videoID: yt, name: m.name, folder: m.folder,
+                                                         cropStartMs: m.cropStartMs, cropEndMs: m.cropEndMs)
+                    },
+                    applyDeletion: { [weak downloadManager] yt in
+                        downloadManager?.removeDownloadFromSync(videoID: yt)
                     })
                 syncManager.attachPlaylists(manager: playlistManager) { [weak downloadManager] id in
                     downloadManager?.getDownload(byID: id)

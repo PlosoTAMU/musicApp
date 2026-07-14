@@ -29,6 +29,8 @@ final class LibraryReplicator {
     private var processedFailures: Set<UUID> = []
     private let findDuplicate: (String) -> Download?
     private let startDownload: (String, String, DownloadSource, String) -> Void
+    private let applyMeta: (String, TrackMeta) -> Void
+    private let applyDeletion: (String) -> Void
 
     /// Fast path only; the authoritative dedupe is the doc-exists check server-side.
     private var uploadedIDs: Set<String> {
@@ -39,11 +41,17 @@ final class LibraryReplicator {
     init(db: Firestore,
          downloads: AnyPublisher<[Download], Never>,
          failedDownloads: AnyPublisher<[FailedDownload], Never>,
+         metaChanges: AnyPublisher<Download, Never>,
+         deletions: AnyPublisher<Download, Never>,
          findDuplicate: @escaping (String) -> Download?,
-         startDownload: @escaping (String, String, DownloadSource, String) -> Void) {
+         startDownload: @escaping (String, String, DownloadSource, String) -> Void,
+         applyMeta: @escaping (String, TrackMeta) -> Void,
+         applyDeletion: @escaping (String) -> Void) {
         self.db = db
         self.findDuplicate = findDuplicate
         self.startDownload = startDownload
+        self.applyMeta = applyMeta
+        self.applyDeletion = applyDeletion
 
         // Immediate cache for down-sync's "do we already have this" check —
         // must not wait on the upload pump's 2s debounce.
@@ -60,6 +68,13 @@ final class LibraryReplicator {
 
         failedDownloads
             .sink { [weak self] list in self?.handleFailures(list) }
+            .store(in: &bag)
+
+        metaChanges
+            .sink { [weak self] d in self?.pushMeta(for: d) }
+            .store(in: &bag)
+        deletions
+            .sink { [weak self] d in self?.pushTombstone(for: d) }
             .store(in: &bag)
     }
 
@@ -90,8 +105,23 @@ final class LibraryReplicator {
             if change.type == .removed { meta.removeValue(forKey: id); continue }
             guard let m = TrackMeta(dict: change.document.data()) else { continue }
             meta[id] = m
-            if let yt = m.yt, !hasLocally(m),
-               !downloadingYT.contains(yt), !downQueue.contains(where: { $0.yt == yt }) {
+            guard let yt = m.yt else { continue }
+
+            if m.deleted {
+                // Tombstone: never fetch it, and apply the deletion locally
+                // unless we authored it (echo).
+                downQueue.removeAll { $0.yt == yt }
+                if m.metaBy != SyncDevice.id { applyDeletion(yt) }
+                continue
+            }
+
+            if hasLocally(m) {
+                // Metadata (rename/crop/folder) for a track we have — apply
+                // unless we authored the change. Idempotent: applyRemoteMeta
+                // no-ops when values already match.
+                if m.metaBy != SyncDevice.id { applyMeta(yt, m) }
+            } else if !downloadingYT.contains(yt),
+                      !downQueue.contains(where: { $0.yt == yt }) {
                 downQueue.append(m)
             }
         }
@@ -109,6 +139,7 @@ final class LibraryReplicator {
         guard downloadingYT.isEmpty, !downQueue.isEmpty else { return }
         let m = downQueue.removeFirst()
         guard let yt = m.yt else { pumpDownloads(); return }
+        if meta.values.first(where: { $0.yt == yt })?.deleted == true { pumpDownloads(); return }
         if hasLocally(m) { pumpDownloads(); return }  // raced with a manual/other-source add
         downloadingYT.insert(yt)
         startDownload("https://www.youtube.com/watch?v=\(yt)", yt, .youtube, m.name)
@@ -156,21 +187,27 @@ final class LibraryReplicator {
         }
     }
 
-    private func inCloud(_ d: Download) -> Bool {
-        let name = Self.normalize(d.name)
-        return meta.values.contains {
-            ($0.yt != nil && $0.yt == d.videoID) || Self.normalize($0.name) == name
-        }
-    }
-
     private func upload(_ d: Download) async {
         guard !uid.isEmpty else { return }
         let id = d.id.uuidString
 
         // Already mirrored under a DIFFERENT doc id — e.g. this file just
-        // arrived via down-sync (which mints a fresh local UUID). Mark done,
-        // no duplicate doc.
-        if inCloud(d) { markUploaded(id); return }
+        // arrived via down-sync (which mints a fresh local UUID). If the match
+        // is a tombstone, this is a manual re-download: revive the doc in
+        // place (matched by yt) instead of minting a duplicate.
+        let name = Self.normalize(d.name)
+        if let (docId, m) = meta.first(where: {
+            ($0.value.yt != nil && $0.value.yt == d.videoID) ||
+            Self.normalize($0.value.name) == name
+        }).map({ ($0.key, $0.value) }) {
+            if m.deleted {
+                let ref = db.collection("users").document(uid)
+                    .collection("library").document(docId)
+                try? await ref.setData(metaFields(for: d), merge: true)
+            }
+            markUploaded(id)
+            return
+        }
 
         let docRef = db.collection("users").document(uid)
             .collection("library").document(id)
@@ -187,8 +224,12 @@ final class LibraryReplicator {
             var doc: [String: Any] = [
                 "name": d.name, "folder": "", "ext": ext,
                 "by": SyncDevice.id, "at": FieldValue.serverTimestamp(),
+                "deleted": false,
+                "metaAt": FieldValue.serverTimestamp(), "metaBy": SyncDevice.id,
             ]
             if let yt = d.videoID { doc["yt"] = yt }
+            if let s = d.cropStartTime { doc["cropStartMs"] = Int(s * 1000) }
+            if let e = d.cropEndTime { doc["cropEndMs"] = Int(e * 1000) }
             try await docRef.setData(doc)
 
             markUploaded(id)
@@ -203,6 +244,43 @@ final class LibraryReplicator {
         var s = uploadedIDs
         s.insert(id)
         uploadedIDs = s
+    }
+
+    // MARK: - Metadata push (local intent → cloud doc)
+
+    private func docRef(forYT yt: String) -> DocumentReference? {
+        guard !uid.isEmpty,
+              let docId = meta.first(where: { $0.value.yt == yt })?.key else { return nil }
+        return db.collection("users").document(uid).collection("library").document(docId)
+    }
+
+    /// Fields iOS owns: name + crop. NEVER folder — desktop is folder authority.
+    private func metaFields(for d: Download) -> [String: Any] {
+        var f: [String: Any] = [
+            "name": d.name,
+            "deleted": false,
+            "metaAt": FieldValue.serverTimestamp(),
+            "metaBy": SyncDevice.id,
+        ]
+        f["cropStartMs"] = d.cropStartTime.map { Int($0 * 1000) } ?? FieldValue.delete()
+        f["cropEndMs"] = d.cropEndTime.map { Int($0 * 1000) } ?? FieldValue.delete()
+        return f
+    }
+
+    func pushMeta(for d: Download) {
+        guard let yt = d.videoID, let ref = docRef(forYT: yt) else { return }
+        Task { try? await ref.setData(self.metaFields(for: d), merge: true) }
+    }
+
+    func pushTombstone(for d: Download) {
+        guard let yt = d.videoID, let ref = docRef(forYT: yt) else { return }
+        Task {
+            try? await ref.setData([
+                "deleted": true,
+                "metaAt": FieldValue.serverTimestamp(),
+                "metaBy": SyncDevice.id,
+            ], merge: true)
+        }
     }
 
     /// Windows-illegal chars get replaced with "_" at replication time on
