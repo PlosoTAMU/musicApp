@@ -82,6 +82,7 @@ struct HomeSyncSheet: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
+                        .buttonStyle(ChipButtonStyle())
                 }
             }
         }

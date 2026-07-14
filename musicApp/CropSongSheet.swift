@@ -42,13 +42,17 @@ struct CropSongSheet: View {
     
     var body: some View {
         NavigationView {
-            Group {
-                if let error = loadError {
-                    errorView(error)
-                } else if isLoading {
-                    loadingView
-                } else {
-                    cropEditorContent
+            ZStack {
+                AppBackground()
+
+                Group {
+                    if let error = loadError {
+                        errorView(error)
+                    } else if isLoading {
+                        loadingView
+                    } else {
+                        cropEditorContent
+                    }
                 }
             }
             .navigationTitle("Crop Song")
@@ -59,6 +63,7 @@ struct CropSongSheet: View {
                         stopPreview()
                         dismiss()
                     }
+                    .buttonStyle(ChipButtonStyle())
                 }
             }
         }
@@ -83,25 +88,24 @@ struct CropSongSheet: View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 60))
-                .foregroundColor(.orange)
+                .foregroundColor(Theme.danger)
             Text("Unable to Load Song")
-                .font(.title2)
-                .fontWeight(.semibold)
+                .font(Theme.title(20))
+                .foregroundColor(Theme.bone)
             Text(error)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+                .font(Theme.body(14))
+                .foregroundColor(Theme.boneDim)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
         }
     }
-    
+
     private var loadingView: some View {
         VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.5)
+            EQIndicator(color: Theme.emberLight, scale: 1.8)
             Text("Loading song...")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+                .font(Theme.body(14))
+                .foregroundColor(Theme.boneDim)
         }
     }
     
@@ -112,35 +116,37 @@ struct CropSongSheet: View {
             // Song info
             VStack(spacing: 8) {
                 Text(track.name)
-                    .font(.title3)
-                    .fontWeight(.semibold)
+                    .font(Theme.title(18))
+                    .foregroundColor(Theme.bone)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
-                
+
                 HStack(spacing: 16) {
                     Label(formatTime(fullDuration), systemImage: "waveform")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
+                        .font(Theme.caption(12))
+                        .foregroundColor(Theme.boneDim)
+
                     Label(formatTime(max(0, endTime - startTime)), systemImage: "scissors")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.blue)
+                        .font(Theme.caption(12, weight: .semibold))
+                        .foregroundColor(Theme.redLight)
                 }
             }
             .padding(.top, 16)
             .padding(.bottom, 20)
-            
+
             // Seekable progress bar (like NowPlaying)
             progressBarView
                 .padding(.bottom, 24)
-            
+
             // Preview controls
             previewControls
                 .padding(.bottom, 20)
-            
-            Divider().padding(.horizontal, 24)
+
+            Rectangle()
+                .fill(Theme.seam)
+                .frame(height: 1)
+                .padding(.horizontal, 24)
             
             // Crop range section
             ScrollView {
@@ -163,18 +169,16 @@ struct CropSongSheet: View {
             // Time labels above the bar
             HStack {
                 Text(formatTime(displayTime))
-                    .font(.caption)
-                    .foregroundColor(.primary)
-                    .monospacedDigit()
-                
+                    .font(Theme.caption(12).monospacedDigit())
+                    .foregroundColor(Theme.bone)
+
                 Spacer()
-                
+
                 // Time remaining in crop region
                 let remaining = endTime - displayTime
                 Text("-\(formatTime(max(0, remaining)))")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .monospacedDigit()
+                    .font(Theme.caption(12).monospacedDigit())
+                    .foregroundColor(Theme.boneDim)
             }
             .padding(.horizontal, 32)
             
@@ -193,36 +197,37 @@ struct CropSongSheet: View {
                 ZStack(alignment: .leading) {
                     // Full track (dimmed)
                     Capsule()
-                        .fill(Color.gray.opacity(0.2))
+                        .fill(Theme.smokeRaised)
                         .frame(height: 6)
-                    
+                        .overlay(Capsule().strokeBorder(Theme.seam, lineWidth: 1))
+
                     // Crop region background
                     Capsule()
-                        .fill(Color.blue.opacity(0.15))
+                        .fill(Theme.red.opacity(0.22))
                         .frame(width: max(0, (cropEndFraction - cropStartFraction) * width), height: 6)
                         .offset(x: cropStartFraction * width)
-                    
+
                     // Played portion (from song start to playhead)
                     Capsule()
-                        .fill(Color.blue)
+                        .fill(Theme.redGradient)
                         .frame(width: max(0, playFraction * width), height: 6)
-                    
-                    // Crop boundary markers
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: 10, height: 10)
-                        .offset(x: cropStartFraction * width - 5)
-                    
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: 10, height: 10)
-                        .offset(x: cropEndFraction * width - 5)
-                    
+
+                    // Crop boundary ticks — start in red, end in rose
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(Theme.redLight)
+                        .frame(width: 3, height: 14)
+                        .offset(x: cropStartFraction * width - 1.5)
+
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(Theme.rose)
+                        .frame(width: 3, height: 14)
+                        .offset(x: cropEndFraction * width - 1.5)
+
                     // Playhead knob
                     Circle()
-                        .fill(Color.white)
+                        .fill(Theme.bone)
                         .frame(width: isSeeking ? 18 : 14, height: isSeeking ? 18 : 14)
-                        .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+                        .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
                         .offset(x: playFraction * width - (isSeeking ? 9 : 7))
                         .animation(.easeOut(duration: 0.1), value: isSeeking)
                 }
@@ -256,14 +261,14 @@ struct CropSongSheet: View {
             // Crop region time labels
             HStack {
                 Text(formatTime(startTime))
-                    .font(.caption2)
-                    .foregroundColor(.blue)
-                
+                    .font(Theme.caption(11).monospacedDigit())
+                    .foregroundColor(Theme.redLight)
+
                 Spacer()
-                
+
                 Text(formatTime(endTime))
-                    .font(.caption2)
-                    .foregroundColor(.blue)
+                    .font(Theme.caption(11).monospacedDigit())
+                    .foregroundColor(Theme.rose)
             }
             .padding(.horizontal, 32)
         }
@@ -272,28 +277,24 @@ struct CropSongSheet: View {
     // MARK: - Preview Controls
     
     private var previewControls: some View {
-        HStack(spacing: 32) {
+        HStack(spacing: 14) {
             // Jump to start
             Button {
                 seekToTime(startTime)
             } label: {
                 Image(systemName: "backward.end.fill")
-                    .font(.title3)
-                    .foregroundColor(.primary)
-                    .frame(width: 44, height: 44)
             }
-            
+            .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
+
             // Rewind 5s
             Button {
                 let newTime = max(startTime, displayTime - 5)
                 seekToTime(newTime)
             } label: {
                 Image(systemName: "gobackward.5")
-                    .font(.title3)
-                    .foregroundColor(.primary)
-                    .frame(width: 44, height: 44)
             }
-            
+            .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
+
             // Play/Pause
             Button {
                 if isPreviewPlaying {
@@ -304,31 +305,26 @@ struct CropSongSheet: View {
                     startPreview(from: currentPreviewTime > startTime ? currentPreviewTime : nil)
                 }
             } label: {
-                Image(systemName: isPreviewPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 52))
-                    .foregroundColor(.blue)
+                Image(systemName: isPreviewPlaying ? "pause.fill" : "play.fill")
             }
-            
+            .buttonStyle(PlayButtonStyle(diameter: 58))
+
             // Forward 5s
             Button {
                 let newTime = min(endTime, displayTime + 5)
                 seekToTime(newTime)
             } label: {
                 Image(systemName: "goforward.5")
-                    .font(.title3)
-                    .foregroundColor(.primary)
-                    .frame(width: 44, height: 44)
             }
-            
+            .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
+
             // Jump to end
             Button {
                 seekToTime(max(startTime, endTime - 2))
             } label: {
                 Image(systemName: "forward.end.fill")
-                    .font(.title3)
-                    .foregroundColor(.primary)
-                    .frame(width: 44, height: 44)
             }
+            .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
         }
     }
     
@@ -340,24 +336,27 @@ struct CropSongSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Image(systemName: "arrow.right.to.line")
-                        .foregroundColor(.blue)
+                        .foregroundColor(Theme.redLight)
                         .frame(width: 20)
-                    Text("Start")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                    Text("START")
+                        .font(Theme.eyebrowFont)
+                        .tracking(1.5)
+                        .foregroundColor(Theme.boneDim)
                     Spacer()
-                    
+
                     // Tappable time label → text field
                     if isEditingStartTime {
                         HStack(spacing: 4) {
                             TextField("m:ss", text: $startTimeText)
-                                .font(.subheadline)
-                                .monospacedDigit()
-                                .foregroundColor(.blue)
+                                .font(Theme.body(14, weight: .semibold).monospacedDigit())
+                                .foregroundColor(Theme.redLight)
                                 .keyboardType(.numbersAndPunctuation)
                                 .multilineTextAlignment(.trailing)
                                 .frame(width: 60)
-                                .textFieldStyle(.roundedBorder)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.smokeRaised))
+                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.seam, lineWidth: 1))
                                 .onSubmit {
                                     applyManualTime(text: startTimeText, isStart: true)
                                 }
@@ -365,18 +364,17 @@ struct CropSongSheet: View {
                                 applyManualTime(text: startTimeText, isStart: true)
                             } label: {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.blue)
+                                    .foregroundColor(Theme.redLight)
                             }
                         }
                     } else {
                         Text(formatTime(startTime))
-                            .font(.subheadline)
-                            .foregroundColor(.blue)
-                            .monospacedDigit()
-                            .padding(.horizontal, 8)
+                            .font(Theme.body(14, weight: .semibold).monospacedDigit())
+                            .foregroundColor(Theme.redLight)
+                            .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .background(Color.blue.opacity(0.1))
-                            .cornerRadius(6)
+                            .background(Capsule().fill(Theme.red.opacity(0.13)))
+                            .overlay(Capsule().strokeBorder(Theme.seam, lineWidth: 1))
                             .onTapGesture {
                                 startTimeText = formatTime(startTime)
                                 isEditingStartTime = true
@@ -384,12 +382,11 @@ struct CropSongSheet: View {
                             }
                     }
                 }
-                Slider(value: $startTime, in: startSliderRange) { editing in
+                ThemedSlider(value: $startTime, range: startSliderRange, tint: Theme.redLight) { editing in
                     if !editing {
                         seekToTime(startTime)
                     }
                 }
-                .tint(.blue)
             }
             .padding(.horizontal, 32)
             
@@ -397,24 +394,27 @@ struct CropSongSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Image(systemName: "arrow.left.to.line")
-                        .foregroundColor(.orange)
+                        .foregroundColor(Theme.rose)
                         .frame(width: 20)
-                    Text("End")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                    Text("END")
+                        .font(Theme.eyebrowFont)
+                        .tracking(1.5)
+                        .foregroundColor(Theme.boneDim)
                     Spacer()
-                    
+
                     // Tappable time label → text field
                     if isEditingEndTime {
                         HStack(spacing: 4) {
                             TextField("m:ss", text: $endTimeText)
-                                .font(.subheadline)
-                                .monospacedDigit()
-                                .foregroundColor(.orange)
+                                .font(Theme.body(14, weight: .semibold).monospacedDigit())
+                                .foregroundColor(Theme.rose)
                                 .keyboardType(.numbersAndPunctuation)
                                 .multilineTextAlignment(.trailing)
                                 .frame(width: 60)
-                                .textFieldStyle(.roundedBorder)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.smokeRaised))
+                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.seam, lineWidth: 1))
                                 .onSubmit {
                                     applyManualTime(text: endTimeText, isStart: false)
                                 }
@@ -422,18 +422,17 @@ struct CropSongSheet: View {
                                 applyManualTime(text: endTimeText, isStart: false)
                             } label: {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.orange)
+                                    .foregroundColor(Theme.rose)
                             }
                         }
                     } else {
                         Text(formatTime(endTime))
-                            .font(.subheadline)
-                            .foregroundColor(.orange)
-                            .monospacedDigit()
-                            .padding(.horizontal, 8)
+                            .font(Theme.body(14, weight: .semibold).monospacedDigit())
+                            .foregroundColor(Theme.rose)
+                            .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .background(Color.orange.opacity(0.1))
-                            .cornerRadius(6)
+                            .background(Capsule().fill(Theme.rose.opacity(0.13)))
+                            .overlay(Capsule().strokeBorder(Theme.seam, lineWidth: 1))
                             .onTapGesture {
                                 endTimeText = formatTime(endTime)
                                 isEditingEndTime = true
@@ -441,12 +440,11 @@ struct CropSongSheet: View {
                             }
                     }
                 }
-                Slider(value: $endTime, in: endSliderRange) { editing in
+                ThemedSlider(value: $endTime, range: endSliderRange, tint: Theme.rose) { editing in
                     if !editing {
                         seekToTime(max(startTime, endTime - 3))
                     }
                 }
-                .tint(.orange)
             }
             .padding(.horizontal, 32)
         }
@@ -455,34 +453,18 @@ struct CropSongSheet: View {
     // MARK: - Action Buttons
     
     private var actionButtons: some View {
-        HStack(spacing: 16) {
-            Button {
+        HStack(spacing: 12) {
+            Button("Reset") {
                 startTime = 0
                 endTime = fullDuration
                 seekToTime(0)
-            } label: {
-                Text("Reset")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.gray.opacity(0.15))
-                    .foregroundColor(.primary)
-                    .cornerRadius(12)
             }
-            
-            Button {
+            .buttonStyle(GhostPillButtonStyle())
+
+            Button("Apply Crop") {
                 applyCrop()
-            } label: {
-                Text("Apply Crop")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
             }
+            .buttonStyle(PillButtonStyle())
         }
         .padding(.horizontal, 32)
     }

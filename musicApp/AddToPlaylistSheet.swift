@@ -71,8 +71,7 @@ struct AddToPlaylistSheet: View {
                     Button("Cancel") {
                         onDismiss()
                     }
-                    .font(Theme.body(15, weight: .semibold))
-                    .foregroundColor(Theme.emberLight)
+                    .buttonStyle(ChipButtonStyle(tint: Theme.boneDim))
                 }
             }
         }

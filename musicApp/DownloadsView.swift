@@ -92,6 +92,7 @@ struct DownloadsView: View {
                     } label: {
                         Image(systemName: "antenna.radiowaves.left.and.right")
                     }
+                    .buttonStyle(CircleControlButtonStyle(diameter: 32, tint: Theme.emberLight))
                 }
             }
             .sheet(isPresented: $showHomeSync) {
@@ -270,14 +271,15 @@ struct DownloadRow: View {
             let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
             audioPlayer.addToQueue(track)
         }
-        .alert("Rename Song", isPresented: $showRenameAlert) {
-            TextField("Song name", text: $newName)
-            Button("Cancel", role: .cancel) { }
-            Button("Rename") {
-                onRename(newName)
-            }
-        } message: {
-            Text("Enter a new name for this song")
+        .themedTextPrompt(
+            "Rename Song",
+            message: "Enter a new name for this song",
+            placeholder: "Song name",
+            text: $newName,
+            isPresented: $showRenameAlert,
+            confirmLabel: "Rename"
+        ) {
+            onRename(newName)
         }
         .sheet(isPresented: $showSongInfo) {
             SongInfoSheet(download: download)
@@ -368,8 +370,7 @@ struct SongInfoSheet: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
-                        .font(Theme.body(15, weight: .semibold))
-                        .foregroundColor(Theme.emberLight)
+                        .buttonStyle(ChipButtonStyle())
                 }
             }
         }

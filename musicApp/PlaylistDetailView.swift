@@ -55,8 +55,7 @@ struct SelectSongsSheet: View {
                         dismiss()
                         onDismiss()
                     }
-                    .font(Theme.body(15, weight: .semibold))
-                    .foregroundColor(Theme.emberLight)
+                    .buttonStyle(ChipButtonStyle())
                 }
             }
         }
@@ -186,9 +185,8 @@ struct PlaylistDetailView: View {
                     showAddSongs = true
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Theme.emberLight)
                 }
+                .buttonStyle(CircleControlButtonStyle(diameter: 32, tint: Theme.emberLight))
             }
         }
         .sheet(isPresented: $showAddSongs) {
@@ -328,14 +326,15 @@ struct PlaylistSongRow: View {
                     }
                 }
             }
-            .alert("Rename Song", isPresented: $showRenameAlert) {
-                TextField("Song name", text: $newName)
-                Button("Cancel", role: .cancel) { }
-                Button("Rename") {
-                    onRename(newName)
-                }
-            } message: {
-                Text("Enter a new name for this song")
+            .themedTextPrompt(
+                "Rename Song",
+                message: "Enter a new name for this song",
+                placeholder: "Song name",
+                text: $newName,
+                isPresented: $showRenameAlert,
+                confirmLabel: "Rename"
+            ) {
+                onRename(newName)
             }
             
             // Animated EQ bars while this track is playing

@@ -88,9 +88,8 @@ struct PlaylistsView: View {
                         showCreatePlaylist = true
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(Theme.emberLight)
                     }
+                    .buttonStyle(CircleControlButtonStyle(diameter: 32, tint: Theme.emberLight))
                 }
             }
             .onAppear {
@@ -101,21 +100,21 @@ struct PlaylistsView: View {
             .onReceive(audioPlayer.$currentTrack) { track in
                 hasCurrentTrack = track != nil
             }
-            .alert("Rename Playlist", isPresented: Binding(
-                get: { renamingPlaylist != nil },
-                set: { if !$0 { renamingPlaylist = nil } }
-            )) {
-                TextField("Playlist name", text: $renameText)
-                Button("Rename") {
-                    if let playlist = renamingPlaylist {
-                        playlistManager.renamePlaylist(playlist, newName: renameText)
-                        refreshID = UUID()
-                    }
-                    renamingPlaylist = nil
+            .themedTextPrompt(
+                "Rename Playlist",
+                placeholder: "Playlist name",
+                text: $renameText,
+                isPresented: Binding(
+                    get: { renamingPlaylist != nil },
+                    set: { if !$0 { renamingPlaylist = nil } }
+                ),
+                confirmLabel: "Rename"
+            ) {
+                if let playlist = renamingPlaylist {
+                    playlistManager.renamePlaylist(playlist, newName: renameText)
+                    refreshID = UUID()
                 }
-                Button("Cancel", role: .cancel) {
-                    renamingPlaylist = nil
-                }
+                renamingPlaylist = nil
             }
         }
         .sheet(isPresented: $showCreatePlaylist) {

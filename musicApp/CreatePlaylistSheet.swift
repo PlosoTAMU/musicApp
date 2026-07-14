@@ -104,16 +104,14 @@ struct CreatePlaylistSheet: View {
                     Button("Cancel") {
                         onDismiss()
                     }
-                    .font(Theme.body(15, weight: .semibold))
-                    .foregroundColor(Theme.boneDim)
+                    .buttonStyle(ChipButtonStyle(tint: Theme.boneDim))
                 }
-                
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Create") {
                         createPlaylist()
                     }
-                    .font(Theme.body(15, weight: .bold))
-                    .foregroundColor(Theme.emberLight)
+                    .buttonStyle(ChipButtonStyle(prominent: true))
                 }
             }
         }

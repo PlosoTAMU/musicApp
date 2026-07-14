@@ -274,13 +274,10 @@ struct QueueView: View {
                 // Show "Clear All" if there are ANY upcoming tracks (queue or playlist)
                 if !queue.isEmpty || !previousQueue.isEmpty || isPlaylistMode {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button {
+                        Button("Clear All") {
                             audioPlayer.clearQueueAndExitPlaylist()
-                        } label: {
-                            Text("Clear All")
-                                .font(Theme.body(15, weight: .semibold))
-                                .foregroundColor(Theme.danger)
                         }
+                        .buttonStyle(ChipButtonStyle(tint: Theme.danger))
                     }
                 }
             }
@@ -392,16 +389,17 @@ struct QueueTrackRow: View {
                     }
                 }
             }
-            .alert("Rename Song", isPresented: $showRenameAlert) {
-                TextField("Song name", text: $newName)
-                Button("Cancel", role: .cancel) { }
-                Button("Rename") {
-                    if let download = download {
-                        downloadManager.renameDownload(download, newName: newName)
-                    }
+            .themedTextPrompt(
+                "Rename Song",
+                message: "Enter a new name for this song",
+                placeholder: "Song name",
+                text: $newName,
+                isPresented: $showRenameAlert,
+                confirmLabel: "Rename"
+            ) {
+                if let download = download {
+                    downloadManager.renameDownload(download, newName: newName)
                 }
-            } message: {
-                Text("Enter a new name for this song")
             }
 
             // Live EQ beside the playing track

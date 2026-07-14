@@ -219,18 +219,21 @@ struct SectionEyebrow: View {
 // MARK: - EQ indicator
 
 /// Three animated capsules shown beside the track that is currently playing.
+/// At `scale` > 1 it doubles as the app's loading indicator (replacing the
+/// stock ProgressView spinner): loading looks like music about to play.
 struct EQIndicator: View {
     var color: Color = Theme.emberLight
+    var scale: CGFloat = 1
     @State private var animating = false
-    
+
     private let peaks: [CGFloat] = [0.5, 1.0, 0.68]
-    
+
     var body: some View {
-        HStack(spacing: 2.5) {
+        HStack(spacing: 2.5 * scale) {
             ForEach(0..<3, id: \.self) { index in
                 Capsule()
                     .fill(color)
-                    .frame(width: 3, height: 14)
+                    .frame(width: 3 * scale, height: 14 * scale)
                     .scaleEffect(y: animating ? peaks[index] : 0.25, anchor: .bottom)
                     .animation(
                         .easeInOut(duration: 0.45)
@@ -240,7 +243,7 @@ struct EQIndicator: View {
                     )
             }
         }
-        .frame(width: 14, height: 14)
+        .frame(width: 14 * scale, height: 14 * scale)
         .onAppear { animating = true }
     }
 }
@@ -481,7 +484,7 @@ struct PlayButtonStyle: ButtonStyle {
 struct PillButtonStyle: ButtonStyle {
     var gradient: LinearGradient = Theme.redGradient
     var textColor: Color = Theme.bone
-    
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(Theme.body(16, weight: .bold))
@@ -493,5 +496,225 @@ struct PillButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .opacity(configuration.isPressed ? 0.9 : 1.0)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+/// Quiet counterpart of PillButtonStyle — smoke-raised capsule with a seam
+/// hairline. The Cancel to PillButtonStyle's confirm.
+struct GhostPillButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.body(16, weight: .semibold))
+            .foregroundColor(Theme.boneDim)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 13)
+            .background(Capsule().fill(Theme.smokeRaised))
+            .overlay(Capsule().strokeBorder(Theme.seam, lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+/// Small capsule chip for toolbar / inline actions ("Done", "Cancel",
+/// "Clear All"). Same vocabulary as SourceChip, but pressable. `prominent`
+/// switches to the red gradient for the one confirming action on a screen.
+struct ChipButtonStyle: ButtonStyle {
+    var tint: Color = Theme.bone
+    var prominent: Bool = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.caption(13, weight: .semibold))
+            .foregroundColor(prominent ? Theme.bone : tint)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 7)
+            .background(
+                Capsule().fill(prominent ? AnyShapeStyle(Theme.redGradient) : AnyShapeStyle(Theme.smokeRaised))
+            )
+            .overlay(
+                Capsule().strokeBorder(prominent ? Color.white.opacity(0.15) : Theme.seam, lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.94 : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Themed slider
+
+/// Custom slider replacing the stock iOS one everywhere. The handle is the
+/// eyebrow tick grown into a mixer-fader grab: a bone bar with a tinted
+/// center groove that stretches slightly while dragged. Track and fill keep
+/// the smoke/seam surface language.
+struct ThemedSlider: View {
+    @Binding var value: Double
+    var range: ClosedRange<Double> = 0...1
+    var tint: Color = Theme.redLight
+    var onEditingChanged: (Bool) -> Void = { _ in }
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isDragging = false
+
+    private var fraction: CGFloat {
+        let span = range.upperBound - range.lowerBound
+        guard span > 0 else { return 0 }
+        return CGFloat(min(max((value - range.lowerBound) / span, 0), 1))
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let x = fraction * width
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Theme.smokeRaised)
+                    .frame(height: 6)
+                    .overlay(Capsule().strokeBorder(Theme.seam, lineWidth: 1))
+
+                Capsule()
+                    .fill(LinearGradient(colors: [tint.opacity(0.7), tint],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(x, 0), height: 6)
+
+                // Fader handle
+                RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                    .fill(Theme.bone)
+                    .frame(width: 9, height: isDragging ? 30 : 24)
+                    .overlay(Capsule().fill(tint).frame(width: 2.5, height: isDragging ? 14 : 10))
+                    .shadow(color: .black.opacity(0.45), radius: 4, y: 1)
+                    .offset(x: min(max(x - 4.5, 0), max(width - 9, 0)))
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isDragging)
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        if !isDragging {
+                            isDragging = true
+                            onEditingChanged(true)
+                        }
+                        let f = min(max(gesture.location.x / max(width, 1), 0), 1)
+                        value = range.lowerBound + Double(f) * (range.upperBound - range.lowerBound)
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                        onEditingChanged(false)
+                    }
+            )
+        }
+        .frame(height: 32)
+        .opacity(isEnabled ? 1 : 0.4)
+    }
+}
+
+// MARK: - Text prompt (custom replacement for the system rename alert)
+
+private struct TextPromptCard: View {
+    let title: String
+    let message: String?
+    let placeholder: String
+    let confirmLabel: String
+    @Binding var text: String
+    let onConfirm: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var fieldFocused: Bool
+    @State private var appeared = false
+
+    private var trimmed: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(appeared ? 0.55 : 0)
+                .ignoresSafeArea()
+                .onTapGesture { dismiss() }
+
+            VStack(alignment: .leading, spacing: 14) {
+                SectionEyebrow(title)
+
+                if let message {
+                    Text(message)
+                        .font(Theme.body(14))
+                        .foregroundColor(Theme.boneDim)
+                }
+
+                TextField(
+                    "",
+                    text: $text,
+                    prompt: Text(placeholder)
+                        .font(Theme.body(16))
+                        .foregroundColor(Theme.boneFaint)
+                )
+                .font(Theme.body(16, weight: .semibold))
+                .foregroundColor(Theme.bone)
+                .focused($fieldFocused)
+                .submitLabel(.done)
+                .onSubmit(confirm)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.smokeRaised))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.seam, lineWidth: 1))
+
+                HStack(spacing: 10) {
+                    Button("Cancel") { dismiss() }
+                        .buttonStyle(GhostPillButtonStyle())
+                    Button(confirmLabel, action: confirm)
+                        .buttonStyle(PillButtonStyle())
+                        .disabled(trimmed.isEmpty)
+                        .opacity(trimmed.isEmpty ? 0.45 : 1)
+                }
+            }
+            .padding(20)
+            .surfaceCard(corner: 24)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.25)) { appeared = true }
+            // Focus after the cover's slide-in settles; focusing immediately
+            // inside a fullScreenCover is unreliable.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                fieldFocused = true
+            }
+        }
+    }
+
+    private func confirm() {
+        guard !trimmed.isEmpty else { return }
+        onConfirm()
+        dismiss()
+    }
+}
+
+extension View {
+    /// Themed text-input dialog replacing the system alert: bottom card on a
+    /// dimmed backdrop, themed field, Ghost cancel + Pill confirm. Presented
+    /// through a transparent fullScreenCover so it works from any attachment
+    /// point (including list rows).
+    func themedTextPrompt(
+        _ title: String,
+        message: String? = nil,
+        placeholder: String,
+        text: Binding<String>,
+        isPresented: Binding<Bool>,
+        confirmLabel: String = "Save",
+        onConfirm: @escaping () -> Void
+    ) -> some View {
+        fullScreenCover(isPresented: isPresented) {
+            TextPromptCard(
+                title: title,
+                message: message,
+                placeholder: placeholder,
+                confirmLabel: confirmLabel,
+                text: text,
+                onConfirm: onConfirm
+            )
+            .presentationBackground(.clear)
+        }
     }
 }

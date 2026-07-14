@@ -45,8 +45,7 @@ struct YouTubeDownloadView: View {
                         }
                         .padding(.top, 40)
                     } else {
-                        ProgressView()
-                            .tint(Theme.emberLight)
+                        EQIndicator(color: Theme.emberLight, scale: 1.6)
                             .padding(.top, 40)
                         Text("CHECKING CLIPBOARD")
                             .font(Theme.eyebrowFont)
@@ -65,8 +64,7 @@ struct YouTubeDownloadView: View {
                     Button("Close") {
                         dismiss()
                     }
-                    .font(Theme.body(15, weight: .semibold))
-                    .foregroundColor(Theme.emberLight)
+                    .buttonStyle(ChipButtonStyle())
                 }
             }
             .onAppear {
