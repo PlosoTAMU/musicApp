@@ -17,6 +17,9 @@ struct Download: Identifiable, Codable {
     var cropStartTime: Double?
     var cropEndTime: Double?
     var pendingDeletion: Bool = false
+    /// Display folder from the cloud doc (desktop is the folder authority);
+    /// iOS never moves files — this only groups/labels them in the UI.
+    var folderOverride: String?
     // Behind-the-scenes metadata shown in Song Info
     var spotifyTitle: String?       // Title returned by Spotify oEmbed (Spotify tracks only)
     var youtubeSearchQuery: String? // Query used to find the YouTube video

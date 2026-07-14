@@ -38,7 +38,7 @@ struct ContentView: View {
                 // these are app-documents files, resolvable by URL directly.
                 downloads.downloads.map {
                     Track(id: $0.id, name: $0.name, url: $0.url,
-                          folderName: "YouTube Downloads",
+                          folderName: $0.folderOverride ?? "YouTube Downloads",
                           cropStartTime: $0.cropStartTime, cropEndTime: $0.cropEndTime)
                 }
             }

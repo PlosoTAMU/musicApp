@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AVFoundation
+import Combine
 
 class DownloadManager: ObservableObject {
     @Published var downloads: [Download] = [] {
@@ -13,6 +14,12 @@ class DownloadManager: ObservableObject {
     
     // NEW: most recently completed download for UI prompt
     @Published var completedDownloadForPlaylistPrompt: Download? = nil
+
+    /// Fired when the USER renames or crops a track here (not for sync-applied
+    /// changes) — LibraryReplicator pushes these to the cloud doc.
+    let trackMetaChanged = PassthroughSubject<Download, Never>()
+    /// Fired when a local deletion is confirmed (undo grace elapsed).
+    let trackDeleted = PassthroughSubject<Download, Never>()
 
     private var isBatchDownloading = false
     
@@ -877,7 +884,7 @@ class DownloadManager: ObservableObject {
     }
     
 
-    func renameDownload(_ download: Download, newName: String) {
+    func renameDownload(_ download: Download, newName: String, fromSync: Bool = false) {
         guard let index = downloads.firstIndex(where: { $0.id == download.id }) else {
             print("❌ [DownloadManager] Download not found in array")
             return
@@ -975,14 +982,16 @@ class DownloadManager: ObservableObject {
                 
                 print("✅ [DownloadManager] Updated currently playing track metadata and URL")
             }
-            
+
+            if !fromSync { trackMetaChanged.send(downloads[index]) }
+
         } catch {
             print("❌ [DownloadManager] Failed to rename file: \(error.localizedDescription)")
         }
     }
-    
+
     // Update crop times for a track
-    func updateCropTimes(for trackID: UUID, startTime: Double?, endTime: Double?) {
+    func updateCropTimes(for trackID: UUID, startTime: Double?, endTime: Double?, fromSync: Bool = false) {
         // 1. Persist to the Download model (saved to disk)
         if let downloadIndex = downloads.firstIndex(where: { $0.id == trackID }) {
             downloads[downloadIndex].cropStartTime = startTime
@@ -1014,6 +1023,9 @@ class DownloadManager: ObservableObject {
                 audioPlayer.previousQueue[prevIndex].cropStartTime = startTime
                 audioPlayer.previousQueue[prevIndex].cropEndTime = endTime
             }
+        }
+        if !fromSync, let i = downloads.firstIndex(where: { $0.id == trackID }) {
+            trackMetaChanged.send(downloads[i])
         }
     }
 
@@ -1271,9 +1283,7 @@ class DownloadManager: ObservableObject {
         notifyChange()
     }
     
-    private func confirmDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
-        onDelete(download)
-        
+    private func performDeletion(_ download: Download) {
         do {
             if FileManager.default.fileExists(atPath: download.url.path) {
                 try FileManager.default.removeItem(at: download.url)
@@ -1282,7 +1292,7 @@ class DownloadManager: ObservableObject {
         } catch {
             print("❌ [DownloadManager] Failed to delete audio file: \(error)")
         }
-        
+
         if let thumbPath = download.resolvedThumbnailPath {
             do {
                 if FileManager.default.fileExists(atPath: thumbPath) {
@@ -1293,12 +1303,12 @@ class DownloadManager: ObservableObject {
                 print("❌ [DownloadManager] Failed to delete thumbnail: \(error)")
             }
         }
-        
+
         let metadataURL = getMetadataFileURL()
         var metadata = loadMetadata()
         let filename = download.url.lastPathComponent
         metadata.removeValue(forKey: filename)
-        
+
         do {
             let data = try JSONEncoder().encode(metadata)
             try data.write(to: metadataURL)
@@ -1306,14 +1316,57 @@ class DownloadManager: ObservableObject {
         } catch {
             print("❌ [DownloadManager] Failed to update metadata: \(error)")
         }
-        
+
         downloads.removeAll { $0.id == download.id }
         timerLock.lock()
         deletionTimers.removeValue(forKey: download.id)
         timerLock.unlock()
         saveDownloads()
-        
+
         print("🗑️ [DownloadManager] Completely removed: \(download.name)")
+    }
+
+    private func confirmDeletion(_ download: Download, onDelete: @escaping (Download) -> Void) {
+        onDelete(download)
+        performDeletion(download)
+        trackDeleted.send(download)
+    }
+
+    /// Deletion that originated on another device: no undo grace (it already
+    /// ran on the deleting device) and no trackDeleted echo back to the cloud.
+    func removeDownloadFromSync(videoID: String) {
+        guard let download = downloads.first(where: { $0.videoID == videoID }) else { return }
+        // Stop playback of the vanishing track before its file goes away.
+        if let audioPlayer, audioPlayer.currentTrack?.id == download.id {
+            if audioPlayer.upNextTracks.isEmpty { audioPlayer.pause() }
+            else { audioPlayer.next() }
+        }
+        timerLock.lock()
+        deletionTimers[download.id]?.invalidate()
+        deletionTimers.removeValue(forKey: download.id)
+        timerLock.unlock()
+        performDeletion(download)
+    }
+
+    /// Remote rename/crop/folder — applies without re-publishing (fromSync).
+    func applyRemoteMeta(videoID: String, name: String, folder: String,
+                         cropStartMs: Int?, cropEndMs: Int?) {
+        guard let download = downloads.first(where: { $0.videoID == videoID }) else { return }
+        if download.name != name {
+            renameDownload(download, newName: name, fromSync: true)
+        }
+        guard let i = downloads.firstIndex(where: { $0.videoID == videoID }) else { return }
+        let newStart = cropStartMs.map { Double($0) / 1000.0 }
+        let newEnd = cropEndMs.map { Double($0) / 1000.0 }
+        if downloads[i].cropStartTime != newStart || downloads[i].cropEndTime != newEnd {
+            updateCropTimes(for: downloads[i].id, startTime: newStart,
+                            endTime: newEnd, fromSync: true)
+        }
+        if !folder.isEmpty, downloads[i].folderOverride != folder {
+            downloads[i].folderOverride = folder
+            saveDownloads()
+            notifyChange()
+        }
     }
     
     func getDownload(byID id: UUID) -> Download? {
