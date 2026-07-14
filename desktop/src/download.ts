@@ -5,8 +5,8 @@
 //
 // Spotify links resolve via the public oEmbed title → yt-dlp "ytsearch1:" —
 // the same strategy the iOS pipeline uses. No ffmpeg dependency: bestaudio in
-// its native container (m4a/webm/opus), all of which the scanner + Chromium
-// already handle.
+// its native container — highest-abr stream, usually opus/webm — which the
+// scanner + Chromium already handle.
 import { spawn } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
@@ -81,7 +81,11 @@ export async function downloadTrack(
   ]);
 
   const args = [
-    "-f", "bestaudio[ext=m4a]/bestaudio",
+    // Quality over space on desktop (iOS deliberately keeps 128 kbps m4a for
+    // space): plain bestaudio picks the highest-abr stream YouTube serves,
+    // typically ~160 kbps VBR Opus in webm — Chromium + the scanner already
+    // handle opus/webm natively.
+    "-f", "bestaudio",
     "--no-playlist",
     "-o", path.join(dir, "%(title)s [%(id)s].%(ext)s"),
     target,
