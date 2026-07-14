@@ -4,6 +4,7 @@
 // the expensive part).
 import { ipcRenderer } from "electron";
 import { pathToFileURL } from "url";
+import * as fs from "fs";
 import { db, bootstrapAuth } from "./firebase";
 import { SessionCoordinator } from "./coordinator";
 import { SyncEngine } from "./engine";
@@ -32,6 +33,19 @@ let error: string | undefined;
 let busy = false;
 let dragMs: number | null = null;
 let musicDir: string | null = localStorage.getItem(DIR_KEY);
+let watchTimer: ReturnType<typeof setTimeout> | null = null;
+function watchMusicDir(dir: string) {
+  try {
+    fs.watch(dir, { recursive: true }, () => {
+      if (watchTimer) clearTimeout(watchTimer);
+      watchTimer = setTimeout(() => {
+        engine.loadLibrary(dir);
+        renderLibrary();
+        replicator.syncUp();  // pump → reconcile pushes renames/moves/deletes
+      }, 2000);
+    });
+  } catch { /* fs.watch unavailable — edits sync on next launch/download */ }
+}
 let searchTerm = "";
 let lastArtYt: string | undefined | null = null; // null = uninitialized
 
@@ -79,6 +93,7 @@ async function connect(secret: string) {
   settingsSync.start(uid);
   if (musicDir) {
     engine.loadLibrary(musicDir);
+    watchMusicDir(musicDir);
     replicator.onChange = renderNow;
     replicator.start(uid, musicDir, () => engine.library, () => {
       engine.loadLibrary(musicDir!);
@@ -154,6 +169,7 @@ function wire() {
       localStorage.setItem(DIR_KEY, dir);
       engine.loadLibrary(dir);
       renderLibrary();
+      watchMusicDir(dir);
       const secret = localStorage.getItem(SECRET_KEY);
       if (secret && coord.uid) replicator.start(coord.uid, dir, () => engine.library, () => {
         engine.loadLibrary(dir); renderLibrary();
