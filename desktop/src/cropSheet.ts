@@ -82,11 +82,19 @@ export function showCropSheet(o: CropSheetOpts) {
   };
   const loopTimer = setInterval(() => { if (!audio.paused) tick(); }, 40);
 
+  // Esc cancels the sheet — but not while a time chip's inline input (or a
+  // focused slider) has focus; those handle their own keys.
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && (e.target as HTMLElement).tagName !== "INPUT") close();
+  };
+  document.addEventListener("keydown", onKey, true);
+
   const close = () => {
     clearInterval(loopTimer);
     audio.pause();
     audio.removeAttribute("src");
     overlay.remove();
+    document.removeEventListener("keydown", onKey, true);
     if (wasPlaying) o.resumeMain();
   };
 

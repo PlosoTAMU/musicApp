@@ -191,6 +191,9 @@ function wire() {
     searchTerm = (e.target as HTMLInputElement).value;
     renderLibrary();
   };
+  ($("search-input") as HTMLInputElement).onkeydown = e => {
+    if (e.key === "Escape") (e.target as HTMLInputElement).blur();
+  };
   $("btn-library").onclick = async () => {
     const dir: string | undefined = await ipcRenderer.invoke("pick-folder");
     if (dir) {
@@ -230,6 +233,11 @@ function wire() {
     if (e.code === "ArrowRight") seekCmd(currentPosMs() + 10_000);
     if (e.code === "ArrowLeft") seekCmd(Math.max(0, currentPosMs() - 10_000));
     if (e.code === "KeyL") ($("btn-lyrics") as HTMLButtonElement).click();
+    if (e.code === "Escape") closePop();
+    if (e.code === "Slash" || (e.ctrlKey && e.code === "KeyF")) {
+      e.preventDefault();
+      ($("search-input") as HTMLInputElement).focus();
+    }
   });
   ipcRenderer.on("media", (_e, t: string) => {
     if (t === "toggle") ($("btn-toggle") as HTMLButtonElement).click();
@@ -776,6 +784,9 @@ function renderNow() {
   roleChip.textContent = coord.demo ? "Offline Preview"
     : coord.role === "owner" ? "Playing Here" : "Remote";
   roleChip.className = !coord.demo && coord.role === "owner" ? "chip owner" : "chip";
+  roleChip.title = coord.demo ? "Offline preview — nothing syncs, playback is local only"
+    : coord.role === "owner" ? "This device is playing the audio"
+    : "Another device is playing — controls here act as a remote";
   if (!connected) return;
 
   const s = coord.remote;
@@ -794,7 +805,15 @@ function renderNow() {
     : "";
   ($("btn-playhere") as HTMLButtonElement).disabled = busy || !coord.online;
 
-  $("track-title").textContent = pb?.track?.name ?? (idle ? "Pick a song →" : "Nothing playing");
+  const titleText = pb?.track?.name ?? (idle ? "Pick a song →" : "Nothing playing");
+  const titleEl = $("track-title"), titleInner = $("track-title-text");
+  if (titleInner.textContent !== titleText) {
+    titleInner.textContent = titleText;
+    // Marquee only when the name actually overflows — measured per change.
+    const over = titleInner.scrollWidth - titleEl.clientWidth;
+    titleEl.classList.toggle("marquee", over > 8);
+    titleEl.style.setProperty("--marq", `${-Math.max(0, over)}px`);
+  }
   // ✂ CROPPED badge — twin of the iOS Now Playing capsule. cropFor reads the
   // synced meta, so followers see it too.
   const badgeYt = pb?.track ? (resolve(pb.track, engine.library)?.yt ?? pb.track.yt) : undefined;
@@ -823,9 +842,13 @@ function renderNow() {
   renderPosition();
 
   // Rail action toggles — filled treatment matches the iOS top bar (fx button
-  // is lit while effects are ACTIVE, i.e. not bypassed).
+  // is lit while effects are ACTIVE; bypassed adds a slash + says so) [U9].
   $("rail-loop").classList.toggle("on", engine.player.loop);
-  $("rail-fx").classList.toggle("on", !fx.bypass);
+  const fxBtn = $("rail-fx");
+  fxBtn.classList.toggle("on", !fx.bypass);
+  fxBtn.classList.toggle("slash", fx.bypass);
+  fxBtn.title = fx.bypass ? "Effects bypassed — click to re-enable"
+                          : "Effects active — click to bypass";
   $("rail-lyrics").classList.toggle("on", lyricsOpen);
 
   $("lib-status").textContent = `${engine.library.length} local tracks`;
@@ -957,7 +980,9 @@ function showConfirm(message: string, onOk: () => void, okLabel = "Delete") {
     `<div class="modal-actions"><button class="link modal-cancel">Cancel</button>` +
     `<button class="pill modal-ok">${escapeHtml(okLabel)}</button></div></div>`;
   document.body.appendChild(overlay);
-  const close = () => overlay.remove();
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey, true);
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
   (overlay.querySelector(".modal-ok") as HTMLButtonElement).onclick = () => { close(); onOk(); };
   (overlay.querySelector(".modal-cancel") as HTMLButtonElement).onclick = close;
   overlay.onmousedown = e => { if (e.target === overlay) close(); };

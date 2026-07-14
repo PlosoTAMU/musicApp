@@ -157,6 +157,17 @@
       display: flex; align-items: center; gap: 12px;
       margin: 18px 0 14px; min-height: 40px;
     }
+    /* Long titles scroll gently instead of clipping (measured in renderNow —
+       short names never move). */
+    #track-title { flex: 1; min-width: 0; overflow: hidden; }
+    #track-title-text { display: inline-block; white-space: nowrap; }
+    #track-title.marquee #track-title-text {
+      animation: marquee 9s ease-in-out infinite alternate;
+    }
+    @keyframes marquee {
+      0%, 12% { transform: translateX(0); }
+      88%, 100% { transform: translateX(var(--marq, 0px)); }
+    }
 
     /* Now-playing artwork (YouTube thumb via the track's yt id) */
     #art {
@@ -237,11 +248,20 @@
     .rail-top .eyebrow { flex: 1; min-width: 0; white-space: nowrap; }
     .rail-actions { display: flex; gap: 8px; }
     .rail-actions button {
+      position: relative;
       width: 34px; height: 34px; border-radius: 50%; flex: none;
       background: var(--smoke-raised); border: 1px solid var(--seam);
       color: var(--bone); cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       transition: transform .15s cubic-bezier(.34,1.56,.64,1), opacity .15s, filter .15s;
+    }
+    /* Bypassed effects wear a slash — lit means active, slashed means muted. */
+    .rail-actions button.slash::after {
+      content: ""; position: absolute; left: 50%; top: 50%;
+      width: 2px; height: 24px; border-radius: 1px;
+      background: var(--bone-dim);
+      transform: translate(-50%, -50%) rotate(45deg);
+      box-shadow: 0 0 0 1.5px var(--smoke-raised);
     }
     .rail-actions button:hover { filter: brightness(1.25); }
     .rail-actions button:active { transform: scale(.9); opacity: .85; }
@@ -507,7 +527,7 @@
         </div>
         <div id="track-name">
           <span class="eq" id="eq" hidden><span></span><span></span><span></span></span>
-          <span id="track-title">Nothing playing</span>
+          <span id="track-title"><span id="track-title-text">Nothing playing</span></span>
           <span id="crop-badge" class="chip" hidden>✂ Cropped</span>
         </div>
         <canvas id="viz"></canvas>
@@ -627,7 +647,7 @@
     <span id="fs-hint" title="The music folder is watched: rename, move, or delete files in your file manager and the change replicates to every device — same as editing in-app.">Disk renames / moves / deletes sync too</span>
     <span id="repl-status"></span>
     <span class="spacer"></span>
-    <span><kbd>Space</kbd> play/pause &nbsp; <kbd>←</kbd><kbd>→</kbd> seek &nbsp; <kbd>L</kbd> lyrics &nbsp; <kbd>F11</kbd> fullscreen</span>
+    <span><kbd>Space</kbd> play/pause &nbsp; <kbd>←</kbd><kbd>→</kbd> ±10s &nbsp; <kbd>L</kbd> lyrics &nbsp; <kbd>/</kbd> search &nbsp; <kbd>Esc</kbd> close &nbsp; <kbd>F11</kbd> fullscreen &nbsp; + media keys</span>
     <button id="btn-forget" class="link">Forget home</button>
   </div>
 
