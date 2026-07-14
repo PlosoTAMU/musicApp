@@ -89,14 +89,21 @@ Methods:
 Exposed to the UI:
 - `get inPlaylistMode(): boolean` → `!!this.playlistLoop`.
 - `get playlistUpNext(): LocalTrack[]` → `playlistLoop ? playlistLoop.slice(playlistIndex+1) : []`.
+- **`playFromPlaylist(t: LocalTrack)`** — jump to a track in the current playlist
+  (click on an "Up Next from Playlist" row): find `t` in `playlistLoop` by id, set
+  `playlistIndex` to it, push history, play it. **Stays in playlist mode** and
+  leaves the user queue intact (queued songs still interleave on the next advance).
+  Owner-only — `playlistLoop` only exists on the owner. Distinct from
+  `playFromQueue`, which removes from the user queue and *exits* playlist mode.
 
 ### 2. UI (`desktop/src/ui.ts`, queue panel in `renderLibrary`)
 
 - Render the shared queue as today's **"Up Next"**. Then, only when
   `coord.role === "owner"` and `engine.playlistUpNext.length > 0`, render a second
-  read-only **"Up Next from Playlist"** section (thumb + title rows). Playlist rows
-  are not draggable/removable (they are derived from `playlistLoop`, not the user
-  queue). Clicking to jump into the playlist is **out of scope** for this change.
+  **"Up Next from Playlist"** section (thumb + title rows). Playlist rows are not
+  draggable/removable (they are derived from `playlistLoop`, not the user queue),
+  but **clicking a row jumps to that track** via `engine.playFromPlaylist`, staying
+  in playlist mode.
 - Empty-state / Clear button react to either source: show the panel when the shared
   queue is non-empty **or** `engine.inPlaylistMode`; the `Clear` button
   (→ `engine.clearQueue()`, which exits playlist mode) is visible in both cases.
@@ -133,19 +140,20 @@ Node logic gate here; GUI smoke deferred to the user's machine.
     playlist track that is also user-queued). Documents item 16's intended order.
 - **GUI smoke (`docs/arpi/smoke-test.md`, Phase 3):** replace the "known gap" note
   with: queue-a-song-while-a-playlist-plays → it plays **next**; Up Next shows two
-  labeled sections; a follower shows only the user queue; Play-Here/handover ends
-  playlist mode.
+  labeled sections; clicking an "Up Next from Playlist" row jumps to that track and
+  stays in playlist mode; a follower shows only the user queue; Play-Here/handover
+  ends playlist mode.
 
 ## Out of scope
 
-- Clicking an "Up Next from Playlist" row to jump to that track.
 - Persisting/synchronizing the playlist across devices (iOS doesn't; contract-frozen).
 - Any change to the queue wire format.
 
 ## Files touched
 
-- `desktop/src/engine.ts` — playlistIndex, playAll, trackEnded, getters, index sync.
-- `desktop/src/ui.ts` — two-section Up Next, empty/Clear gating.
+- `desktop/src/engine.ts` — playlistIndex, playAll, trackEnded, getters, index sync,
+  `playFromPlaylist`.
+- `desktop/src/ui.ts` — two-section Up Next (playlist rows clickable), empty/Clear gating.
 - `desktop/src/listOps.ts` — `nextPlaylistIndex` (the `advance` test model stays in the throwaway test file).
 - `docs/arpi/smoke-test.md` — Phase 3 checklist update.
 - `NOTES.md` — mark item 16 complete; retire the OPEN/deferred entry.
