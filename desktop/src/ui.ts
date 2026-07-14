@@ -168,6 +168,8 @@ function wire() {
   $("btn-prev").onclick = () => engine.prev();
   $("btn-next").onclick = () => engine.next();
   $("btn-toggle").onclick = toggleCmd;
+  $("btn-back10").onclick = () => seekCmd(Math.max(0, currentPosMs() - 10_000));
+  $("btn-fwd10").onclick = () => seekCmd(currentPosMs() + 10_000);
   $("btn-playhere").onclick = () => run(() => engine.takeOverHere());
 
   const slider = $("progress") as HTMLInputElement;
@@ -719,12 +721,15 @@ function renderNow() {
   const idle = !s?.ownerDeviceID;
   $("owner-dead").hidden = !(coord.role !== "owner" && !idle && s && leaseExpired(s, serverClock.nowMs));
 
-  // Someone else owns the session — lock the rail behind a "Play Here" prompt
-  // instead of leaving transport controls live for a device that isn't playing.
+  // Full remote: while another device owns playback, the rail transport stays
+  // LIVE (prev/next/toggle/seek route through the command bus). Instead of a
+  // blocking cover we show a status banner + Play Here to take over — the
+  // desktop is a true remote of the phone, like iOS is of the desktop.
   const remoteActive = coord.role !== "owner" && !idle;
-  $("rail-content").classList.toggle("blurred", remoteActive);
-  $("rail-lock").hidden = !remoteActive;
-  $("rail-lock-track").textContent = pb?.track?.name ?? "";
+  $("remote-banner").hidden = !remoteActive;
+  $("remote-banner-text").textContent = remoteActive
+    ? `Controlling your other device${pb?.track ? ` — ${pb.track.name}` : ""}`
+    : "";
   ($("btn-playhere") as HTMLButtonElement).disabled = busy || !coord.online;
 
   $("track-title").textContent = pb?.track?.name ?? (idle ? "Pick a song →" : "Nothing playing");
@@ -777,6 +782,15 @@ const rowBtn = (label: string, title: string, onclick: () => void): HTMLButtonEl
   const b = document.createElement("button");
   b.className = "row-btn"; b.textContent = label; b.title = title; b.onclick = onclick;
   return b;
+};
+
+/** Single-click row handler that ignores clicks landing on the row's own action
+ *  buttons (▶ ＋ ♪ ✕) — so a plain click on the row plays/opens, but the inline
+ *  buttons still do their own thing. Fixes the "rows only respond to
+ *  double-click" dead-click on desktop. */
+const rowClick = (fn: () => void) => (e: MouseEvent) => {
+  if ((e.target as HTMLElement).closest("button")) return;
+  fn();
 };
 
 const titleSpan = (text: string): HTMLElement => {
@@ -854,7 +868,7 @@ function renderPlaylists() {
       li.appendChild(thumbEl(tr.yt));
       li.appendChild(titleSpan(tr.name));
       if (!local) li.appendChild(chipSpan("not here yet"));
-      else li.ondblclick = () => run(() => engine.playLocal(local));
+      else li.onclick = rowClick(() => run(() => engine.playLocal(local)));
       li.appendChild(rowBtn("✕", "Remove from playlist",
         () => void playlistSync.removeTrack(open.id, tr.id)));
       listEl.appendChild(li);
@@ -872,7 +886,7 @@ function renderPlaylists() {
       li.appendChild(chipSpan(String(p.tracks.length)));
       li.appendChild(rowBtn("▶", "Play all", () => playPlaylist(p)));
       li.appendChild(rowBtn("›", "Open", () => { openPlaylistId = p.id; renderLibrary(); }));
-      li.ondblclick = () => { openPlaylistId = p.id; renderLibrary(); };
+      li.onclick = rowClick(() => { openPlaylistId = p.id; renderLibrary(); });
       listEl.appendChild(li);
     }
   }
@@ -931,7 +945,7 @@ function renderLibrary() {
   for (const t of rows) {
     const li = document.createElement("li");
     if (playingName && norm(playingName) === norm(t.name)) li.className = "playing";
-    li.ondblclick = () => run(() => engine.playLocal(t));
+    li.onclick = rowClick(() => run(() => engine.playLocal(t)));
 
     li.appendChild(thumbEl(t.yt));
 

@@ -137,21 +137,21 @@
       min-height: 0;
     }
     .rail-content { display: contents; }
-    .rail-content.blurred { display: flex; flex-direction: column;
-      filter: blur(16px); pointer-events: none; user-select: none; }
 
-    /* Overlay shown while another device owns playback — everything behind
-       it is inert; taking over is the only way through. */
-    .rail-lock { position: absolute; inset: 0; z-index: 6;
-                 display: flex; align-items: center; justify-content: center; }
-    .rail-lock-card {
-      max-width: 260px; text-align: center; padding: 26px 30px;
+    /* Full-remote banner — shown while another device owns playback. The rail
+       transport stays LIVE (it routes through the command bus), so this is a
+       status strip + take-over button, not a blocking cover. */
+    #remote-banner {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--bone-dim);
       background: var(--smoke-raised); border: 1px solid var(--seam);
-      border-radius: 18px; box-shadow: 0 12px 34px rgba(0,0,0,.55);
+      border-radius: 10px; padding: 7px 11px; margin: 10px 0 2px;
     }
-    .rail-lock-card p { font-size: 13px; color: var(--bone-dim);
-                         line-height: 1.5; margin-bottom: 16px; }
-    .rail-lock-card strong { color: var(--bone); }
+    #remote-banner .dot { background: var(--red-light); flex: none; }
+    #remote-banner #remote-banner-text { overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }
+    #remote-banner #btn-playhere { margin-left: auto; flex: none;
+      color: var(--red-light); }
     #track-name {
       font-size: 30px; font-weight: 800; line-height: 1.2;
       display: flex; align-items: center; gap: 12px;
@@ -218,6 +218,10 @@
     .transport button:hover { filter: brightness(1.25); }
     .transport button:active { transform: scale(.9); opacity: .85; }
     .transport svg { width: 20px; height: 20px; fill: var(--bone); }
+    .transport svg text { fill: var(--bone); }
+    /* Seek ±10 sit smaller than prev/next so the play button stays dominant. */
+    .transport #btn-back10, .transport #btn-fwd10 { width: 44px; height: 44px; }
+    .transport #btn-back10 svg, .transport #btn-fwd10 svg { width: 22px; height: 22px; }
     .transport #btn-toggle {
       width: 80px; height: 80px;
       background: var(--red-gradient);
@@ -417,6 +421,11 @@
             </button>
           </div>
         </div>
+        <div id="remote-banner" hidden>
+          <span class="dot"></span>
+          <span id="remote-banner-text">Controlling your other device</span>
+          <button id="btn-playhere" class="link">Play Here</button>
+        </div>
         <div id="art">
           <span id="art-fallback">♫</span>
           <img id="art-img" hidden alt="" />
@@ -432,8 +441,14 @@
           <button id="btn-prev" title="Previous">
             <svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6zM20 5.8v12.4c0 .8-.9 1.3-1.6.9l-9.2-6.2c-.6-.4-.6-1.4 0-1.8l9.2-6.2c.7-.4 1.6.1 1.6.9z"/></svg>
           </button>
+          <button id="btn-back10" title="Back 10s">
+            <svg viewBox="0 0 24 24"><path d="M11 7V3.2L6 8l5 4.8V9a5 5 0 1 1-5 5H4a7 7 0 1 0 7-7z"/><text x="12.5" y="17.5" font-size="7.5" font-weight="800" text-anchor="middle">10</text></svg>
+          </button>
           <button id="btn-toggle" title="Play/Pause">
             <svg viewBox="0 0 24 24"><path d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.9-6.2c.6-.4.6-1.4 0-1.8L9.6 4.9c-.7-.4-1.6.1-1.6.9z"/></svg>
+          </button>
+          <button id="btn-fwd10" title="Forward 10s">
+            <svg viewBox="0 0 24 24"><path d="M13 7V3.2L18 8l-5 4.8V9a5 5 0 1 0 5 5h2a7 7 0 1 1-7-7z"/><text x="11.5" y="17.5" font-size="7.5" font-weight="800" text-anchor="middle">10</text></svg>
           </button>
           <button id="btn-next" title="Next">
             <svg viewBox="0 0 24 24"><path d="M15.5 5H18v14h-2.5zM4 5.8v12.4c0 .8.9 1.3 1.6.9l9.2-6.2c.6-.4.6-1.4 0-1.8L5.6 4.9c-.7-.4-1.6.1-1.6.9z"/></svg>
@@ -456,12 +471,6 @@
         </div>
       </div>
 
-      <div class="rail-lock" id="rail-lock" hidden>
-        <div class="rail-lock-card">
-          <p>Playing on your other device —<br /><strong id="rail-lock-track"></strong></p>
-          <button id="btn-playhere" class="pill">Play Here</button>
-        </div>
-      </div>
     </div>
 
     <div class="content">

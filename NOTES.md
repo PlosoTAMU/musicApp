@@ -16,6 +16,9 @@ audit findings (see `docs/arpi/desktop-parity-findings.md`), strict priority ord
 - 2026-07-14 Web Audio rebuild is a foundational phase (P4) — pitch-shift is impossible on bare HTMLAudioElement; effects/crop ride the same graph.
 - 2026-07-14 Bass range: align desktop UP to iOS −10..+20 dB and fix the settingsSync clamp — iOS is the reference twin.
 - 2026-07-14 iOS side is the source of truth for behavior; desktop mirrors it (README calls desktop the "twin").
+- 2026-07-14 Verify cadence = BATCH: implement all phases with static+logic gates, user does one GUI pass at end. Per-phase smoke checklists accumulate in `docs/arpi/smoke-test.md`.
+- 2026-07-14 P1 prev-history: built only by trackEnded (natural advance / "next"), NOT by direct clicks — mirrors iOS previousQueue. prev re-queues current at front via queue `insert afterId:null`.
+- 2026-07-14 P1 remote control: dropped the blur+cover lock; rail transport already routes through the command bus, so following devices now control the owner directly + a `#remote-banner` shows state + Play Here.
 
 ## ASSUMPTIONS
 - [unconfirmed] Firestore doc contracts stay frozen; parity work must not change wire field names (they are the cross-platform contract — see SettingsSync.swift header).
@@ -28,6 +31,8 @@ audit findings (see `docs/arpi/desktop-parity-findings.md`), strict priority ord
 - ARPI plan (phases + verification) → `docs/arpi/desktop-parity-plan.md`.
 - ARPI process doc → `docs/arpi/README.md`.
 - Branch + this NOTES.md.
+- Build baseline green (tsc --noEmit + esbuild bundle) @ 9658ab8; verification constraint recorded @ 2896674.
+- **Phase 1** (playback control parity): prev-track history (engine.ts), single-click play (ui.ts rowClick), full remote control (index.html + ui.ts, unblur + banner), on-screen seek ±10s. Gate: tsc+bundle green; `rebase` logic 11/11 PASS. Smoke checklist in smoke-test.md.
 
 ## OPEN  (unanswered / deferred / known issues)
 - Pitch-shift library choice (vendored soundtouch-js vs. hand-rolled) — decide at P4 start.

@@ -20,6 +20,19 @@ export class SyncEngine {
   onChange?: () => void;
   onLibraryChange?: () => void;      // hook for the replicator's up-sync
 
+  // Back-nav history — twin of AudioPlayerManager.previousQueue. Built only by
+  // natural advance / "next" (trackEnded), NOT by a direct library click, so it
+  // matches iOS play() which leaves previousQueue untouched. Owner-local, like
+  // iOS (a fresh owner after handover starts with empty history).
+  private history: LocalTrack[] = [];
+  private static readonly HISTORY_MAX = 100;
+
+  private pushHistory(t?: LocalTrack) {
+    if (!t) return;
+    this.history.push(t);
+    if (this.history.length > SyncEngine.HISTORY_MAX) this.history.shift();
+  }
+
   /** Injected by ui.ts — maps a yt id to the current crop window. */
   cropLookup: (yt?: string) => { startMs?: number; endMs?: number } = () => ({});
 
@@ -96,10 +109,29 @@ export class SyncEngine {
       case "play": this.player.resume(); break;
       case "pause": this.player.pause(); break;
       case "next": this.trackEnded(); break;
-      case "prev": this.player.seekMs(0); break;
+      case "prev": this.goPrevious(); break;
       case "seek": this.player.seekMs(cmd.ms); break;
     }
     this.publish();
+  }
+
+  /** Twin of AudioPlayerManager.previous(): pop history and play it, re-queuing
+   *  the current track at the front so forward nav returns to it. Empty history
+   *  (or first track) falls back to restart, matching iOS. Owner-only; followers
+   *  reach this by routing "prev" through the command bus. */
+  private goPrevious() {
+    if (this.coord.role !== "owner") return;
+    const prev = this.history.pop();
+    if (!prev) { this.player.seekMs(0); return; }
+    const cur = this.player.current;
+    if (cur) {
+      const ref = toRef(cur);
+      if (this.coord.demo) this.demoQueue(q => [ref, ...q]);
+      else void this.queueSync.apply({ kind: "insert", ref, afterId: null },
+        this.coord.remote?.queueVersion ?? 0);
+    }
+    this.applyCrop(prev);
+    this.player.play(prev);
   }
 
   /** Owner playing the queue: CAS-pop heads; ghost heads are consumed and skipped. */
@@ -121,6 +153,7 @@ export class SyncEngine {
       if (this.coord.demo) this.demoQueue(q => q.filter(r => r.id !== head.id));
       else void this.queueSync.apply({ kind: "consumeHead", expected: head.id }, basis);
       if (local) {
+        this.pushHistory(this.player.current);   // remember what we're leaving
         this.applyCrop(local);
         this.player.play(local);
         this.publish();
