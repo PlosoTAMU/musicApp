@@ -1353,18 +1353,21 @@ function renderLibrary() {
     }
   }
 
-  // Library — filtered, capped for DOM sanity.
+  // Library — filtered, capped for DOM sanity (cap surfaced below [U6]).
   const listEl = $("library-list");
   listEl.innerHTML = "";
   const term = norm(searchTerm);
-  const rows = engine.library
-    .filter(t => !term || norm(t.name).includes(term) || norm(t.folder).includes(term))
-    .slice(0, 500);
+  const filtered = engine.library
+    .filter(t => !term || norm(t.name).includes(term) || norm(t.folder).includes(term));
+  const rows = filtered.slice(0, 500);
   if (rows.length === 0) {
     listEl.innerHTML = `<div class="list-empty">${
       engine.library.length === 0 ? "Choose a music folder below" : "No matches"}</div>`;
   }
-  const playingName = coord.remote?.playback.track?.name;
+  // "Playing" highlight matches by resolved id, not name — duplicate titles
+  // no longer double-highlight [U12].
+  const playingRef = coord.remote?.playback.track;
+  const playingLocal = playingRef ? resolve(playingRef, engine.library) : undefined;
   for (const t of rows) {
     const li = document.createElement("li");
 
@@ -1380,7 +1383,7 @@ function renderLibrary() {
       continue;
     }
 
-    if (playingName && norm(playingName) === norm(t.name)) li.className = "playing";
+    if (playingLocal && sameId(playingLocal.id, t.id)) li.className = "playing";
     li.onclick = rowClick(() => run(() => engine.playLocal(t)));
     li.oncontextmenu = e => { e.preventDefault(); trackMenu(e.clientX, e.clientY, t); };
 
@@ -1419,6 +1422,14 @@ function renderLibrary() {
     li.appendChild(moreBtn);
 
     listEl.appendChild(li);
+  }
+
+  // Cap indicator — the 500-row slice used to be silent [U6].
+  if (filtered.length > rows.length) {
+    const d = document.createElement("div");
+    d.className = "list-empty";
+    d.textContent = `Showing ${rows.length} of ${filtered.length} — search to narrow`;
+    listEl.appendChild(d);
   }
 }
 

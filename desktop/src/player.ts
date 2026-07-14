@@ -7,6 +7,7 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { pathToFileURL } from "url";
 import { TrackRef, sameId } from "./protocol";
+import { byName } from "./listOps";
 
 export interface LocalTrack {
   id: string;          // deterministic UUID from absolute path (stable across scans)
@@ -59,7 +60,7 @@ export function scanLibrary(root: string): LocalTrack[] {
     }
   };
   walk(root);
-  return out;
+  return out.sort(byName); // case-insensitive, like the iOS library
 }
 
 export function resolve(ref: TrackRef, lib: LocalTrack[]): LocalTrack | undefined {

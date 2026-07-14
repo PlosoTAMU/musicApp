@@ -437,6 +437,7 @@
       padding: 8px 20px 12px; border-top: 1px solid var(--seam);
     }
     .statusline * { white-space: nowrap; }
+    #fs-hint { color: var(--bone-faint); cursor: help; }
     #repl-status { color: var(--rose); overflow: hidden; text-overflow: ellipsis; }
     .spacer { flex: 1; }
     kbd { font: 10px Consolas, monospace; color: var(--bone-faint);
@@ -623,6 +624,7 @@
 
   <div class="statusline">
     <button id="btn-library" class="link">Change music folder</button>
+    <span id="fs-hint" title="The music folder is watched: rename, move, or delete files in your file manager and the change replicates to every device — same as editing in-app.">Disk renames / moves / deletes sync too</span>
     <span id="repl-status"></span>
     <span class="spacer"></span>
     <span><kbd>Space</kbd> play/pause &nbsp; <kbd>←</kbd><kbd>→</kbd> seek &nbsp; <kbd>L</kbd> lyrics &nbsp; <kbd>F11</kbd> fullscreen</span>
