@@ -20,6 +20,19 @@ export class SyncEngine {
   onChange?: () => void;
   onLibraryChange?: () => void;      // hook for the replicator's up-sync
 
+  /** Injected by ui.ts — maps a yt id to the current crop window. */
+  cropLookup: (yt?: string) => { startMs?: number; endMs?: number } = () => ({});
+
+  private applyCrop(t: LocalTrack) {
+    const { startMs, endMs } = this.cropLookup(t.yt);
+    this.player.setCrop(startMs, endMs);
+  }
+
+  /** Re-apply crop after a metadata push so the live position stays correct. */
+  refreshCurrentCrop() {
+    if (this.player.current) this.applyCrop(this.player.current);
+  }
+
   constructor(db: Firestore, readonly coord: SessionCoordinator) {
     this.queueSync = new QueueSync(db, () => coord.ref);
     this.commands = new CommandBus(db, () => coord.ref);
@@ -108,6 +121,7 @@ export class SyncEngine {
       if (this.coord.demo) this.demoQueue(q => q.filter(r => r.id !== head.id));
       else void this.queueSync.apply({ kind: "consumeHead", expected: head.id }, basis);
       if (local) {
+        this.applyCrop(local);
         this.player.play(local);
         this.publish();
         return;
@@ -154,6 +168,7 @@ export class SyncEngine {
       await this.coord.takeOver();
       this.becomeCommandTarget();
     }
+    this.applyCrop(t);
     this.player.play(t);
     this.publish();
   }
@@ -203,6 +218,7 @@ export class SyncEngine {
       this.player.queue = pre.queue
         .map(r => resolve(r, this.library))
         .filter((t): t is LocalTrack => !!t);
+      this.applyCrop(local);
       this.player.play(local, posMs, !(prePb.playing || forcePlay));
     }
     this.becomeCommandTarget();

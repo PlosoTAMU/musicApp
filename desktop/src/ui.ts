@@ -26,6 +26,13 @@ const beatFeed = new BeatFeed();
 const playlistSync = new PlaylistSync(db);
 const settingsSync = new SettingsSync(db);
 
+// Wire crop lookups so the player trims audio to the stored crop window and so
+// changes pushed from another device take effect on the live track immediately.
+engine.cropLookup = yt => replicator.cropFor(yt);
+replicator.onCropChanged = yt => {
+  if (engine.player.current?.yt === yt) { engine.refreshCurrentCrop(); renderNow(); }
+};
+
 const SECRET_KEY = "pulsor.secret";
 const DIR_KEY = "sync.music.dir";
 
@@ -605,19 +612,27 @@ function renderLyrics() {
     const d = document.createElement("div");
     d.className = "lyr-line";
     d.textContent = line.text || "♪";
-    d.onclick = () => seekCmd(Math.max(0, line.timeMs + lyricsOffsetMs));
+    d.onclick = () => seekCmd(Math.max(0, line.timeMs - lyricsCropStartMs() + lyricsOffsetMs));
     body.appendChild(d);
   }
   updateLyricsHighlight();
 }
 
-/** 500 ms tick: move the highlight. LRC times are file-relative; desktop
- *  session positions are file-relative too EXCEPT when iOS owns playback of
- *  a cropped track (TrackRef carries no crop info) — then lines run early by
- *  cropStart, and the shared offsetMs nudge is the manual fix. */
+/** Returns the crop start (ms, file-absolute) for the currently playing track
+ *  when this device is the owner. Followers get 0 — their posMs is the iOS
+ *  crop-relative mirror value, so no additional shift is needed. */
+function lyricsCropStartMs(): number {
+  if (coord.role !== "owner") return 0;
+  const yt = engine.player.current?.yt;
+  return yt ? (replicator.cropFor(yt).startMs ?? 0) : 0;
+}
+
+/** 500 ms tick: move the highlight. LRC times are file-absolute; desktop
+ *  posMs is crop-relative when this device owns a cropped track. We add
+ *  the crop offset here so both sides land on the right line. */
 function updateLyricsHighlight() {
   if (!lyricsLines) return;
-  const idx = activeIndex(lyricsLines, currentPosMs(), lyricsOffsetMs) ?? -1;
+  const idx = activeIndex(lyricsLines, currentPosMs() + lyricsCropStartMs(), lyricsOffsetMs) ?? -1;
   if (idx === lyricsActiveIdx) return;
   const body = $("lyrics-body");
   body.querySelector(".lyr-line.active")?.classList.remove("active");

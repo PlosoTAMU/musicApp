@@ -88,6 +88,19 @@ export class LocalPlayer {
   onEnded?: () => void;
   onChange?: () => void;
 
+  // Crop window (metadata — the file is untouched). All public positions are
+  // crop-relative: 0 == cropStart, durMs == cropEnd - cropStart. This matches
+  // what iOS publishes for cropped tracks (protocol dur = "cropped length").
+  private cropStartMs = 0;
+  private cropEndMs?: number;
+  private endFired = false;
+
+  setCrop(startMs?: number, endMs?: number) {
+    this.cropStartMs = startMs ?? 0;
+    this.cropEndMs = endMs;
+    this.endFired = false;
+  }
+
   constructor() {
     // "auto" so a paused handover still buffers + honors the queued seek —
     // assigning src already triggers an implicit load().
@@ -95,14 +108,25 @@ export class LocalPlayer {
     this.el.addEventListener("ended", () => this.onEnded?.());
     this.el.addEventListener("play", () => this.onChange?.());
     this.el.addEventListener("pause", () => this.onChange?.());
+    this.el.addEventListener("timeupdate", () => {
+      if (this.cropEndMs !== undefined && this.current && !this.endFired
+          && this.el.currentTime * 1000 >= this.cropEndMs) {
+        this.endFired = true;
+        this.onEnded?.();
+      }
+    });
   }
 
   /** Exposed for the Web Audio analyser tap (BeatFeed) — read-only use. */
   get element(): HTMLAudioElement { return this.el; }
 
   get playing() { return !!this.current && !this.el.paused; }
-  get posMs() { return this.el.currentTime * 1000; }
-  get durMs() { return Number.isFinite(this.el.duration) ? this.el.duration * 1000 : 0; }
+  get posMs() { return Math.max(0, this.el.currentTime * 1000 - this.cropStartMs); }
+  get durMs() {
+    const raw = Number.isFinite(this.el.duration) ? this.el.duration * 1000 : 0;
+    if (!raw) return 0;
+    return Math.max(0, Math.min(this.cropEndMs ?? raw, raw) - this.cropStartMs);
+  }
   get rateX1000() { return Math.round(this.el.playbackRate * 1000); }
 
   /** Handover-capable entry point — twin of play(_:at:startPaused:).
@@ -110,14 +134,19 @@ export class LocalPlayer {
    *  discard the queued pre-metadata seek, so paused handovers landed at 0:00. */
   play(t: LocalTrack, atMs = 0, startPaused = false) {
     this.current = t;
+    this.endFired = false;
     this.el.src = pathToFileURL(t.path).href;  // implicit load()
-    this.el.currentTime = atMs / 1000;         // Chromium queues the seek pre-metadata
+    this.el.currentTime = (atMs + this.cropStartMs) / 1000;  // crop-relative → absolute
     if (!startPaused) void this.el.play().catch(e => console.log("[player] play failed:", e));
     this.onChange?.();
   }
 
   resume() { if (this.current) void this.el.play().catch(() => {}); }
   pause() { this.el.pause(); }
-  seekMs(ms: number) { this.el.currentTime = ms / 1000; this.onChange?.(); }
+  seekMs(ms: number) {
+    this.el.currentTime = (ms + this.cropStartMs) / 1000;
+    this.endFired = false;
+    this.onChange?.();
+  }
   stop() { this.el.pause(); this.el.removeAttribute("src"); this.current = undefined; this.onChange?.(); }
 }
