@@ -122,12 +122,13 @@ struct ContentView: View {
                         .padding(.bottom, 8)
                 }
                 
-                if audioPlayer.currentTrack != nil {
+                if audioPlayer.currentTrack != nil || syncManager.engine.isRemoteControlled {
                     // Slim "next song" bar nested above the mini player. Renders
                     // nothing when there's no next track, so the mini bar sits
                     // alone in that case.
                     UpNextMiniBar(audioPlayer: audioPlayer, downloadManager: downloadManager)
-                    MiniPlayerBar(audioPlayer: audioPlayer, downloadManager: downloadManager, showNowPlaying: $showNowPlaying)
+                    MiniPlayerBar(audioPlayer: audioPlayer, downloadManager: downloadManager,
+                                  syncManager: syncManager, showNowPlaying: $showNowPlaying)
                 }
             }
             .padding(.bottom, 49)
@@ -444,6 +445,7 @@ struct UpNextMiniBar: View {
 struct MiniPlayerBar: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @ObservedObject var downloadManager: DownloadManager
+    @ObservedObject var syncManager: SyncSessionManager
     @Binding var showNowPlaying: Bool
     @State private var backgroundImage: UIImage?
     // Resolved once per track change (see refreshThumbnailPath()) instead of
@@ -457,11 +459,34 @@ struct MiniPlayerBar: View {
         return CGFloat(min(max(audioPlayer.currentTime / audioPlayer.duration, 0), 1))
     }
 
+    private var isRemote: Bool { syncManager.engine.isRemoteControlled }
+    private var remotePB: PlaybackState? { syncManager.engine.mirror }
+    /// Local track when playing here; resolved remote track when following.
+    private var activeTrack: Track? {
+        isRemote ? syncManager.engine.mirrorTrack : audioPlayer.currentTrack
+    }
+    private var displayName: String {
+        isRemote ? (remotePB?.track?.name ?? "Unknown")
+                 : (audioPlayer.currentTrack?.name ?? "Unknown")
+    }
+    private var displayFolder: String {
+        isRemote ? (remotePB?.track?.folder ?? "")
+                 : (audioPlayer.currentTrack?.folderName ?? "")
+    }
+    private var displayIsPlaying: Bool {
+        isRemote ? (remotePB?.isPlaying ?? false) : audioPlayer.isPlaying
+    }
+    private func remoteProgress(atMs now: Int) -> CGFloat {
+        guard let pb = remotePB, pb.durationMs > 0 else { return 0 }
+        let pos = Double(pb.positionMs(atServerMs: now))
+        return CGFloat(min(max(pos / Double(pb.durationMs), 0), 1))
+    }
+
     /// Resolve artwork the same way the lists do — through the Download
     /// record's stored thumbnail path — instead of guessing the filename
     /// from the audio URL. Falls back to the audio-derived path.
     private func refreshThumbnailPath() {
-        guard let track = audioPlayer.currentTrack else { cachedThumbnailPath = nil; return }
+        guard let track = activeTrack else { cachedThumbnailPath = nil; return }
         if let stored = downloadManager.getDownload(byID: track.id)?.resolvedThumbnailPath,
            FileManager.default.fileExists(atPath: stored) {
             cachedThumbnailPath = stored
@@ -502,21 +527,28 @@ struct MiniPlayerBar: View {
                     // thumbnail keeps the same SwiftUI identity across songs and
                     // the previous track's async-loaded image lingers one song
                     // behind. Re-key on the track id to force a fresh load.
-                    .id(audioPlayer.currentTrack?.id)
+                    .id(activeTrack?.id ?? remotePB?.track?.id)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(audioPlayer.currentTrack?.name ?? "Unknown")
+                        Text(displayName)
                             .font(Theme.body(15, weight: .semibold))
                             .lineLimit(1)
                             .foregroundColor(Theme.bone)
                             .shadow(color: .black.opacity(0.3), radius: 2)
-                        
-                        Text((audioPlayer.currentTrack?.folderName ?? "").uppercased())
-                            .font(Theme.eyebrowFont)
-                            .tracking(1.2)
-                            .foregroundColor(Theme.bone.opacity(0.7))
-                            .lineLimit(1)
-                            .shadow(color: .black.opacity(0.3), radius: 2)
+
+                        HStack(spacing: 5) {
+                            if isRemote {
+                                Image(systemName: "laptopcomputer.and.iphone")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(Theme.redLight.opacity(0.9))
+                            }
+                            Text(displayFolder.uppercased())
+                                .font(Theme.eyebrowFont)
+                                .tracking(1.2)
+                                .foregroundColor(Theme.bone.opacity(0.7))
+                                .lineLimit(1)
+                                .shadow(color: .black.opacity(0.3), radius: 2)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -529,22 +561,26 @@ struct MiniPlayerBar: View {
                 Spacer()
                 
                 Button {
-                    if audioPlayer.isPlaying {
+                    if isRemote {
+                        if displayIsPlaying { syncManager.engine.requestPause() }
+                        else { syncManager.engine.requestPlay() }
+                    } else if audioPlayer.isPlaying {
                         audioPlayer.pause()
                     } else {
                         audioPlayer.resume()
                     }
                 } label: {
-                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                    Image(systemName: displayIsPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 20, weight: .bold))
                         .foregroundColor(Theme.bone)
                         .frame(width: 36, height: 36)
                         .shadow(color: .black.opacity(0.3), radius: 2)
                 }
                 .buttonStyle(.plain)
-                
+
                 Button {
-                    audioPlayer.next()
+                    if isRemote { syncManager.engine.requestNext() }
+                    else { audioPlayer.next() }
                 } label: {
                     Image(systemName: "forward.fill")
                         .font(.system(size: 17, weight: .bold))
@@ -559,13 +595,15 @@ struct MiniPlayerBar: View {
         .frame(height: 58)
         // Live progress hairline along the bottom edge
         .overlay(alignment: .bottomLeading) {
-            GeometryReader { geo in
-                Capsule()
-                    .fill(Theme.emberGradient)
-                    .frame(width: max(geo.size.width * progress, 0), height: 2.5)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
+            if isRemote {
+                // No local player ticks while following — extrapolate from the
+                // mirror on a visible-only 0.5 s timeline.
+                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                    progressHairline(remoteProgress(atMs: ServerClock.shared.nowMs))
+                }
+            } else {
+                progressHairline(progress)
             }
-            .allowsHitTesting(false)
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -575,7 +613,7 @@ struct MiniPlayerBar: View {
         .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
         .padding(.horizontal, 12)
         .padding(.bottom, 7)
-        .onChange(of: audioPlayer.currentTrack?.id) { _ in
+        .onChange(of: activeTrack?.id) { _ in
             refreshThumbnailPath()
             updateBackgroundImage()
         }
@@ -585,12 +623,22 @@ struct MiniPlayerBar: View {
         }
     }
 
+    private func progressHairline(_ p: CGFloat) -> some View {
+        GeometryReader { geo in
+            Capsule()
+                .fill(Theme.emberGradient)
+                .frame(width: max(geo.size.width * p, 0), height: 2.5)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+        }
+        .allowsHitTesting(false)
+    }
+
     private func updateBackgroundImage() {
-        guard let track = audioPlayer.currentTrack else {
+        guard let track = activeTrack else {
             backgroundImage = nil
             return
         }
-        
+
         let audioURL = track.url
         let path = cachedThumbnailPath
         // Disk read + crop off the main thread so swapping tracks never
@@ -607,7 +655,7 @@ struct MiniPlayerBar: View {
             PerformanceMonitor.shared.end("NowPlayingView_UpdateBackground")
             DispatchQueue.main.async {
                 // Only apply if we're still on the same track
-                if self.audioPlayer.currentTrack?.url == audioURL {
+                if self.activeTrack?.url == audioURL {
                     self.backgroundImage = cropped
                 }
             }
@@ -821,14 +869,16 @@ struct NowPlayingView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        .alert("Rename Song", isPresented: $showRenameAlert) {
-            TextField("Song name", text: $newTrackName)
-            Button("Cancel", role: .cancel) { }
-            Button("Rename") {
-                if let track = audioPlayer.currentTrack,
-                let download = downloadManager.downloads.first(where: { $0.url == track.url }) {
-                    downloadManager.renameDownload(download, newName: newTrackName)
-                }
+        .themedTextPrompt(
+            "Rename Song",
+            placeholder: "Song name",
+            text: $newTrackName,
+            isPresented: $showRenameAlert,
+            confirmLabel: "Rename"
+        ) {
+            if let track = audioPlayer.currentTrack,
+            let download = downloadManager.downloads.first(where: { $0.url == track.url }) {
+                downloadManager.renameDownload(download, newName: newTrackName)
             }
         }
     }
@@ -1153,7 +1203,11 @@ struct NowPlayingView: View {
                     .foregroundColor(Theme.bone.opacity(0.7))
             }
             
-            Slider(value: sliderBinding, in: 0...max(audioPlayer.duration, 1)) { editing in
+            ThemedSlider(
+                value: sliderBinding,
+                range: 0...max(audioPlayer.duration, 1),
+                tint: Theme.redLight
+            ) { editing in
                 isSeeking = editing
                 if editing {
                     localSeekPosition = audioPlayer.currentTime
@@ -1161,7 +1215,6 @@ struct NowPlayingView: View {
                     audioPlayer.seek(to: localSeekPosition)
                 }
             }
-            .tint(Theme.redLight)
             .disabled(audioPlayer.duration == 0)
             
             HStack {
@@ -1374,7 +1427,7 @@ struct UpNextSheet: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { isPresented = false }
-                        .foregroundColor(Theme.bone)
+                        .buttonStyle(ChipButtonStyle())
                 }
             }
         }
@@ -1737,8 +1790,7 @@ struct AudioSettingsSheet: View {
                             minLabel: "0.5x",
                             maxLabel: "2.0x",
                             slider: AnyView(
-                                Slider(value: speedBinding, in: 0.5...2.0)
-                                    .tint(speedColor)
+                                ThemedSlider(value: speedBinding, range: 0.5...2.0, tint: speedColor)
                             ),
                             onReset: { audioPlayer.playbackSpeed = 1.0 }
                         )
@@ -1753,8 +1805,7 @@ struct AudioSettingsSheet: View {
                             minLabel: "-12",
                             maxLabel: "+12",
                             slider: AnyView(
-                                Slider(value: pitchBinding, in: -12...12)
-                                    .tint(pitchColor)
+                                ThemedSlider(value: pitchBinding, range: -12...12, tint: pitchColor)
                             ),
                             onReset: { audioPlayer.pitchShift = 0 }
                         )
@@ -1769,8 +1820,7 @@ struct AudioSettingsSheet: View {
                             minLabel: "0%",
                             maxLabel: "100%",
                             slider: AnyView(
-                                Slider(value: $audioPlayer.reverbAmount, in: 0...100)
-                                    .tint(reverbColor)
+                                ThemedSlider(value: $audioPlayer.reverbAmount, range: 0...100, tint: reverbColor)
                             ),
                             onReset: { audioPlayer.reverbAmount = 0 }
                         )
@@ -1785,8 +1835,7 @@ struct AudioSettingsSheet: View {
                             minLabel: "-10",
                             maxLabel: "+20",
                             slider: AnyView(
-                                Slider(value: $audioPlayer.bassBoost, in: -10...20)
-                                    .tint(bassColor)
+                                ThemedSlider(value: $audioPlayer.bassBoost, range: -10...20, tint: bassColor)
                             ),
                             onReset: { audioPlayer.bassBoost = 0 }
                         )
@@ -1807,8 +1856,7 @@ struct AudioSettingsSheet: View {
                             audioPlayer.reverbAmount = 0
                             audioPlayer.bassBoost = 0
                         }
-                        .font(Theme.body(15, weight: .semibold))
-                        .foregroundColor(Theme.emberLight)
+                        .buttonStyle(ChipButtonStyle(tint: Theme.emberLight))
                     }
                 }
             }
@@ -1854,8 +1902,7 @@ struct AudioSettingsSheet: View {
                     .foregroundColor(Theme.boneFaint)
                 Spacer()
                 Button("Reset", action: onReset)
-                    .font(Theme.caption(12, weight: .semibold))
-                    .foregroundColor(color)
+                    .buttonStyle(ChipButtonStyle(tint: color))
                 Spacer()
                 Text(maxLabel)
                     .font(Theme.caption(11))
@@ -1877,10 +1924,8 @@ struct DownloadBanner: View {
             VStack(spacing: 8) {
                 ForEach(downloadManager.activeDownloads) { download in
                     HStack(spacing: 12) {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                            .tint(Theme.emberLight)
-                        
+                        EQIndicator(color: Theme.emberLight, scale: 1.15)
+
                         Text("\(download.title)\(String(repeating: ".", count: dotCount))")
                             .font(Theme.body(14, weight: .medium))
                             .foregroundColor(Theme.bone)
