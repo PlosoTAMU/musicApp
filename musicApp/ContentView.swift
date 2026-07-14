@@ -695,23 +695,40 @@ struct NowPlayingView: View {
     // dismiss animates it back down. Offset-only (no SwiftUI .transition).
     @Binding var panelOffset: CGFloat
     
-    private var sliderBinding: Binding<Double> {
-        Binding(
-            get: { isSeeking ? localSeekPosition : audioPlayer.currentTime },
-            set: { newValue in
-                localSeekPosition = newValue
-                if !isSeeking {
-                    audioPlayer.seek(to: newValue)
-                }
-            }
-        )
-    }
 
-    /// Another device currently owns the shared session — this screen shows
-    /// what's playing there but can't control it until you take over.
-    private var isRemoteControlled: Bool {
-        syncManager.coordinator.role == .follower &&
-        !(syncManager.coordinator.remote?.ownerDeviceID.isEmpty ?? true)
+    /// Another device currently owns the shared session — this screen is a
+    /// live remote for it (controls route through the command bus).
+    private var isRemoteControlled: Bool { syncManager.engine.isRemoteControlled }
+
+    private var engine: PlaybackSyncEngine { syncManager.engine }
+    /// Local track normally; resolved remote track in remote mode (nil = ghost).
+    private var displayTrack: Track? {
+        isRemoteControlled ? engine.mirrorTrack : audioPlayer.currentTrack
+    }
+    private var displayName: String {
+        isRemoteControlled ? (engine.mirror?.track?.name ?? "Unknown")
+                           : (audioPlayer.currentTrack?.name ?? "Unknown")
+    }
+    private var displayIsPlaying: Bool {
+        isRemoteControlled ? (engine.mirror?.isPlaying ?? false) : audioPlayer.isPlaying
+    }
+    private var displayDuration: Double {
+        isRemoteControlled ? Double(engine.mirror?.durationMs ?? 0) / 1000.0
+                           : audioPlayer.duration
+    }
+    private func displayPosition(atMs now: Int) -> Double {
+        isRemoteControlled
+            ? Double(engine.mirror?.positionMs(atServerMs: now) ?? 0) / 1000.0
+            : audioPlayer.currentTime
+    }
+    private func togglePlayPause() {
+        if isRemoteControlled {
+            if displayIsPlaying { engine.requestPause() } else { engine.requestPlay() }
+        } else if audioPlayer.isPlaying {
+            audioPlayer.pause()
+        } else {
+            audioPlayer.resume()
+        }
     }
 
     var body: some View {
@@ -743,6 +760,8 @@ struct NowPlayingView: View {
                 VStack(spacing: 0) {
                     topBar
 
+                    if isRemoteControlled { switchHerePill }
+
                     Spacer(minLength: 4)
 
                     thumbnailView
@@ -756,12 +775,6 @@ struct NowPlayingView: View {
                 // More bottom → volume bar rises out of the bottom edge-swipe zone.
                 .padding(.top, 50)
                 .padding(.bottom, 30)
-                .blur(radius: isRemoteControlled ? 18 : 0)
-                .allowsHitTesting(!isRemoteControlled)
-
-                if isRemoteControlled {
-                    remoteLockOverlay
-                }
             }
             // Single source of truth for present, drag, and dismiss motion.
             .offset(y: panelOffset)
@@ -775,7 +788,7 @@ struct NowPlayingView: View {
             refreshThumbnailImage()
             refreshTitleMetrics()
             lockOrientation(.portrait)
-            audioPlayer.startVisualization()
+            if !isRemoteControlled { audioPlayer.startVisualization() }
             // Slide up into place (panel starts off-screen below).
             withAnimation(.easeInOut(duration: 0.3)) { panelOffset = 0 }
         }
@@ -783,7 +796,7 @@ struct NowPlayingView: View {
             unlockOrientation()
             audioPlayer.stopVisualization()
         }
-        .onChange(of: audioPlayer.currentTrack?.id) { _ in
+        .onChange(of: displayTrack?.id) { _ in
             updateBackgroundImage()
             refreshThumbnailImage()
             refreshTitleMetrics()
@@ -828,7 +841,7 @@ struct NowPlayingView: View {
                 }
         )
         .sheet(isPresented: $showPlaylistPicker) {
-            if let track = audioPlayer.currentTrack,
+            if let track = displayTrack,
             let download = downloadManager.getDownload(byID: track.id) {
                 AddToPlaylistSheet(
                     download: download,
@@ -843,7 +856,7 @@ struct NowPlayingView: View {
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showCropSheet) {
-            if let track = audioPlayer.currentTrack {
+            if let track = displayTrack {
                 CropSongSheet(
                     track: track,
                     downloadManager: downloadManager,
@@ -876,7 +889,7 @@ struct NowPlayingView: View {
             isPresented: $showRenameAlert,
             confirmLabel: "Rename"
         ) {
-            if let track = audioPlayer.currentTrack,
+            if let track = displayTrack,
             let download = downloadManager.downloads.first(where: { $0.url == track.url }) {
                 downloadManager.renameDownload(download, newName: newTrackName)
             }
@@ -916,42 +929,6 @@ struct NowPlayingView: View {
     }
 
     @ViewBuilder
-    private var remoteLockOverlay: some View {
-        VStack(spacing: 16) {
-            Text("Playing on your other device")
-                .font(Theme.body(15, weight: .semibold))
-                .foregroundColor(Theme.bone)
-            if let name = syncManager.coordinator.remote?.playback.track?.name {
-                Text(name)
-                    .font(Theme.caption(13))
-                    .foregroundColor(Theme.boneDim)
-                    .lineLimit(1)
-            }
-            Button(switchingHere ? "Switching…" : "Play Here") {
-                switchingHere = true
-                Task {
-                    defer { switchingHere = false }
-                    try? await syncManager.playHere()
-                }
-            }
-            .buttonStyle(PillButtonStyle())
-            .disabled(switchingHere)
-            .frame(maxWidth: 220)
-        }
-        .padding(28)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Theme.smokeRaised)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(Theme.seam, lineWidth: 1)
-                )
-        )
-        .shadow(color: .black.opacity(0.5), radius: 20)
-        .padding(.horizontal, 40)
-    }
-
-    @ViewBuilder
     private var topBar: some View {
         HStack(spacing: 8) {
             Button {
@@ -985,6 +962,7 @@ struct NowPlayingView: View {
                 tint: audioPlayer.isLoopEnabled ? Theme.ink : Theme.bone,
                 filled: audioPlayer.isLoopEnabled
             ))
+            .disabled(isRemoteControlled)
             
             Button {
                 audioPlayer.effectsBypass.toggle()
@@ -1024,19 +1002,47 @@ struct NowPlayingView: View {
         .padding(.horizontal, 16)
         .padding(.top, 6)
     }
-    
+
+    private var ownerReachable: Bool {
+        !(syncManager.coordinator.remote?.leaseExpired ?? false)
+    }
+    /// Remote track exists but can't resolve locally — switching would claim
+    /// the session and play silence, so the pill disables instead.
+    private var mirrorTrackIsGhost: Bool {
+        engine.mirror?.track != nil && engine.mirrorTrack == nil
+    }
+
+    @ViewBuilder
+    private var switchHerePill: some View {
+        VStack(spacing: 8) {
+            Text(mirrorTrackIsGhost ? "Not in this device's library yet"
+                 : ownerReachable ? "Playing on another device"
+                 : "Other device offline")
+                .font(Theme.caption(12))
+                .foregroundColor(Theme.boneDim)
+            Button {
+                switchingHere = true
+                Task {
+                    defer { switchingHere = false }
+                    try? await syncManager.playHere()
+                }
+            } label: {
+                Text(switchingHere ? "Switching…" : "Switch playback to this iPhone")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PillButtonStyle())
+            .disabled(switchingHere || mirrorTrackIsGhost)
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 10)
+    }
+
     @ViewBuilder
     private var thumbnailView: some View {
         PulsingThumbnailView(
             visualizerState: audioPlayer.visualizerState,
             thumbnailImage: cachedNowPlayingThumbnail,
-            onTap: {
-                if audioPlayer.isPlaying {
-                    audioPlayer.pause()
-                } else {
-                    audioPlayer.resume()
-                }
-            }
+            onTap: { togglePlayPause() }
         )
         .overlay(
             // Visualizer glued onto the artwork as an overlay — same layout unit,
@@ -1057,7 +1063,7 @@ struct NowPlayingView: View {
             titleView
             progressBar
             playbackControls
-            volumeBar
+            if !isRemoteControlled { volumeBar }
             upNextStrip
         }
         .padding(.bottom, 12)
@@ -1156,24 +1162,18 @@ struct NowPlayingView: View {
                             .frame(width: geometry.size.width, alignment: .center)
                     }
                 }
-                .onTapGesture {
-                    if audioPlayer.isPlaying {
-                        audioPlayer.pause()
-                    } else {
-                        audioPlayer.resume()
-                    }
-                }
+                .onTapGesture { togglePlayPause() }
                 .onLongPressGesture {
-                    if let track = audioPlayer.currentTrack {
+                    if let track = displayTrack {
                         newTrackName = track.name
                         showRenameAlert = true
                     }
                 }
             }
             .frame(height: 40)
-            
+
             // Crop indicator badge
-            if let track = audioPlayer.currentTrack,
+            if let track = displayTrack,
                track.cropStartTime != nil || track.cropEndTime != nil {
                 HStack(spacing: 4) {
                     Image(systemName: "scissors")
@@ -1194,37 +1194,59 @@ struct NowPlayingView: View {
     
     @ViewBuilder
     private var progressBar: some View {
+        if isRemoteControlled {
+            // Mirror position needs its own tick — no local player updates
+            // arrive while following. Visible-only 0.5 s timeline.
+            TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                progressBarBody(
+                    position: isSeeking ? localSeekPosition
+                                        : displayPosition(atMs: ServerClock.shared.nowMs),
+                    duration: displayDuration,
+                    rate: Double(engine.mirror?.rateX1000 ?? 1000) / 1000.0)
+            }
+        } else {
+            progressBarBody(
+                position: isSeeking ? localSeekPosition : audioPlayer.currentTime,
+                duration: audioPlayer.duration,
+                rate: audioPlayer.effectivePlaybackSpeed)
+        }
+    }
+
+    private func progressBarBody(position: Double, duration: Double, rate: Double) -> some View {
         VStack(spacing: 4) {
             HStack {
                 Spacer()
-                
-                Text("-" + formatTime((audioPlayer.duration - (isSeeking ? localSeekPosition : audioPlayer.currentTime)) / audioPlayer.effectivePlaybackSpeed))
+                Text("-" + formatTime((duration - position) / max(rate, 0.01)))
                     .font(Theme.caption(12).monospacedDigit())
                     .foregroundColor(Theme.bone.opacity(0.7))
             }
-            
+
             ThemedSlider(
-                value: sliderBinding,
-                range: 0...max(audioPlayer.duration, 1),
+                value: Binding(
+                    get: { isSeeking ? localSeekPosition : position },
+                    set: { newValue in
+                        localSeekPosition = newValue
+                        if !isSeeking { commitSeek(to: newValue) }
+                    }
+                ),
+                range: 0...max(duration, 1),
                 tint: Theme.redLight
             ) { editing in
                 isSeeking = editing
                 if editing {
-                    localSeekPosition = audioPlayer.currentTime
+                    localSeekPosition = position
                 } else {
-                    audioPlayer.seek(to: localSeekPosition)
+                    commitSeek(to: localSeekPosition)
                 }
             }
-            .disabled(audioPlayer.duration == 0)
-            
+            .disabled(duration == 0)
+
             HStack {
-                Text(formatTime(isSeeking ? localSeekPosition : audioPlayer.currentTime))
+                Text(formatTime(position))
                     .font(Theme.caption(12).monospacedDigit())
                     .foregroundColor(Theme.bone.opacity(0.7))
-                
                 Spacer()
-                
-                Text(formatTime(audioPlayer.duration))
+                Text(formatTime(duration))
                     .font(Theme.caption(12).monospacedDigit())
                     .foregroundColor(Theme.bone.opacity(0.7))
             }
@@ -1232,32 +1254,58 @@ struct NowPlayingView: View {
         .padding(.horizontal, 32)
         .padding(.top, 12)
     }
+
+    private func commitSeek(to seconds: Double) {
+        if isRemoteControlled {
+            engine.requestSeek(ms: Int(seconds * 1000))
+        } else {
+            audioPlayer.seek(to: seconds)
+        }
+    }
     
     @ViewBuilder
     private var playbackControls: some View {
         HStack(spacing: 14) {
-            Button { audioPlayer.previous() } label: {
+            Button {
+                if isRemoteControlled { engine.requestPrevious() }
+                else { audioPlayer.previous() }
+            } label: {
                 Image(systemName: "backward.fill")
             }
             .buttonStyle(CircleControlButtonStyle(diameter: 46, tint: Theme.bone))
-            
-            RewindButton(audioPlayer: audioPlayer)
-            
+
+            if isRemoteControlled {
+                Button {
+                    let now = ServerClock.shared.nowMs
+                    let pos = engine.mirror?.positionMs(atServerMs: now) ?? 0
+                    engine.requestSeek(ms: max(0, pos - 10_000))
+                } label: { Image(systemName: "gobackward.10") }
+                .buttonStyle(CircleControlButtonStyle(diameter: 46, tint: Theme.bone))
+            } else {
+                RewindButton(audioPlayer: audioPlayer)
+            }
+
             // Primary play/pause — red gradient, glow, press-spring.
-            Button {
-                if audioPlayer.isPlaying {
-                    audioPlayer.pause()
-                } else {
-                    audioPlayer.resume()
-                }
-            } label: {
-                Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+            Button { togglePlayPause() } label: {
+                Image(systemName: displayIsPlaying ? "pause.fill" : "play.fill")
             }
             .buttonStyle(PlayButtonStyle(diameter: 76))
-            
-            FastForwardButton(audioPlayer: audioPlayer)
-            
-            Button { audioPlayer.next() } label: {
+
+            if isRemoteControlled {
+                Button {
+                    let now = ServerClock.shared.nowMs
+                    let pos = engine.mirror?.positionMs(atServerMs: now) ?? 0
+                    engine.requestSeek(ms: pos + 10_000)
+                } label: { Image(systemName: "goforward.10") }
+                .buttonStyle(CircleControlButtonStyle(diameter: 46, tint: Theme.bone))
+            } else {
+                FastForwardButton(audioPlayer: audioPlayer)
+            }
+
+            Button {
+                if isRemoteControlled { engine.requestNext() }
+                else { audioPlayer.next() }
+            } label: {
                 Image(systemName: "forward.fill")
             }
             .buttonStyle(CircleControlButtonStyle(diameter: 46, tint: Theme.bone))
@@ -1283,7 +1331,7 @@ struct NowPlayingView: View {
     }
     
     private func updateBackgroundImage() {
-        guard let track = audioPlayer.currentTrack else {
+        guard let track = displayTrack else {
             backgroundImage = nil
             return
         }
@@ -1296,30 +1344,30 @@ struct NowPlayingView: View {
         DispatchQueue.global(qos: .userInitiated).async {
             let cropped = Artwork.croppedBackground(forAudioFileURL: audioURL, aspect: screenAspect)
             DispatchQueue.main.async {
-                if self.audioPlayer.currentTrack?.url == audioURL {
+                if self.displayTrack?.url == audioURL {
                     self.backgroundImage = cropped
                 }
             }
         }
     }
-    
+
     private func formatTime(_ time: Double) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%d:%02d", minutes, seconds)
     }
-    
+
     /// Resolves and caches the Now Playing thumbnail for the current track.
     /// Called on track change (onAppear/onChange), not from `body` — the path
     /// resolution below never changes for the same track.
     private func refreshThumbnailImage() {
-        cachedNowPlayingThumbnail = getThumbnailImage(for: audioPlayer.currentTrack)
+        cachedNowPlayingThumbnail = getThumbnailImage(for: displayTrack)
     }
 
     /// Re-measures the title text width once per track change instead of on
     /// every playback tick — see cachedTitleText/cachedTitleWidth above.
     private func refreshTitleMetrics() {
-        let text = audioPlayer.currentTrack?.name ?? "Unknown"
+        let text = displayName
         cachedTitleText = text
         cachedTitleWidth = text.widthOfString(usingFont: Theme.roundedUIFont(size: 28, weight: .heavy))
     }
