@@ -39,3 +39,45 @@ Single device (offline preview + a music folder with a few YouTube-sourced track
 - [ ] **Duplicate guard**: paste a YouTube link for a track already in the library → status says "Already downloaded: <name>", no second download.
 - [ ] **Failed downloads**: paste a bad/broken link → a red "1 download failed" panel appears with the error; the ✕ dismisses it.
 - [ ] Menus/popovers/modals close on click-away (mousedown outside) and Esc (modal).
+
+---
+
+## Phase 3 — Queue & playlist parity
+
+Single device (offline preview + a few tracks and ≥1 playlist):
+
+Queue:
+- [ ] **Drag to reorder** an Up-Next row onto another → order changes and holds. Drag a row onto the one *directly below* it → nothing happens (no-op), it does **not** jump to the bottom.
+- [ ] Drag a row to the **top** → it becomes next. The ✕ still removes a row.
+- [ ] **Clear** button shows only when the queue is non-empty; clicking it empties Up Next.
+- [ ] Single-click a resolvable queued row → it plays and leaves the queue. A ghost ("not here yet") row does not play on click.
+- [ ] Empty-queue hint reads "Queue is empty — hover a library song and press ＋, or drag songs in".
+
+Playlists (card list):
+- [ ] Each playlist card shows a **cover thumb** (first track's art), the track **count**, a ▶ Play-all, a 🔀 Shuffle-all, and a **⋯** menu. **Right-click** a card opens the same menu (Open / Play all / Shuffle all / Rename… / Delete).
+- [ ] **Shuffle all** plays the playlist in a randomized order (run twice → different order); **Play all** uses saved order.
+- [ ] Single-click a card → it **opens**.
+
+Playlists (open detail):
+- [ ] Header shows **count · total duration** (duration fills in from "…" after a moment); ← back, ▶ Play all, 🔀 Shuffle, ✎ Rename, 🗑 Delete controls.
+- [ ] **Rename** (✎ or menu) → text modal → name updates (and reaches the phone with a real secret).
+- [ ] **Drag to reorder** tracks in the open playlist → order persists (survives closing/reopening the playlist and, with a secret, a reload).
+- [ ] **Delete** (🗑 or menu) → a **confirm** dialog appears first; Cancel keeps it, Delete tombstones it and returns to the card list.
+
+Add-to-playlist (works from anywhere, not just the open list):
+- [ ] Library row **⋯ → Add to playlist…** → picker lists every playlist + **New playlist…**; choosing one adds the track (toast); "New playlist…" prompts for a name and creates it already holding the track.
+- [ ] Now-playing rail **＋ (add-to-playlist)** → same picker for the current track, with nothing/any playlist open.
+- [ ] After a **download completes**, the add-to-playlist picker auto-opens for the fresh track (when ≥1 playlist exists).
+
+Playlist mode (wrap):
+- [ ] **Play all** a playlist, let it run to the last track → it **wraps** to the top and keeps playing (does not stop at the end).
+- [ ] Directly single-click a **library** track while a playlist is playing → playback switches and playlist-wrap stops (a plain single-track play exits playlist mode).
+- [ ] **Clear** the queue → wrap stops (next end-of-track stops instead of looping).
+
+> ⚠️ Known gap (item 16, deferred): manually **queued** songs are appended after the
+> playlist remainder rather than interleaved to play *next*, and Up Next is one flat
+> list (no "Up Next from Playlist" split). See NOTES → OPEN. Not covered by this pass.
+
+Two devices (real secret):
+- [ ] Reorder / clear the queue on desktop → the phone's queue reflects it (and vice-versa).
+- [ ] Rename / reorder / delete a playlist on desktop → the phone reflects it.

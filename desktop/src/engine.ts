@@ -2,7 +2,7 @@
 // class, so owner publishes are explicit and loop-free by construction.
 import { Firestore } from "firebase/firestore";
 import { SessionCoordinator } from "./coordinator";
-import { QueueSync } from "./queueSync";
+import { QueueSync, rebase } from "./queueSync";
 import { CommandBus, Command } from "./commandBus";
 import { LocalPlayer, LocalTrack, scanLibrary, resolve, toRef } from "./player";
 import {
@@ -32,6 +32,13 @@ export class SyncEngine {
     this.history.push(t);
     if (this.history.length > SyncEngine.HISTORY_MAX) this.history.shift();
   }
+
+  // Playlist wrap — twin of iOS isPlaylistMode. Armed by playAll(), so a played
+  // playlist keeps going and wraps to the top when the queue drains. Owner-local
+  // (not synced): the wrap just re-fills the shared queue, which followers see.
+  // Cleared by a direct single-track play (playLocal) or clearQueue — exiting
+  // "playlist mode" the same way iOS play(_:) does.
+  private playlistLoop: LocalTrack[] | null = null;
 
   /** Injected by ui.ts — maps a yt id to the current crop window. */
   cropLookup: (yt?: string) => { startMs?: number; endMs?: number } = () => ({});
@@ -160,6 +167,20 @@ export class SyncEngine {
         return;
       }
     }
+    // Queue drained. In playlist mode, wrap to the top instead of stopping —
+    // twin of iOS next()'s currentIndex = (i+1) % count.
+    if (this.playlistLoop && this.playlistLoop.length) {
+      const list = this.playlistLoop;
+      this.pushHistory(this.player.current);
+      this.applyCrop(list[0]);
+      this.player.play(list[0]);
+      const refs = list.slice(1).map(toRef);
+      if (this.coord.demo) this.demoQueue(() => refs);
+      else void this.queueSync.apply({ kind: "replaceAll", queue: refs },
+        this.coord.remote?.queueVersion ?? 0);
+      this.publish();
+      return;
+    }
     this.player.stop();
     this.publish();
   }
@@ -195,8 +216,10 @@ export class SyncEngine {
 
   // ── Local library playback: implicit takeover ──────────────────────────
 
-  /** Click a library track → this device becomes the owner and plays it. */
+  /** Click a library track → this device becomes the owner and plays it.
+   *  A direct single-track play exits playlist wrap, matching iOS play(_:). */
   async playLocal(t: LocalTrack) {
+    this.playlistLoop = null;
     if (this.coord.role !== "owner") {
       await this.coord.takeOver();
       this.becomeCommandTarget();
@@ -206,13 +229,24 @@ export class SyncEngine {
     this.publish();
   }
 
-  /** Play a whole list: first track now, rest replace the shared queue. */
+  /** Play a whole list: first track now, rest replace the shared queue. Arms
+   *  playlist wrap so playback continues past the queue and loops to the top. */
   async playAll(ts: LocalTrack[]) {
     if (!ts.length) return;
-    await this.playLocal(ts[0]);
+    await this.playLocal(ts[0]);   // clears playlistLoop…
+    this.playlistLoop = ts;        // …then arm it with the full set
     const refs = ts.slice(1).map(toRef);
     if (this.coord.demo) { this.demoQueue(() => refs); return; }
     void this.queueSync.apply({ kind: "replaceAll", queue: refs },
+      this.coord.remote?.queueVersion ?? 0);
+  }
+
+  /** Clear the shared queue and exit playlist wrap — twin of
+   *  clearQueueAndExitPlaylist(). Owner-only (queue is session-shared). */
+  clearQueue() {
+    this.playlistLoop = null;
+    if (this.coord.demo) { this.demoQueue(() => []); return; }
+    void this.queueSync.apply({ kind: "replaceAll", queue: [] },
       this.coord.remote?.queueVersion ?? 0);
   }
 
@@ -230,6 +264,16 @@ export class SyncEngine {
     if (this.coord.demo) { this.demoQueue(q => q.filter(r => r.id !== id)); return; }
     void this.queueSync.apply(
       { kind: "remove", id }, this.coord.remote?.queueVersion ?? 0);
+  }
+
+  /** Drag-to-reorder: place `id` after `afterId` (null = front). */
+  queueMove(id: string, afterId: string | null) {
+    if (this.coord.demo) {
+      this.demoQueue(q => rebase({ kind: "move", id, afterId }, q) ?? q);
+      return;
+    }
+    void this.queueSync.apply(
+      { kind: "move", id, afterId }, this.coord.remote?.queueVersion ?? 0);
   }
 
   // ── Handover ────────────────────────────────────────────────────────────
