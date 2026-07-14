@@ -111,3 +111,30 @@ Two devices (real secret; phone nearby):
 - [ ] Set bass **+18** on the phone → desktop applies +18 (old 0..12 clamp is gone). Set −10 on desktop → phone shows −10.
 - [ ] Change tracks on desktop while the phone follows → desktop's restored per-track speed/bass/reverb reach the phone; **pitch never appears on iOS** (local-only).
 - [ ] Apply a crop on desktop → the phone's copy of the track picks up the same crop (doc round-trip); Reset+Apply clears it on both; the ✂ badge tracks both ways.
+
+---
+
+## Phase 5 — Downloads & discoverability polish
+
+Downloads:
+- [ ] Paste a **bare YouTube playlist link** (`youtube.com/playlist?list=…`) → every track downloads; status shows "Track N/M — pct%"; files land tagged `[ytid]` and sync up.
+- [ ] Paste a **watch?v=…&list=…** link (specific video inside a playlist) → only that one video downloads (single-track default kept).
+- [ ] Paste a **bare Spotify playlist/album link** → clear error pointing at YouTube playlist links (no garbage single download).
+- [ ] Single-track YouTube + Spotify track links still download as before.
+
+Lyrics:
+- [ ] Open lyrics on a track with none found → "No lyrics found" now has a **Try Again** pill; clicking refetches (watch the Loading… flash). Same on "Instrumental track".
+
+Library & statusline:
+- [ ] Library is sorted **case-insensitively by name** (was folder-walk order).
+- [ ] With >500 tracks (or a broad search), the list ends with "**Showing 500 of N — search to narrow**".
+- [ ] Two tracks with the **same title**: only the one actually playing is highlighted (id match, not name).
+- [ ] Statusline shows "Disk renames / moves / deletes sync too" with a tooltip explaining the watched folder.
+
+Keyboard & chrome:
+- [ ] **/** (or Ctrl+F) focuses search; **Esc** blurs it. **Esc** closes context menus/popovers, the delete-confirm modal, and the crop sheet (but not while typing in a chip field).
+- [ ] Statusline hints list Space/←→/L//" "/Esc/F11 + "media keys".
+- [ ] **Fx button**: lit when effects active; **slashed** with tooltip "Effects bypassed — click to re-enable" after clicking it.
+- [ ] **Role chip** tooltip: hover "Playing Here" / "Remote" / "Offline Preview" → sensible explanation each.
+- [ ] Play a track with a **very long name** → the title scrolls gently back and forth; short names don't move.
+- [ ] **Retake `shot-*.png`** screenshots once everything above passes (setup, pairing, session, main — plus the new fx/crop UI if you like).
