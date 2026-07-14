@@ -5,6 +5,7 @@
 import { ipcRenderer } from "electron";
 import { pathToFileURL } from "url";
 import * as fs from "fs";
+import * as path from "path";
 import { db, bootstrapAuth } from "./firebase";
 import { SessionCoordinator } from "./coordinator";
 import { SyncEngine } from "./engine";
@@ -17,6 +18,7 @@ import { BeatFeed, BeatOutput } from "./beat";
 import { downloadTrack } from "./download";
 import { PlaylistSync, CloudPlaylist } from "./playlists";
 import { SettingsSync } from "./settingsSync";
+import { extractYtId } from "./urls";
 
 const coord = new SessionCoordinator(db);
 const engine = new SyncEngine(db, coord);
@@ -279,6 +281,7 @@ function wire() {
   ($("dl-input") as HTMLInputElement).onkeydown = e => {
     if (e.key === "Enter") void startDownload();
   };
+  $("failed-clear").onclick = () => { failed.length = 0; renderFailed(); };
 
   // Bluetooth handoff banner (popup path)
   $("handoff-play").onclick = () => {
@@ -391,6 +394,12 @@ async function startDownload() {
   const url = input.value.trim();
   if (!url) return;
   if (!musicDir) { status.textContent = "Choose a music folder first"; return; }
+  // Duplicate guard (YouTube only — Spotify's yt id isn't known until it resolves).
+  const yt = extractYtId(url);
+  if (yt) {
+    const dup = engine.library.find(t => t.yt === yt);
+    if (dup) { status.textContent = `Already downloaded: ${dup.name}`; return; }
+  }
   input.value = "";
   try {
     status.textContent = "Starting…";
@@ -403,7 +412,9 @@ async function startDownload() {
       if (status.textContent === "Done ✓") status.textContent = "";
     }, 4000);
   } catch (e) {
-    status.textContent = e instanceof Error ? e.message : String(e);
+    const msg = e instanceof Error ? e.message : String(e);
+    pushFailed("Download", msg);
+    status.textContent = msg;
   }
 }
 
@@ -814,6 +825,187 @@ const thumbEl = (yt?: string): HTMLImageElement => {
   return img;
 };
 
+// ── Library management (rename / delete / info / redownload) ────────────────
+// FS edits that the replicator then reconciles to the cloud — same shape as
+// startDownload. Twins of the iOS row context menu + trash-with-undo.
+
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+
+/** Illegal-char lens matching the replicator's sanitize — names round-trip. */
+const sanitizeName = (s: string) => s.replace(/[<>:"/\\|?*]/g, "_").trim();
+
+// Popover / menu (single instance; click-away closes).
+let openPop: HTMLElement | null = null;
+function closePop() {
+  openPop?.remove(); openPop = null;
+  document.removeEventListener("mousedown", onPopAway, true);
+}
+function onPopAway(e: MouseEvent) {
+  if (openPop && !openPop.contains(e.target as Node)) closePop();
+}
+function placePop(el: HTMLElement, x: number, y: number) {
+  el.style.left = "0"; el.style.top = "0";
+  document.body.appendChild(el);
+  const r = el.getBoundingClientRect();
+  el.style.left = `${Math.max(8, Math.min(x, window.innerWidth - r.width - 8))}px`;
+  el.style.top = `${Math.max(8, Math.min(y, window.innerHeight - r.height - 8))}px`;
+  openPop = el;
+  setTimeout(() => document.addEventListener("mousedown", onPopAway, true), 0);
+}
+
+type MenuItem = { label: string; danger?: boolean; onClick: () => void } | "sep";
+function showMenu(x: number, y: number, items: MenuItem[]) {
+  closePop();
+  const m = document.createElement("div");
+  m.className = "ctx-menu";
+  for (const it of items) {
+    if (it === "sep") { const s = document.createElement("div"); s.className = "sep"; m.appendChild(s); continue; }
+    const b = document.createElement("button");
+    if (it.danger) b.className = "danger";
+    b.textContent = it.label;
+    b.onclick = () => { closePop(); it.onClick(); };
+    m.appendChild(b);
+  }
+  placePop(m, x, y);
+}
+
+/** Song-info popover — twin of iOS SongInfoSheet. */
+function showInfoPop(x: number, y: number, t: LocalTrack) {
+  closePop();
+  const crop = t.yt ? replicator.cropFor(t.yt) : {};
+  const rows: [string, string][] = [
+    ["Title", t.name],
+    ["Source", t.yt ? "YouTube" : "Local file"],
+    ["Folder", t.folder || "—"],
+    ["Video ID", t.yt ?? "—"],
+    ["File", path.basename(t.path)],
+    ["Path", t.path],
+  ];
+  if (crop.startMs != null || crop.endMs != null)
+    rows.push(["Crop", `${((crop.startMs ?? 0) / 1000).toFixed(2)}s – ${
+      crop.endMs != null ? (crop.endMs / 1000).toFixed(2) + "s" : "end"}`]);
+  const pop = document.createElement("div");
+  pop.className = "info-pop";
+  pop.innerHTML = `<h4>Song info</h4><dl>${
+    rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join("")}</dl>`;
+  placePop(pop, x, y);
+}
+
+/** Text-input modal — Electron has no window.prompt(). Reused for playlists. */
+function showPrompt(title: string, initial: string, onOk: (v: string) => void) {
+  closePop();
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal-card"><h4>${escapeHtml(title)}</h4>` +
+    `<input class="modal-input" type="text" /><div class="modal-actions">` +
+    `<button class="link modal-cancel">Cancel</button>` +
+    `<button class="pill modal-ok">OK</button></div></div>`;
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector(".modal-input") as HTMLInputElement;
+  input.value = initial; input.focus(); input.select();
+  const close = () => overlay.remove();
+  const ok = () => { const v = input.value.trim(); close(); if (v) onOk(v); };
+  (overlay.querySelector(".modal-ok") as HTMLButtonElement).onclick = ok;
+  (overlay.querySelector(".modal-cancel") as HTMLButtonElement).onclick = close;
+  overlay.onmousedown = e => { if (e.target === overlay) close(); };
+  input.onkeydown = e => {
+    if (e.key === "Enter") ok();
+    if (e.key === "Escape") close();
+  };
+}
+
+const pendingDeletes = new Map<string, ReturnType<typeof setTimeout>>();
+
+function renameTrack(t: LocalTrack, raw: string) {
+  if (!musicDir) return;
+  const clean = sanitizeName(raw);
+  if (!clean || clean === t.name) return;
+  const dir = path.dirname(t.path), ext = path.extname(t.path);
+  const tag = t.yt ? ` [${t.yt}]` : "";
+  const target = path.join(dir, `${clean}${tag}${ext}`);
+  if (fs.existsSync(target)) { showHint("A file with that name already exists"); return; }
+  try { fs.renameSync(t.path, target); }
+  catch { showHint("Rename failed (file may be in use)"); return; }
+  engine.loadLibrary(musicDir); renderLibrary(); replicator.syncUp();
+}
+
+function deleteTrack(t: LocalTrack) {
+  if (pendingDeletes.has(t.id)) return;
+  pendingDeletes.set(t.id, setTimeout(() => commitDelete(t), 5000));
+  renderLibrary();
+}
+function undoDelete(id: string) {
+  const timer = pendingDeletes.get(id);
+  if (timer) clearTimeout(timer);
+  pendingDeletes.delete(id);
+  renderLibrary();
+}
+function commitDelete(t: LocalTrack) {
+  pendingDeletes.delete(t.id);
+  if (!musicDir) return;
+  try { if (fs.existsSync(t.path)) fs.unlinkSync(t.path); }
+  catch { showHint("Delete failed (file may be in use)"); renderLibrary(); return; }
+  if (engine.player.current?.id === t.id) { engine.player.stop(); engine.publish(); }
+  engine.loadLibrary(musicDir); renderLibrary();
+  replicator.syncUp(); // reconcile tombstones the cloud doc (local gone + shadow)
+}
+
+async function redownloadTrack(t: LocalTrack) {
+  if (!t.yt || !musicDir) { showHint("Can't redownload a local-only file"); return; }
+  const status = $("dl-status");
+  try {
+    status.textContent = `Redownloading “${t.name}”…`;
+    await downloadTrack(`https://www.youtube.com/watch?v=${t.yt}`, musicDir,
+      p => { status.textContent = `${t.name} — ${p.label}`; });
+    status.textContent = "Done ✓";
+    engine.loadLibrary(musicDir); renderLibrary(); replicator.syncUp();
+    setTimeout(() => { if (status.textContent === "Done ✓") status.textContent = ""; }, 4000);
+  } catch (e) {
+    pushFailed(t.name, e instanceof Error ? e.message : String(e));
+    status.textContent = "";
+  }
+}
+
+let lastMenuXY = { x: 0, y: 0 };
+/** Row action menu for a library track (twin of the iOS row context menu). */
+function trackMenu(x: number, y: number, t: LocalTrack) {
+  lastMenuXY = { x, y };
+  const items: MenuItem[] = [
+    { label: "Play", onClick: () => run(() => engine.playLocal(t)) },
+    { label: "Add to queue", onClick: () => engine.queueLocal(t) },
+    "sep",
+    { label: "Rename…", onClick: () => showPrompt("Rename song", t.name, v => renameTrack(t, v)) },
+    { label: "Song info", onClick: () => showInfoPop(lastMenuXY.x, lastMenuXY.y, t) },
+  ];
+  if (t.yt) items.push({ label: "Redownload", onClick: () => void redownloadTrack(t) });
+  items.push("sep", { label: "Delete", danger: true, onClick: () => deleteTrack(t) });
+  showMenu(x, y, items);
+}
+
+// Failed downloads (manual + redownload + replicator) — twin of FailedDownloadsBanner.
+const failed: { name: string; error: string }[] = [];
+function pushFailed(name: string, error: string) {
+  failed.unshift({ name, error });
+  if (failed.length > 20) failed.pop();
+  renderFailed();
+}
+function renderFailed() {
+  const panel = $("failed-panel");
+  panel.hidden = failed.length === 0;
+  if (!failed.length) return;
+  $("failed-title").textContent =
+    `${failed.length} download${failed.length === 1 ? "" : "s"} failed`;
+  const body = $("failed-body");
+  body.innerHTML = "";
+  for (const f of failed) {
+    const d = document.createElement("div");
+    d.className = "fp-item";
+    d.innerHTML = `<b>${escapeHtml(f.name)}</b> — ${escapeHtml(f.error)}`;
+    body.appendChild(d);
+  }
+}
+
 async function createPlaylist() {
   const input = $("pl-new-input") as HTMLInputElement;
   const name = input.value.trim();
@@ -944,8 +1136,22 @@ function renderLibrary() {
   const playingName = coord.remote?.playback.track?.name;
   for (const t of rows) {
     const li = document.createElement("li");
+
+    // Delete-in-progress row: muted, with an Undo (5 s window). Twin of iOS
+    // "Tap to undo (5s)".
+    if (pendingDeletes.has(t.id)) {
+      li.className = "deleting";
+      li.appendChild(thumbEl(t.yt));
+      li.appendChild(titleSpan(t.name));
+      li.appendChild(chipSpan("deleting…"));
+      li.appendChild(rowBtn("Undo", "Undo delete", () => undoDelete(t.id)));
+      listEl.appendChild(li);
+      continue;
+    }
+
     if (playingName && norm(playingName) === norm(t.name)) li.className = "playing";
     li.onclick = rowClick(() => run(() => engine.playLocal(t)));
+    li.oncontextmenu = e => { e.preventDefault(); trackMenu(e.clientX, e.clientY, t); };
 
     li.appendChild(thumbEl(t.yt));
 
@@ -974,6 +1180,12 @@ function renderLibrary() {
           t.yt ? { id: t.id, name: t.name, yt: t.yt } : { id: t.id, name: t.name });
       }));
     }
+
+    // ⋯ = rename / info / redownload / delete (also on right-click).
+    const moreBtn = document.createElement("button");
+    moreBtn.className = "row-btn"; moreBtn.textContent = "⋯"; moreBtn.title = "More actions";
+    moreBtn.onclick = () => { const r = moreBtn.getBoundingClientRect(); trackMenu(r.right, r.bottom, t); };
+    li.appendChild(moreBtn);
 
     listEl.appendChild(li);
   }

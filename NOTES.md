@@ -33,6 +33,7 @@ audit findings (see `docs/arpi/desktop-parity-findings.md`), strict priority ord
 - Branch + this NOTES.md.
 - Build baseline green (tsc --noEmit + esbuild bundle) @ 9658ab8; verification constraint recorded @ 2896674.
 - **Phase 1** (playback control parity): prev-track history (engine.ts), single-click play (ui.ts rowClick), full remote control (index.html + ui.ts, unblur + banner), on-screen seek ±10s. Gate: tsc+bundle green; `rebase` logic 11/11 PASS. Smoke checklist in smoke-test.md.
+- **Phase 2** (library management): rename/delete(5s undo)/song-info/redownload via a reusable context menu (right-click + ⋯), duplicate detection, failed-downloads panel, text-input modal (Electron has no window.prompt). New pure `urls.ts` (extractYtId + isBarePlaylistURL). FS edits reconcile to cloud like startDownload. Gate: tsc+bundle green; urls logic 14/14 PASS.
 
 ## OPEN  (unanswered / deferred / known issues)
 - Pitch-shift library choice (vendored soundtouch-js vs. hand-rolled) — decide at P4 start.

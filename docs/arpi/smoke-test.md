@@ -25,3 +25,17 @@ Two devices (real secret; phone owns playback):
 - [ ] Desktop ⏯ / ⏭ / ⏮ / seek buttons and the progress slider **control the phone** (phone reacts within ~1–2s; desktop shows optimistic change immediately).
 - [ ] Desktop progress bar mirrors the phone's position and the play/pause icon matches the phone's state.
 - [ ] Click **Play Here** → desktop takes over playback at the live position (phone stops owning).
+
+---
+
+## Phase 2 — Library management parity
+
+Single device (offline preview + a music folder with a few YouTube-sourced tracks):
+- [ ] **Right-click** a library row → context menu (Play / Add to queue / Rename… / Song info / Redownload / Delete). The **⋯** button on hover opens the same menu.
+- [ ] **Rename…** → a text modal opens pre-filled; enter a new name → the file on disk is renamed (still tagged `[ytid]`) and the row updates. (With a real secret, the new name reaches the phone.)
+- [ ] **Song info** → popover shows title, source, folder, video id, filename, full path (and crop if set). Text is selectable.
+- [ ] **Redownload** (only on yt tracks) → re-fetches via yt-dlp; status shows progress; row refreshes.
+- [ ] **Delete** → row goes muted/strikethrough with an **Undo** for 5s. Clicking Undo cancels. Letting it lapse deletes the file (and, with a secret, tombstones it on the phone). Deleting the currently-playing track stops playback.
+- [ ] **Duplicate guard**: paste a YouTube link for a track already in the library → status says "Already downloaded: <name>", no second download.
+- [ ] **Failed downloads**: paste a bad/broken link → a red "1 download failed" panel appears with the error; the ✕ dismisses it.
+- [ ] Menus/popovers/modals close on click-away (mousedown outside) and Esc (modal).

@@ -347,6 +347,56 @@
     #dl-status { font-size: 12px; color: var(--rose); white-space: nowrap;
                  overflow: hidden; text-overflow: ellipsis; }
 
+    /* ── Context menu (right-click or ⋯ on a row) ───────────────────────── */
+    .ctx-menu { position: fixed; z-index: 80; min-width: 168px;
+      background: var(--smoke-raised); border: 1px solid var(--seam);
+      border-radius: 10px; padding: 5px; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+    .ctx-menu button { display: flex; width: 100%; align-items: center; gap: 8px;
+      background: none; border: none; color: var(--bone); font: inherit;
+      font-size: 13px; text-align: left; padding: 8px 10px; border-radius: 6px;
+      cursor: pointer; }
+    .ctx-menu button:hover { background: rgba(255,255,255,.06); }
+    .ctx-menu button.danger { color: var(--danger); }
+    .ctx-menu .sep { height: 1px; background: var(--seam); margin: 4px 2px; }
+
+    /* ── Song-info popover ──────────────────────────────────────────────── */
+    .info-pop { position: fixed; z-index: 80; width: 340px; max-width: 92vw;
+      background: var(--smoke-raised); border: 1px solid var(--seam);
+      border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 34px rgba(0,0,0,.6); }
+    .info-pop h4 { font-size: 13px; margin-bottom: 10px; }
+    .info-pop dl { display: grid; grid-template-columns: 92px 1fr; gap: 5px 10px;
+                   font-size: 12px; }
+    .info-pop dt { color: var(--bone-dim); text-transform: uppercase;
+                   letter-spacing: .5px; font-size: 10px; padding-top: 1px; }
+    .info-pop dd { color: var(--bone); word-break: break-all; user-select: text; }
+
+    /* ── Failed-downloads panel (twin of iOS FailedDownloadsBanner) ─────── */
+    #failed-panel { background: rgba(255,107,107,.08);
+      border: 1px solid rgba(255,107,107,.3); border-radius: 12px;
+      padding: 10px 14px; margin-bottom: 12px; }
+    #failed-panel .fp-head { display: flex; align-items: center; gap: 8px;
+      font-size: 13px; font-weight: 600; color: var(--danger); }
+    #failed-panel .fp-head .row-btn { opacity: 1; margin-left: auto;
+      color: var(--bone-dim); }
+    #failed-panel .fp-item { font-size: 12px; color: var(--bone-dim); margin-top: 6px; }
+    #failed-panel .fp-item b { color: var(--bone); font-weight: 600; }
+    /* Row being deleted (5s undo window) — muted, like iOS "Tap to undo". */
+    .panel li.deleting .title { color: var(--bone-faint); text-decoration: line-through; }
+
+    /* ── Text-input modal (Electron has no window.prompt) ───────────────── */
+    .modal-overlay { position: fixed; inset: 0; z-index: 90; display: flex;
+      align-items: center; justify-content: center; background: rgba(0,0,0,.55); }
+    .modal-card { width: 340px; max-width: 90vw; background: var(--smoke);
+      border: 1px solid var(--seam); border-radius: 16px; padding: 22px; }
+    .modal-card h4 { font-size: 15px; margin-bottom: 14px; }
+    .modal-input { width: 100%; padding: 10px 14px; font: inherit; font-size: 14px;
+      color: var(--bone); background: var(--ink); border: 1px solid var(--seam);
+      border-radius: 999px; outline: none; }
+    .modal-input:focus { border-color: rgba(255,94,84,.45); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px;
+      margin-top: 16px; align-items: center; }
+    .modal-actions .pill { width: auto; padding: 9px 22px; font-size: 14px; }
+
     /* ── Handoff banner (popup path when the 60 s auto window has lapsed) ── */
     #handoff-banner {
       position: fixed; top: 48px; right: 20px; z-index: 50;
@@ -483,6 +533,14 @@
         <input id="dl-input" placeholder="Paste a YouTube or Spotify link to download…" />
         <button id="btn-dl" class="link">Download</button>
         <span id="dl-status"></span>
+      </div>
+
+      <div id="failed-panel" hidden>
+        <div class="fp-head">
+          <span id="failed-title"></span>
+          <button id="failed-clear" class="row-btn" title="Dismiss">✕</button>
+        </div>
+        <div id="failed-body"></div>
       </div>
 
       <div class="panel" id="lyrics-panel" hidden>
