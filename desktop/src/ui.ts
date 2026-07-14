@@ -33,6 +33,18 @@ replicator.onCropChanged = yt => {
   if (engine.player.current?.yt === yt) { engine.refreshCurrentCrop(); renderNow(); }
 };
 
+// Propagate offset nudges from other devices to the live lyrics panel
+// without reloading the full lyrics doc.
+lyricsStore.onOffset = (trackId, offsetMs) => {
+  if (lyricsTrackId && sameId(lyricsTrackId, trackId)) {
+    lyricsOffsetMs = offsetMs;
+    $("lyr-off").textContent =
+      `${offsetMs >= 0 ? "+" : ""}${(offsetMs / 1000).toFixed(1)}s`;
+    lyricsActiveIdx = -1;
+    updateLyricsHighlight();
+  }
+};
+
 const SECRET_KEY = "pulsor.secret";
 const DIR_KEY = "sync.music.dir";
 

@@ -76,6 +76,15 @@ final class LyricsService: ObservableObject {
                 memory[track.id] = doc
                 if !(doc.notFound && Self.expired(doc)) {
                     apply(doc, for: requested)
+                    // Background refresh: another device may have nudged the offset
+                    // since this entry was cached. Re-read only; never triggers a
+                    // full LRCLIB fetch.
+                    let cachedOffset = doc.offsetMs
+                    let id = track.id
+                    Task { [weak self] in
+                        await self?.refreshOffset(for: id, currentOffset: cachedOffset,
+                                                  requested: requested)
+                    }
                     return
                 }
             }
@@ -223,6 +232,28 @@ final class LyricsService: ObservableObject {
         guard let f = try? AVAudioFile(forReading: url) else { return nil }
         let dur = Double(f.length) / f.processingFormat.sampleRate
         return (dur.isFinite && dur > 0) ? Int(dur.rounded()) : nil
+    }
+
+    // MARK: - Offset freshness
+
+    /// Silently re-reads offsetMs from Firestore after a cache hit. If a
+    /// collaborating device nudged the offset while this device was offline, the
+    /// update surfaces automatically without a full lyrics re-fetch.
+    private func refreshOffset(for id: UUID, currentOffset: Int, requested: UUID) async {
+        guard let ref = lyricsRef(id),
+              let snap = try? await ref.getDocument(),
+              snap.exists,
+              let fresh = (snap.data()?["offsetMs"] as? NSNumber)?.intValue,
+              fresh != currentOffset,
+              requested == trackID else { return }
+        if var doc = memory[id] {
+            doc.offsetMs = fresh
+            memory[id] = doc
+            Self.writeDisk(id, doc)
+        }
+        if case .synced(let lines, _) = state {
+            state = .synced(lines: lines, offsetMs: fresh)
+        }
     }
 
     // MARK: - Firestore cache (shared across the home's devices)

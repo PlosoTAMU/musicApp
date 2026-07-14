@@ -215,14 +215,34 @@ async function fetchFromLRCLIB(name: string, durationSec?: number): Promise<Lyri
 export class LyricsStore {
   private memory = new Map<string, LyricsDoc>();
 
+  /** Fired when a background offset re-read finds a fresher value. Wire this
+   *  in ui.ts to update the display without a full lyrics reload. */
+  onOffset?: (trackId: string, offsetMs: number) => void;
+
   constructor(private db: Firestore) {}
+
+  /** Silently re-reads offsetMs from Firestore after a memory cache hit.
+   *  If another device nudged the offset, surfaces the change via onOffset. */
+  private async refreshOffset(uid: string, key: string, currentOffset: number): Promise<void> {
+    if (!uid) return;
+    const snap = await getDoc(this.ref(uid, key)).catch(() => null);
+    if (!snap?.exists()) return;
+    const fresh = (snap.data() as Partial<LyricsDoc>).offsetMs ?? 0;
+    if (fresh === currentOffset) return;
+    const cached = this.memory.get(key);
+    if (cached) cached.offsetMs = fresh;
+    this.onOffset?.(key, fresh);
+  }
 
   /** uid "" (demo/offline) skips Firestore — LRCLIB + memory only. */
   async get(uid: string, trackId: string, name: string, durationSec?: number): Promise<LyricsDoc> {
     const key = trackId.toUpperCase();
 
     const cached = this.memory.get(key);
-    if (cached && !this.expiredNotFound(cached)) return cached;
+    if (cached && !this.expiredNotFound(cached)) {
+      void this.refreshOffset(uid, key, cached.offsetMs);
+      return cached;
+    }
 
     if (uid) {
       const snap = await getDoc(this.ref(uid, key)).catch(() => null);
