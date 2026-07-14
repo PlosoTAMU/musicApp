@@ -1214,8 +1214,8 @@ function renderLibrary() {
   queueEl.innerHTML = "";
   const q = coord.remote?.queue ?? [];
   $("upnext-count").textContent = q.length ? String(q.length) : "";
-  $("queue-clear").hidden = q.length === 0;
-  if (q.length === 0) {
+  $("queue-clear").hidden = q.length === 0 && !engine.inPlaylistMode;
+  if (q.length === 0 && !engine.inPlaylistMode) {
     queueEl.innerHTML = `<div class="list-empty">Queue is empty — hover a library song and press ＋, or drag songs in</div>`;
   }
   q.forEach((ref, i) => {
@@ -1257,6 +1257,24 @@ function renderLibrary() {
     li.appendChild(rm);
     queueEl.appendChild(li);
   });
+
+  // Up Next from Playlist — owner-only playlist remainder (iOS currentPlaylist,
+  // never synced). A follower's playlistUpNext is empty, so this stays hidden.
+  const plUp = coord.role === "owner" ? engine.playlistUpNext : [];
+  if (plUp.length) {
+    const head = document.createElement("li");
+    head.textContent = "Up Next from Playlist";
+    head.style.cssText = "list-style:none; opacity:.55; font-size:11px; " +
+      "text-transform:uppercase; letter-spacing:.08em; padding:10px 0 2px; cursor:default";
+    queueEl.appendChild(head);
+    for (const t of plUp) {
+      const li = document.createElement("li");
+      li.appendChild(thumbEl(t.yt));
+      li.appendChild(titleSpan(t.name));
+      li.onclick = rowClick(() => engine.playFromPlaylist(t));   // jump, stay in playlist mode
+      queueEl.appendChild(li);
+    }
+  }
 
   // Library — filtered, capped for DOM sanity.
   const listEl = $("library-list");
