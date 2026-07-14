@@ -39,6 +39,9 @@ audit findings (see `docs/arpi/desktop-parity-findings.md`), strict priority ord
 - (none yet)
 
 ## VERIFY STRATEGY
-- Playback/UX: launch electron via the app's run path in offline-preview (demo) mode, drive the flow, watch it.
-- Sync writes: read the Firestore doc back after the action (only with a real secret); otherwise assert the local intent + doc payload in code review.
-- Never claim a phase done without running the app on the changed flow (per verification-before-completion).
+- ENV CONSTRAINT (2026-07-14): this dev box has NO display server (no Xvfb, cannot install). Electron GUI cannot be launched/screenshotted here. So:
+  - Static gate every change: `npx tsc --noEmit` + `npm run bundle` must stay green. (Baseline: both green at commit 9658ab8.)
+  - Logic gate for DOM-free code (history stack, shuffle, queue ops, dup detection, crop math, resolve/parseLRC/positionAt): Node test scripts bundled via esbuild, run with node.
+  - GUI smoke-test per phase is DEFERRED TO THE USER's machine (has a display). Each phase ships with an explicit "smoke-test checklist" for them.
+- Sync writes: read the Firestore doc back after the action (only with a real secret); otherwise assert the payload in review.
+- Never mark a phase "done" (vs "code-complete, GUI-unverified") without either a Node logic test or the user's GUI smoke-test.
