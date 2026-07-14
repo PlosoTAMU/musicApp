@@ -6,9 +6,10 @@
 // them, off-beat energy is ignored (no double-hits). Nod: sharp drop AT the
 // beat, slow recovery, anticipatory lift; >150 BPM folds to half-time.
 //
-// BeatFeed adapts it to this client: Web Audio analyser on the player's
-// <audio> element supplies kick-weighted log-spectral flux + an energy gate,
-// and log-spaced display bins for the canvas visualizer.
+// BeatFeed adapts it to this client: it binds (read-only) to the shared
+// AudioGraph's analyser, which supplies kick-weighted log-spectral flux + an
+// energy gate, and log-spaced display bins for the canvas visualizer. The
+// graph itself — source, pitch, EQ, reverb — lives in audioGraph.ts (P4).
 
 export interface BeatOutput {
   nod: number;        // 0-1 head-nod displacement, phase-driven
@@ -167,20 +168,7 @@ const smoothstep = (a: number, b: number, x: number): number => {
   return t * t * (3 - 2 * t);
 };
 
-/** Exponentially-decaying stereo noise burst — a compact synthetic room. */
-function makeImpulse(ctx: AudioContext, seconds: number, decay: number): AudioBuffer {
-  const len = Math.floor(ctx.sampleRate * seconds);
-  const buf = ctx.createBuffer(2, len, ctx.sampleRate);
-  for (let ch = 0; ch < 2; ch++) {
-    const d = buf.getChannelData(ch);
-    for (let i = 0; i < len; i++) {
-      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
-    }
-  }
-  return buf;
-}
-
-// ── Web Audio feeder ────────────────────────────────────────────────────────
+// ── Analyser feeder ─────────────────────────────────────────────────────────
 
 const DISPLAY_BINS = 48;
 
@@ -189,81 +177,34 @@ export class BeatFeed {
   /** Log-spaced 0-1 display bins (fast attack, slow release) for the canvas. */
   readonly bins = new Float32Array(DISPLAY_BINS);
 
-  private ctx?: AudioContext;
   private analyser?: AnalyserNode;
-  private bass?: BiquadFilterNode;
-  private dry?: GainNode;
-  private wet?: GainNode;
+  private sampleRate = 48000;
   private freq?: Uint8Array<ArrayBuffer>; // getByteFrequencyData rejects ArrayBufferLike
   private prevLog?: Float32Array;
   private bandEdges: number[] = [];
   private energyEma = 0;
   private lastT = 0;
 
-  /** Idempotent — createMediaElementSource throws on a second call, and once
-   *  attached the element's audio routes through this context permanently.
-   *
-   *  Graph (analysis + DSP share one chain, twin of the iOS effect stack):
-   *    src → bass(lowshelf) → analyser → dry ─────────┐
-   *                              └─→ convolver → wet ─┴→ destination */
-  attach(el: HTMLAudioElement) {
-    if (this.ctx) return;
-    this.ctx = new AudioContext();
-    const src = this.ctx.createMediaElementSource(el);
-
-    this.bass = this.ctx.createBiquadFilter();
-    this.bass.type = "lowshelf";
-    this.bass.frequency.value = 120;
-    this.bass.gain.value = 0;
-
-    this.analyser = this.ctx.createAnalyser();
-    this.analyser.fftSize = 2048;
-    this.analyser.smoothingTimeConstant = 0; // engine + bins do their own smoothing
-
-    this.dry = this.ctx.createGain();
-    this.wet = this.ctx.createGain();
-    this.wet.gain.value = 0;
-    const convolver = this.ctx.createConvolver();
-    convolver.buffer = makeImpulse(this.ctx, 2.2, 2.8);
-
-    src.connect(this.bass);
-    this.bass.connect(this.analyser);
-    this.analyser.connect(this.dry);
-    this.dry.connect(this.ctx.destination);
-    this.analyser.connect(convolver);
-    convolver.connect(this.wet);
-    this.wet.connect(this.ctx.destination);
-
-    this.freq = new Uint8Array(this.analyser.frequencyBinCount);
-    this.prevLog = new Float32Array(this.analyser.frequencyBinCount);
+  /** Bind to the AudioGraph's analyser — a read-only tap. Idempotent. */
+  bind(analyser: AnalyserNode, sampleRate: number) {
+    if (this.analyser) return;
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0; // engine + bins do their own smoothing
+    this.analyser = analyser;
+    this.sampleRate = sampleRate;
+    this.freq = new Uint8Array(analyser.frequencyBinCount);
+    this.prevLog = new Float32Array(analyser.frequencyBinCount);
 
     // Log-spaced band edges 40 Hz → 14 kHz for the display bins.
-    const binHz = this.ctx.sampleRate / this.analyser.fftSize;
+    const binHz = sampleRate / analyser.fftSize;
     const lo = Math.log(40), hi = Math.log(14_000);
     this.bandEdges = Array.from({ length: DISPLAY_BINS + 1 }, (_, i) => {
       const hz = Math.exp(lo + ((hi - lo) * i) / DISPLAY_BINS);
-      return Math.max(1, Math.min(this.analyser!.frequencyBinCount - 1, Math.round(hz / binHz)));
+      return Math.max(1, Math.min(analyser.frequencyBinCount - 1, Math.round(hz / binHz)));
     });
   }
 
-  get attached() { return !!this.ctx; }
-
-  /** 0–12 dB low-shelf boost below 120 Hz — twin of the iOS bass boost. */
-  setBassDb(db: number) {
-    if (this.bass) this.bass.gain.value = db;
-  }
-
-  /** 0–1 reverb mix. Dry ducks slightly as wet rises so loudness stays sane. */
-  setReverbMix(mix: number) {
-    if (this.wet) this.wet.gain.value = mix * 0.9;
-    if (this.dry) this.dry.gain.value = 1 - mix * 0.35;
-  }
-
-  /** The play click is the user gesture — a suspended context would mute the
-   *  routed element, so resume aggressively. */
-  resume() {
-    if (this.ctx?.state === "suspended") void this.ctx.resume();
-  }
+  get bound() { return !!this.analyser; }
 
   resetTrack() {
     this.engine.reset();
@@ -283,7 +224,7 @@ export class BeatFeed {
     a.getByteFrequencyData(this.freq);
 
     // Kick-weighted half-wave-rectified log-spectral flux + loudness gate.
-    const binHz = this.ctx!.sampleRate / a.fftSize;
+    const binHz = this.sampleRate / a.fftSize;
     let flux = 0, level = 0;
     const nBins = this.freq.length;
     for (let i = 1; i < nBins; i++) {

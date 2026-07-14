@@ -137,25 +137,36 @@
       min-height: 0;
     }
     .rail-content { display: contents; }
-    .rail-content.blurred { display: flex; flex-direction: column;
-      filter: blur(16px); pointer-events: none; user-select: none; }
 
-    /* Overlay shown while another device owns playback — everything behind
-       it is inert; taking over is the only way through. */
-    .rail-lock { position: absolute; inset: 0; z-index: 6;
-                 display: flex; align-items: center; justify-content: center; }
-    .rail-lock-card {
-      max-width: 260px; text-align: center; padding: 26px 30px;
+    /* Full-remote banner — shown while another device owns playback. The rail
+       transport stays LIVE (it routes through the command bus), so this is a
+       status strip + take-over button, not a blocking cover. */
+    #remote-banner {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--bone-dim);
       background: var(--smoke-raised); border: 1px solid var(--seam);
-      border-radius: 18px; box-shadow: 0 12px 34px rgba(0,0,0,.55);
+      border-radius: 10px; padding: 7px 11px; margin: 10px 0 2px;
     }
-    .rail-lock-card p { font-size: 13px; color: var(--bone-dim);
-                         line-height: 1.5; margin-bottom: 16px; }
-    .rail-lock-card strong { color: var(--bone); }
+    #remote-banner .dot { background: var(--red-light); flex: none; }
+    #remote-banner #remote-banner-text { overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }
+    #remote-banner #btn-playhere { margin-left: auto; flex: none;
+      color: var(--red-light); }
     #track-name {
       font-size: 30px; font-weight: 800; line-height: 1.2;
       display: flex; align-items: center; gap: 12px;
       margin: 18px 0 14px; min-height: 40px;
+    }
+    /* Long titles scroll gently instead of clipping (measured in renderNow —
+       short names never move). */
+    #track-title { flex: 1; min-width: 0; overflow: hidden; }
+    #track-title-text { display: inline-block; white-space: nowrap; }
+    #track-title.marquee #track-title-text {
+      animation: marquee 9s ease-in-out infinite alternate;
+    }
+    @keyframes marquee {
+      0%, 12% { transform: translateX(0); }
+      88%, 100% { transform: translateX(var(--marq, 0px)); }
     }
 
     /* Now-playing artwork (YouTube thumb via the track's yt id) */
@@ -218,6 +229,10 @@
     .transport button:hover { filter: brightness(1.25); }
     .transport button:active { transform: scale(.9); opacity: .85; }
     .transport svg { width: 20px; height: 20px; fill: var(--bone); }
+    .transport svg text { fill: var(--bone); }
+    /* Seek ±10 sit smaller than prev/next so the play button stays dominant. */
+    .transport #btn-back10, .transport #btn-fwd10 { width: 44px; height: 44px; }
+    .transport #btn-back10 svg, .transport #btn-fwd10 svg { width: 22px; height: 22px; }
     .transport #btn-toggle {
       width: 80px; height: 80px;
       background: var(--red-gradient);
@@ -233,11 +248,20 @@
     .rail-top .eyebrow { flex: 1; min-width: 0; white-space: nowrap; }
     .rail-actions { display: flex; gap: 8px; }
     .rail-actions button {
+      position: relative;
       width: 34px; height: 34px; border-radius: 50%; flex: none;
       background: var(--smoke-raised); border: 1px solid var(--seam);
       color: var(--bone); cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       transition: transform .15s cubic-bezier(.34,1.56,.64,1), opacity .15s, filter .15s;
+    }
+    /* Bypassed effects wear a slash — lit means active, slashed means muted. */
+    .rail-actions button.slash::after {
+      content: ""; position: absolute; left: 50%; top: 50%;
+      width: 2px; height: 24px; border-radius: 1px;
+      background: var(--bone-dim);
+      transform: translate(-50%, -50%) rotate(45deg);
+      box-shadow: 0 0 0 1.5px var(--smoke-raised);
     }
     .rail-actions button:hover { filter: brightness(1.25); }
     .rail-actions button:active { transform: scale(.9); opacity: .85; }
@@ -311,6 +335,7 @@
     .lyr-plain { white-space: pre-wrap; font-size: 14px; line-height: 1.6;
                  color: var(--bone-dim); user-select: text; }
     .lyr-msg { color: var(--bone-faint); font-size: 13px; padding: 10px 4px; }
+    .lyr-retry { width: auto; padding: 7px 18px; font-size: 13px; margin: 2px 4px 8px; }
 
     /* ── Effects (twin of the iOS audio settings sheet) ─────────────────── */
     #fx { margin-top: 18px; display: grid; gap: 6px; }
@@ -343,6 +368,79 @@
     #dl-status { font-size: 12px; color: var(--rose); white-space: nowrap;
                  overflow: hidden; text-overflow: ellipsis; }
 
+    /* ── Context menu (right-click or ⋯ on a row) ───────────────────────── */
+    .ctx-menu { position: fixed; z-index: 80; min-width: 168px;
+      background: var(--smoke-raised); border: 1px solid var(--seam);
+      border-radius: 10px; padding: 5px; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+    .ctx-menu button { display: flex; width: 100%; align-items: center; gap: 8px;
+      background: none; border: none; color: var(--bone); font: inherit;
+      font-size: 13px; text-align: left; padding: 8px 10px; border-radius: 6px;
+      cursor: pointer; }
+    .ctx-menu button:hover { background: rgba(255,255,255,.06); }
+    .ctx-menu button.danger { color: var(--danger); }
+    .ctx-menu .sep { height: 1px; background: var(--seam); margin: 4px 2px; }
+
+    /* ── Song-info popover ──────────────────────────────────────────────── */
+    .info-pop { position: fixed; z-index: 80; width: 340px; max-width: 92vw;
+      background: var(--smoke-raised); border: 1px solid var(--seam);
+      border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 34px rgba(0,0,0,.6); }
+    .info-pop h4 { font-size: 13px; margin-bottom: 10px; }
+    .info-pop dl { display: grid; grid-template-columns: 92px 1fr; gap: 5px 10px;
+                   font-size: 12px; }
+    .info-pop dt { color: var(--bone-dim); text-transform: uppercase;
+                   letter-spacing: .5px; font-size: 10px; padding-top: 1px; }
+    .info-pop dd { color: var(--bone); word-break: break-all; user-select: text; }
+
+    /* ── Failed-downloads panel (twin of iOS FailedDownloadsBanner) ─────── */
+    #failed-panel { background: rgba(255,107,107,.08);
+      border: 1px solid rgba(255,107,107,.3); border-radius: 12px;
+      padding: 10px 14px; margin-bottom: 12px; }
+    #failed-panel .fp-head { display: flex; align-items: center; gap: 8px;
+      font-size: 13px; font-weight: 600; color: var(--danger); }
+    #failed-panel .fp-head .row-btn { opacity: 1; margin-left: auto;
+      color: var(--bone-dim); }
+    #failed-panel .fp-item { font-size: 12px; color: var(--bone-dim); margin-top: 6px; }
+    #failed-panel .fp-item b { color: var(--bone); font-weight: 600; }
+    /* Row being deleted (5s undo window) — muted, like iOS "Tap to undo". */
+    .panel li.deleting .title { color: var(--bone-faint); text-decoration: line-through; }
+
+    /* ── Text-input modal (Electron has no window.prompt) ───────────────── */
+    .modal-overlay { position: fixed; inset: 0; z-index: 90; display: flex;
+      align-items: center; justify-content: center; background: rgba(0,0,0,.55); }
+    .modal-card { width: 340px; max-width: 90vw; background: var(--smoke);
+      border: 1px solid var(--seam); border-radius: 16px; padding: 22px; }
+    .modal-card h4 { font-size: 15px; margin-bottom: 14px; }
+    .modal-input { width: 100%; padding: 10px 14px; font: inherit; font-size: 14px;
+      color: var(--bone); background: var(--ink); border: 1px solid var(--seam);
+      border-radius: 999px; outline: none; }
+    .modal-input:focus { border-color: rgba(255,94,84,.45); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px;
+      margin-top: 16px; align-items: center; }
+    .modal-actions .pill { width: auto; padding: 9px 22px; font-size: 14px; }
+
+    /* ── Crop editor modal (twin of iOS CropSongSheet) ──────────────────── */
+    .crop-card { width: 480px; }
+    .crop-meta { display: flex; justify-content: space-between; font-size: 12px;
+                 color: var(--bone-dim); margin-bottom: 10px; }
+    .crop-meta .crop-len { color: var(--red-light); font-weight: 600; }
+    .crop-times { display: flex; justify-content: space-between; font-size: 11px;
+                  font-variant-numeric: tabular-nums; color: var(--bone-dim); }
+    .crop-transport { display: flex; align-items: center; justify-content: center;
+                      gap: 12px; margin: 12px 0 16px; }
+    .crop-transport .pill { width: auto; padding: 8px 26px; font-size: 14px; }
+    .crop-transport .row-btn { opacity: 1; }
+    .crop-row { display: grid; grid-template-columns: 40px 1fr 64px; gap: 10px;
+                align-items: center; font-size: 12px; color: var(--bone-dim);
+                margin-top: 8px; }
+    .crop-chip { background: var(--smoke-raised); border: 1px solid var(--seam);
+                 border-radius: 999px; color: var(--red-light); font: inherit;
+                 font-size: 12px; font-variant-numeric: tabular-nums;
+                 padding: 3px 10px; cursor: pointer; }
+    .crop-chip-input { width: 64px; font: inherit; font-size: 12px;
+                       color: var(--bone); background: var(--ink);
+                       border: 1px solid var(--seam); border-radius: 999px;
+                       padding: 3px 10px; outline: none; text-align: center; }
+
     /* ── Handoff banner (popup path when the 60 s auto window has lapsed) ── */
     #handoff-banner {
       position: fixed; top: 48px; right: 20px; z-index: 50;
@@ -359,6 +457,7 @@
       padding: 8px 20px 12px; border-top: 1px solid var(--seam);
     }
     .statusline * { white-space: nowrap; }
+    #fs-hint { color: var(--bone-faint); cursor: help; }
     #repl-status { color: var(--rose); overflow: hidden; text-overflow: ellipsis; }
     .spacer { flex: 1; }
     kbd { font: 10px Consolas, monospace; color: var(--bone-faint);
@@ -417,13 +516,19 @@
             </button>
           </div>
         </div>
+        <div id="remote-banner" hidden>
+          <span class="dot"></span>
+          <span id="remote-banner-text">Controlling your other device</span>
+          <button id="btn-playhere" class="link">Play Here</button>
+        </div>
         <div id="art">
           <span id="art-fallback">♫</span>
           <img id="art-img" hidden alt="" />
         </div>
         <div id="track-name">
           <span class="eq" id="eq" hidden><span></span><span></span><span></span></span>
-          <span id="track-title">Nothing playing</span>
+          <span id="track-title"><span id="track-title-text">Nothing playing</span></span>
+          <span id="crop-badge" class="chip" hidden>✂ Cropped</span>
         </div>
         <canvas id="viz"></canvas>
         <input id="progress" type="range" min="0" value="0" />
@@ -432,8 +537,14 @@
           <button id="btn-prev" title="Previous">
             <svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6zM20 5.8v12.4c0 .8-.9 1.3-1.6.9l-9.2-6.2c-.6-.4-.6-1.4 0-1.8l9.2-6.2c.7-.4 1.6.1 1.6.9z"/></svg>
           </button>
+          <button id="btn-back10" title="Back 10s">
+            <svg viewBox="0 0 24 24"><path d="M11 7V3.2L6 8l5 4.8V9a5 5 0 1 1-5 5H4a7 7 0 1 0 7-7z"/><text x="12.5" y="17.5" font-size="7.5" font-weight="800" text-anchor="middle">10</text></svg>
+          </button>
           <button id="btn-toggle" title="Play/Pause">
             <svg viewBox="0 0 24 24"><path d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.9-6.2c.6-.4.6-1.4 0-1.8L9.6 4.9c-.7-.4-1.6.1-1.6.9z"/></svg>
+          </button>
+          <button id="btn-fwd10" title="Forward 10s">
+            <svg viewBox="0 0 24 24"><path d="M13 7V3.2L18 8l-5 4.8V9a5 5 0 1 0 5 5h2a7 7 0 1 1-7-7z"/><text x="11.5" y="17.5" font-size="7.5" font-weight="800" text-anchor="middle">10</text></svg>
           </button>
           <button id="btn-next" title="Next">
             <svg viewBox="0 0 24 24"><path d="M15.5 5H18v14h-2.5zM4 5.8v12.4c0 .8.9 1.3 1.6.9l9.2-6.2c.6-.4.6-1.4 0-1.8L5.6 4.9c-.7-.4-1.6.1-1.6.9z"/></svg>
@@ -447,21 +558,18 @@
           <div class="fx-row"><span>Speed</span>
             <input id="fx-speed" type="range" min="50" max="200" value="100" step="5" />
             <span class="fx-val" id="fx-speed-val">1.00×</span></div>
+          <div class="fx-row"><span>Pitch</span>
+            <input id="fx-pitch" type="range" min="-12" max="12" value="0" step="0.5" />
+            <span class="fx-val" id="fx-pitch-val">0st</span></div>
           <div class="fx-row"><span>Bass</span>
-            <input id="fx-bass" type="range" min="0" max="12" value="0" />
-            <span class="fx-val" id="fx-bass-val">+0dB</span></div>
+            <input id="fx-bass" type="range" min="-10" max="20" value="0" />
+            <span class="fx-val" id="fx-bass-val">0dB</span></div>
           <div class="fx-row"><span>Reverb</span>
             <input id="fx-reverb" type="range" min="0" max="100" value="0" />
             <span class="fx-val" id="fx-reverb-val">0%</span></div>
         </div>
       </div>
 
-      <div class="rail-lock" id="rail-lock" hidden>
-        <div class="rail-lock-card">
-          <p>Playing on your other device —<br /><strong id="rail-lock-track"></strong></p>
-          <button id="btn-playhere" class="pill">Play Here</button>
-        </div>
-      </div>
     </div>
 
     <div class="content">
@@ -471,9 +579,17 @@
       </div>
 
       <div class="dl-row">
-        <input id="dl-input" placeholder="Paste a YouTube or Spotify link to download…" />
+        <input id="dl-input" placeholder="Paste a YouTube or Spotify link — or a YouTube playlist — to download…" />
         <button id="btn-dl" class="link">Download</button>
         <span id="dl-status"></span>
+      </div>
+
+      <div id="failed-panel" hidden>
+        <div class="fp-head">
+          <span id="failed-title"></span>
+          <button id="failed-clear" class="row-btn" title="Dismiss">✕</button>
+        </div>
+        <div id="failed-body"></div>
       </div>
 
       <div class="panel" id="lyrics-panel" hidden>
@@ -492,6 +608,8 @@
         <div class="panel-head">
           <span class="eyebrow">Up Next</span>
           <span class="count" id="upnext-count"></span>
+          <button id="queue-clear" class="row-btn" style="opacity:1; margin-left:8px"
+                  title="Clear the queue" hidden>Clear</button>
         </div>
         <ul id="queue"></ul>
       </div>
@@ -526,9 +644,10 @@
 
   <div class="statusline">
     <button id="btn-library" class="link">Change music folder</button>
+    <span id="fs-hint" title="The music folder is watched: rename, move, or delete files in your file manager and the change replicates to every device — same as editing in-app.">Disk renames / moves / deletes sync too</span>
     <span id="repl-status"></span>
     <span class="spacer"></span>
-    <span><kbd>Space</kbd> play/pause &nbsp; <kbd>←</kbd><kbd>→</kbd> seek &nbsp; <kbd>L</kbd> lyrics &nbsp; <kbd>F11</kbd> fullscreen</span>
+    <span><kbd>Space</kbd> play/pause &nbsp; <kbd>←</kbd><kbd>→</kbd> ±10s &nbsp; <kbd>L</kbd> lyrics &nbsp; <kbd>/</kbd> search &nbsp; <kbd>Esc</kbd> close &nbsp; <kbd>F11</kbd> fullscreen &nbsp; + media keys</span>
     <button id="btn-forget" class="link">Forget home</button>
   </div>
 

@@ -234,17 +234,21 @@ export class LyricsStore {
     this.onOffset?.(key, fresh);
   }
 
-  /** uid "" (demo/offline) skips Firestore — LRCLIB + memory only. */
-  async get(uid: string, trackId: string, name: string, durationSec?: number): Promise<LyricsDoc> {
+  /** uid "" (demo/offline) skips Firestore — LRCLIB + memory only.
+   *  `force` bypasses memory + Firestore and refetches from LRCLIB (the
+   *  "Try Again" path — twin of iOS load(force:)); the fresh result still
+   *  writes back so every device inherits the retry. */
+  async get(uid: string, trackId: string, name: string, durationSec?: number,
+            force = false): Promise<LyricsDoc> {
     const key = trackId.toUpperCase();
 
-    const cached = this.memory.get(key);
+    const cached = force ? undefined : this.memory.get(key);
     if (cached && !this.expiredNotFound(cached)) {
       void this.refreshOffset(uid, key, cached.offsetMs);
       return cached;
     }
 
-    if (uid) {
+    if (uid && !force) {
       const snap = await getDoc(this.ref(uid, key)).catch(() => null);
       if (snap?.exists()) {
         const d: LyricsDoc = {

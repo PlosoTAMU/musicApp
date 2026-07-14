@@ -5,24 +5,32 @@
 import { ipcRenderer } from "electron";
 import { pathToFileURL } from "url";
 import * as fs from "fs";
+import * as path from "path";
 import { db, bootstrapAuth } from "./firebase";
 import { SessionCoordinator } from "./coordinator";
 import { SyncEngine } from "./engine";
 import { Replicator } from "./replicator";
-import { leaseExpired, sameId, handoffActive } from "./protocol";
+import { leaseExpired, sameId, handoffActive, TrackRef } from "./protocol";
 import { serverClock } from "./serverClock";
 import { LocalTrack, norm, resolve } from "./player";
 import { LyricsStore, LyricLine, parseLRC, activeIndex } from "./lyrics";
 import { BeatFeed, BeatOutput } from "./beat";
+import { AudioGraph } from "./audioGraph";
 import { downloadTrack } from "./download";
 import { PlaylistSync, CloudPlaylist } from "./playlists";
 import { SettingsSync } from "./settingsSync";
+import { extractYtId } from "./urls";
+import { shuffle, fmtDuration, moveIndex } from "./listOps";
+import { TrackFxStore } from "./trackFx";
+import { showCropSheet } from "./cropSheet";
 
 const coord = new SessionCoordinator(db);
 const engine = new SyncEngine(db, coord);
 const replicator = new Replicator(db);
 const lyricsStore = new LyricsStore(db);
 const beatFeed = new BeatFeed();
+const graph = new AudioGraph();
+const trackFx = new TrackFxStore(localStorage);
 const playlistSync = new PlaylistSync(db);
 const settingsSync = new SettingsSync(db);
 
@@ -168,6 +176,8 @@ function wire() {
   $("btn-prev").onclick = () => engine.prev();
   $("btn-next").onclick = () => engine.next();
   $("btn-toggle").onclick = toggleCmd;
+  $("btn-back10").onclick = () => seekCmd(Math.max(0, currentPosMs() - 10_000));
+  $("btn-fwd10").onclick = () => seekCmd(currentPosMs() + 10_000);
   $("btn-playhere").onclick = () => run(() => engine.takeOverHere());
 
   const slider = $("progress") as HTMLInputElement;
@@ -180,6 +190,9 @@ function wire() {
   ($("search-input") as HTMLInputElement).oninput = e => {
     searchTerm = (e.target as HTMLInputElement).value;
     renderLibrary();
+  };
+  ($("search-input") as HTMLInputElement).onkeydown = e => {
+    if (e.key === "Escape") (e.target as HTMLInputElement).blur();
   };
   $("btn-library").onclick = async () => {
     const dir: string | undefined = await ipcRenderer.invoke("pick-folder");
@@ -220,6 +233,11 @@ function wire() {
     if (e.code === "ArrowRight") seekCmd(currentPosMs() + 10_000);
     if (e.code === "ArrowLeft") seekCmd(Math.max(0, currentPosMs() - 10_000));
     if (e.code === "KeyL") ($("btn-lyrics") as HTMLButtonElement).click();
+    if (e.code === "Escape") closePop();
+    if (e.code === "Slash" || (e.ctrlKey && e.code === "KeyF")) {
+      e.preventDefault();
+      ($("search-input") as HTMLInputElement).focus();
+    }
   });
   ipcRenderer.on("media", (_e, t: string) => {
     if (t === "toggle") ($("btn-toggle") as HTMLButtonElement).click();
@@ -249,25 +267,27 @@ function wire() {
     renderNow();
   };
   $("rail-lyrics").onclick = () => ($("btn-lyrics") as HTMLButtonElement).click();
+  // Add-to-playlist from the now-playing rail — opens the picker for any device's
+  // current track (no need to open a playlist first, like iOS).
   $("rail-addpl").onclick = () => {
     const ref = coord.remote?.playback.track;
     if (!ref) { showHint("Nothing playing"); return; }
-    const open = openPlaylistId ? playlistSync.get(openPlaylistId) : undefined;
-    if (!open) { showHint("Open a playlist below first — then this adds the current song"); return; }
-    void playlistSync.addTrack(open.id,
+    const r = $("rail-addpl").getBoundingClientRect();
+    addToPlaylistMenu(r.right, r.bottom,
       ref.yt ? { id: ref.id, name: ref.name, yt: ref.yt } : { id: ref.id, name: ref.name });
-    showHint(`Added “${ref.name}” to “${open.name}”`);
   };
 
   // Effects — speed also republishes rate (followers extrapolate with it).
+  // Pitch is LOCAL-ONLY (iOS doesn't sync it) — no settings push.
   bindFx("fx-volume", v => { fx.volume = v / 100; });
   bindFx("fx-speed", v => { fx.speed = v / 100; pushSettingsDebounced(); }, true);
+  bindFx("fx-pitch", v => { fx.pitch = v; });
   bindFx("fx-bass", v => { fx.bass = v; pushSettingsDebounced(); });
   bindFx("fx-reverb", v => { fx.reverb = v / 100; pushSettingsDebounced(); });
 
   settingsSync.onRemote = s => {
     fx.speed = Math.min(Math.max(s.speed, 0.5), 2.0);
-    fx.bass = Math.min(Math.max(s.bassDb, 0), 12);
+    fx.bass = Math.min(Math.max(s.bassDb, -10), 20); // iOS range — clamp fix [#14]
     fx.reverb = Math.min(Math.max(s.reverbPct, 0), 100) / 100;
     initFxSliders(); // updates slider DOM values + calls applyFx()
   };
@@ -277,6 +297,8 @@ function wire() {
   ($("dl-input") as HTMLInputElement).onkeydown = e => {
     if (e.key === "Enter") void startDownload();
   };
+  $("failed-clear").onclick = () => { failed.length = 0; renderFailed(); };
+  $("queue-clear").onclick = () => engine.clearQueue();
 
   // Bluetooth handoff banner (popup path)
   $("handoff-play").onclick = () => {
@@ -284,6 +306,16 @@ function wire() {
     run(() => engine.takeOverHere(true));
   };
   $("handoff-dismiss").onclick = hideHandoffBanner;
+
+  // Per-track fx restore — twin of iOS applyTrackSettings. Restoring also
+  // republishes the (speed/bass/reverb) settings doc: like iOS, the sync
+  // carries "whichever effective settings are currently audible".
+  engine.player.onTrack = t => {
+    const s = trackFx.get(t.id);
+    fx.speed = s.speed; fx.pitch = s.pitch; fx.reverb = s.reverb; fx.bass = s.bass;
+    initFxSliders(); // slider DOM + applyFx()
+    pushSettingsDebounced();
+  };
 
   coord.onChange = renderAll;
   engine.onChange = renderAll;
@@ -334,9 +366,9 @@ const FX_KEY = "fx.v1";
 // bypass mirrors iOS effectsBypass: mutes the applied effects without touching
 // the stored slider values. Local-only on both platforms (not in the settings
 // doc); volume is not an effect and stays live while bypassed.
-const fx = ((): { volume: number; speed: number; bass: number; reverb: number;
-                  bypass: boolean } => {
-  const base = { volume: 1, speed: 1, bass: 0, reverb: 0, bypass: false };
+const fx = ((): { volume: number; speed: number; pitch: number; bass: number;
+                  reverb: number; bypass: boolean } => {
+  const base = { volume: 1, speed: 1, pitch: 0, bass: 0, reverb: 0, bypass: false };
   try { return { ...base, ...JSON.parse(localStorage.getItem(FX_KEY) ?? "{}") }; }
   catch { return base; }
 })();
@@ -356,12 +388,18 @@ function applyFx(publishRate = false) {
   el.defaultPlaybackRate = rate; // survives src changes
   el.playbackRate = rate;
   (el as HTMLAudioElement & { preservesPitch: boolean }).preservesPitch = true;
-  beatFeed.setBassDb(fx.bypass ? 0 : fx.bass);
-  beatFeed.setReverbMix(fx.bypass ? 0 : fx.reverb);
+  graph.setBassDb(fx.bypass ? 0 : fx.bass);
+  graph.setReverbMix(fx.bypass ? 0 : fx.reverb);
+  graph.setPitchSemitones(fx.bypass ? 0 : fx.pitch);
+  // Remember the audible values for this track — twin of iOS
+  // saveCurrentTrackSettings firing on every effect didSet.
+  const cur = engine.player.current;
+  if (cur) trackFx.set(cur.id, { speed: fx.speed, pitch: fx.pitch, reverb: fx.reverb, bass: fx.bass });
   localStorage.setItem(FX_KEY, JSON.stringify(fx));
   $("fx-volume-val").textContent = `${Math.round(fx.volume * 100)}%`;
   $("fx-speed-val").textContent = `${fx.speed.toFixed(2)}×`;
-  $("fx-bass-val").textContent = `+${fx.bass}dB`;
+  $("fx-pitch-val").textContent = `${fx.pitch > 0 ? "+" : ""}${fx.pitch}st`;
+  $("fx-bass-val").textContent = `${fx.bass > 0 ? "+" : ""}${fx.bass}dB`;
   $("fx-reverb-val").textContent = `${Math.round(fx.reverb * 100)}%`;
   // Rate feeds follower extrapolation — re-anchor immediately, not on the
   // next transition.
@@ -376,6 +414,7 @@ function bindFx(id: string, set: (v: number) => void, publishRate = false) {
 function initFxSliders() {
   ($("fx-volume") as HTMLInputElement).value = String(Math.round(fx.volume * 100));
   ($("fx-speed") as HTMLInputElement).value = String(Math.round(fx.speed * 100));
+  ($("fx-pitch") as HTMLInputElement).value = String(fx.pitch);
   ($("fx-bass") as HTMLInputElement).value = String(fx.bass);
   ($("fx-reverb") as HTMLInputElement).value = String(Math.round(fx.reverb * 100));
   applyFx();
@@ -389,6 +428,12 @@ async function startDownload() {
   const url = input.value.trim();
   if (!url) return;
   if (!musicDir) { status.textContent = "Choose a music folder first"; return; }
+  // Duplicate guard (YouTube only — Spotify's yt id isn't known until it resolves).
+  const yt = extractYtId(url);
+  if (yt) {
+    const dup = engine.library.find(t => t.yt === yt);
+    if (dup) { status.textContent = `Already downloaded: ${dup.name}`; return; }
+  }
   input.value = "";
   try {
     status.textContent = "Starting…";
@@ -397,11 +442,22 @@ async function startDownload() {
     engine.loadLibrary(musicDir);   // pick the new file up locally…
     renderLibrary();
     replicator.syncUp();            // …and push it to the cloud → phone
+    // Post-download prompt: offer to file the fresh track into a playlist,
+    // twin of iOS's auto-prompt after a download completes.
+    const newYt = extractYtId(url);
+    const newT = newYt ? engine.library.find(t => t.yt === newYt) : undefined;
+    if (newT && playlistSync.playlists.length) {
+      const r = $("btn-dl").getBoundingClientRect();
+      addToPlaylistMenu(r.left, r.bottom,
+        newT.yt ? { id: newT.id, name: newT.name, yt: newT.yt } : { id: newT.id, name: newT.name });
+    }
     setTimeout(() => {
       if (status.textContent === "Done ✓") status.textContent = "";
     }, 4000);
   } catch (e) {
-    status.textContent = e instanceof Error ? e.message : String(e);
+    const msg = e instanceof Error ? e.message : String(e);
+    pushFailed("Download", msg);
+    status.textContent = msg;
   }
 }
 
@@ -499,11 +555,18 @@ function vizLoop(now: number) {
   vizIdle = false;
 
   // First playing frame after a click — the gesture Web Audio needs.
-  if (!beatFeed.attached) {
-    beatFeed.attach(engine.player.element);
-    applyFx(); // bass/reverb setters were no-ops before the graph existed
+  // attach() is async (worklet module load); frames until then just skip.
+  if (!graph.attached) {
+    if (!graph.attaching) {
+      void graph.attach(engine.player.element).then(() => {
+        beatFeed.bind(graph.analyser!, graph.sampleRate);
+        ($("fx-pitch") as HTMLInputElement).disabled = !graph.pitchAvailable;
+        applyFx(); // graph setters were no-ops before the graph existed
+      });
+    }
+    return;
   }
-  beatFeed.resume();
+  graph.resume();
 
   const curId = engine.player.current?.id ?? null;
   if (curId !== vizTrackId) {
@@ -572,7 +635,7 @@ const fileDurationSec = (p: string): Promise<number | undefined> =>
     a.src = pathToFileURL(p).href;
   });
 
-function loadLyrics() {
+function loadLyrics(force = false) {
   const ref = coord.remote?.playback.track;
   const seq = ++lyricsSeq;
   lyricsTrackId = ref?.id ?? null;
@@ -586,7 +649,7 @@ function loadLyrics() {
     // (exact /api/get only — fuzzy search stays off without the guard).
     const local = resolve(ref, engine.library);
     const dur = local ? await fileDurationSec(local.path) : undefined;
-    const doc = await lyricsStore.get(coord.uid, ref.id, ref.name, dur);
+    const doc = await lyricsStore.get(coord.uid, ref.id, ref.name, dur, force);
     if (seq !== lyricsSeq) return; // panel moved on to another track
 
     lyricsOffsetMs = doc.offsetMs ?? 0;
@@ -612,6 +675,15 @@ function renderLyrics() {
     const d = document.createElement("div");
     d.className = "lyr-msg"; d.textContent = lyricsMsg;
     body.appendChild(d);
+    // "Try Again" on the terminal not-found/instrumental states — twin of
+    // iOS unavailableView. Forces a fresh LRCLIB fetch past both caches.
+    if (lyricsMsg === "No lyrics found" || lyricsMsg === "Instrumental track") {
+      const b = document.createElement("button");
+      b.className = "pill lyr-retry";
+      b.textContent = "Try Again";
+      b.onclick = () => loadLyrics(true);
+      body.appendChild(b);
+    }
     return;
   }
   if (lyricsPlain) {
@@ -712,6 +784,9 @@ function renderNow() {
   roleChip.textContent = coord.demo ? "Offline Preview"
     : coord.role === "owner" ? "Playing Here" : "Remote";
   roleChip.className = !coord.demo && coord.role === "owner" ? "chip owner" : "chip";
+  roleChip.title = coord.demo ? "Offline preview — nothing syncs, playback is local only"
+    : coord.role === "owner" ? "This device is playing the audio"
+    : "Another device is playing — controls here act as a remote";
   if (!connected) return;
 
   const s = coord.remote;
@@ -719,15 +794,31 @@ function renderNow() {
   const idle = !s?.ownerDeviceID;
   $("owner-dead").hidden = !(coord.role !== "owner" && !idle && s && leaseExpired(s, serverClock.nowMs));
 
-  // Someone else owns the session — lock the rail behind a "Play Here" prompt
-  // instead of leaving transport controls live for a device that isn't playing.
+  // Full remote: while another device owns playback, the rail transport stays
+  // LIVE (prev/next/toggle/seek route through the command bus). Instead of a
+  // blocking cover we show a status banner + Play Here to take over — the
+  // desktop is a true remote of the phone, like iOS is of the desktop.
   const remoteActive = coord.role !== "owner" && !idle;
-  $("rail-content").classList.toggle("blurred", remoteActive);
-  $("rail-lock").hidden = !remoteActive;
-  $("rail-lock-track").textContent = pb?.track?.name ?? "";
+  $("remote-banner").hidden = !remoteActive;
+  $("remote-banner-text").textContent = remoteActive
+    ? `Controlling your other device${pb?.track ? ` — ${pb.track.name}` : ""}`
+    : "";
   ($("btn-playhere") as HTMLButtonElement).disabled = busy || !coord.online;
 
-  $("track-title").textContent = pb?.track?.name ?? (idle ? "Pick a song →" : "Nothing playing");
+  const titleText = pb?.track?.name ?? (idle ? "Pick a song →" : "Nothing playing");
+  const titleEl = $("track-title"), titleInner = $("track-title-text");
+  if (titleInner.textContent !== titleText) {
+    titleInner.textContent = titleText;
+    // Marquee only when the name actually overflows — measured per change.
+    const over = titleInner.scrollWidth - titleEl.clientWidth;
+    titleEl.classList.toggle("marquee", over > 8);
+    titleEl.style.setProperty("--marq", `${-Math.max(0, over)}px`);
+  }
+  // ✂ CROPPED badge — twin of the iOS Now Playing capsule. cropFor reads the
+  // synced meta, so followers see it too.
+  const badgeYt = pb?.track ? (resolve(pb.track, engine.library)?.yt ?? pb.track.yt) : undefined;
+  const cw = badgeYt ? replicator.cropFor(badgeYt) : {};
+  $("crop-badge").hidden = cw.startMs == null && cw.endMs == null;
   $("eq").hidden = !pb?.playing;
   $("btn-toggle").innerHTML = pb?.playing ? ICON_PAUSE : ICON_PLAY;
 
@@ -751,9 +842,13 @@ function renderNow() {
   renderPosition();
 
   // Rail action toggles — filled treatment matches the iOS top bar (fx button
-  // is lit while effects are ACTIVE, i.e. not bypassed).
+  // is lit while effects are ACTIVE; bypassed adds a slash + says so) [U9].
   $("rail-loop").classList.toggle("on", engine.player.loop);
-  $("rail-fx").classList.toggle("on", !fx.bypass);
+  const fxBtn = $("rail-fx");
+  fxBtn.classList.toggle("on", !fx.bypass);
+  fxBtn.classList.toggle("slash", fx.bypass);
+  fxBtn.title = fx.bypass ? "Effects bypassed — click to re-enable"
+                          : "Effects active — click to bypass";
   $("rail-lyrics").classList.toggle("on", lyricsOpen);
 
   $("lib-status").textContent = `${engine.library.length} local tracks`;
@@ -779,6 +874,15 @@ const rowBtn = (label: string, title: string, onclick: () => void): HTMLButtonEl
   return b;
 };
 
+/** Single-click row handler that ignores clicks landing on the row's own action
+ *  buttons (▶ ＋ ♪ ✕) — so a plain click on the row plays/opens, but the inline
+ *  buttons still do their own thing. Fixes the "rows only respond to
+ *  double-click" dead-click on desktop. */
+const rowClick = (fn: () => void) => (e: MouseEvent) => {
+  if ((e.target as HTMLElement).closest("button")) return;
+  fn();
+};
+
 const titleSpan = (text: string): HTMLElement => {
   const s = document.createElement("span");
   s.className = "title"; s.textContent = text;
@@ -800,6 +904,264 @@ const thumbEl = (yt?: string): HTMLImageElement => {
   return img;
 };
 
+// ── Library management (rename / delete / info / redownload) ────────────────
+// FS edits that the replicator then reconciles to the cloud — same shape as
+// startDownload. Twins of the iOS row context menu + trash-with-undo.
+
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+
+/** Illegal-char lens matching the replicator's sanitize — names round-trip. */
+const sanitizeName = (s: string) => s.replace(/[<>:"/\\|?*]/g, "_").trim();
+
+// Popover / menu (single instance; click-away closes).
+let openPop: HTMLElement | null = null;
+function closePop() {
+  openPop?.remove(); openPop = null;
+  document.removeEventListener("mousedown", onPopAway, true);
+}
+function onPopAway(e: MouseEvent) {
+  if (openPop && !openPop.contains(e.target as Node)) closePop();
+}
+function placePop(el: HTMLElement, x: number, y: number) {
+  el.style.left = "0"; el.style.top = "0";
+  document.body.appendChild(el);
+  const r = el.getBoundingClientRect();
+  el.style.left = `${Math.max(8, Math.min(x, window.innerWidth - r.width - 8))}px`;
+  el.style.top = `${Math.max(8, Math.min(y, window.innerHeight - r.height - 8))}px`;
+  openPop = el;
+  setTimeout(() => document.addEventListener("mousedown", onPopAway, true), 0);
+}
+
+type MenuItem = { label: string; danger?: boolean; onClick: () => void } | "sep";
+function showMenu(x: number, y: number, items: MenuItem[]) {
+  closePop();
+  const m = document.createElement("div");
+  m.className = "ctx-menu";
+  for (const it of items) {
+    if (it === "sep") { const s = document.createElement("div"); s.className = "sep"; m.appendChild(s); continue; }
+    const b = document.createElement("button");
+    if (it.danger) b.className = "danger";
+    b.textContent = it.label;
+    b.onclick = () => { closePop(); it.onClick(); };
+    m.appendChild(b);
+  }
+  placePop(m, x, y);
+}
+
+/** Song-info popover — twin of iOS SongInfoSheet. */
+function showInfoPop(x: number, y: number, t: LocalTrack) {
+  closePop();
+  const crop = t.yt ? replicator.cropFor(t.yt) : {};
+  const rows: [string, string][] = [
+    ["Title", t.name],
+    ["Source", t.yt ? "YouTube" : "Local file"],
+    ["Folder", t.folder || "—"],
+    ["Video ID", t.yt ?? "—"],
+    ["File", path.basename(t.path)],
+    ["Path", t.path],
+  ];
+  if (crop.startMs != null || crop.endMs != null)
+    rows.push(["Crop", `${((crop.startMs ?? 0) / 1000).toFixed(2)}s – ${
+      crop.endMs != null ? (crop.endMs / 1000).toFixed(2) + "s" : "end"}`]);
+  const pop = document.createElement("div");
+  pop.className = "info-pop";
+  pop.innerHTML = `<h4>Song info</h4><dl>${
+    rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join("")}</dl>`;
+  placePop(pop, x, y);
+}
+
+/** Confirm modal — Electron has no window.confirm(). */
+function showConfirm(message: string, onOk: () => void, okLabel = "Delete") {
+  closePop();
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal-card"><h4>${escapeHtml(message)}</h4>` +
+    `<div class="modal-actions"><button class="link modal-cancel">Cancel</button>` +
+    `<button class="pill modal-ok">${escapeHtml(okLabel)}</button></div></div>`;
+  document.body.appendChild(overlay);
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey, true);
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  (overlay.querySelector(".modal-ok") as HTMLButtonElement).onclick = () => { close(); onOk(); };
+  (overlay.querySelector(".modal-cancel") as HTMLButtonElement).onclick = close;
+  overlay.onmousedown = e => { if (e.target === overlay) close(); };
+}
+
+/** Add-to-playlist picker — from a track's ⋯ menu or the now-playing rail.
+ *  Twin of iOS AddToPlaylistSheet (works from anywhere, not just an open list). */
+function addToPlaylistMenu(x: number, y: number, ref: { id: string; name: string; yt?: string }) {
+  const items: MenuItem[] = playlistSync.playlists.map(p => ({
+    label: p.name,
+    onClick: () => { void playlistSync.addTrack(p.id, ref); showHint(`Added to “${p.name}”`); },
+  }));
+  if (items.length) items.push("sep");
+  items.push({
+    label: "New playlist…",
+    onClick: () => showPrompt("New playlist", "", name => {
+      void playlistSync.createWith(name, [ref]);
+      showHint(`Added to “${name}”`);
+    }),
+  });
+  showMenu(x, y, items);
+}
+
+/** Play a queued track now — resolve, drop it from the queue, play it. */
+function playFromQueue(ref: TrackRef) {
+  const local = resolve(ref, engine.library);
+  if (!local) { showHint("Not on this device yet"); return; }
+  engine.queueRemove(ref.id);
+  run(() => engine.playLocal(local));
+}
+
+/** Text-input modal — Electron has no window.prompt(). Reused for playlists. */
+function showPrompt(title: string, initial: string, onOk: (v: string) => void) {
+  closePop();
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal-card"><h4>${escapeHtml(title)}</h4>` +
+    `<input class="modal-input" type="text" /><div class="modal-actions">` +
+    `<button class="link modal-cancel">Cancel</button>` +
+    `<button class="pill modal-ok">OK</button></div></div>`;
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector(".modal-input") as HTMLInputElement;
+  input.value = initial; input.focus(); input.select();
+  const close = () => overlay.remove();
+  const ok = () => { const v = input.value.trim(); close(); if (v) onOk(v); };
+  (overlay.querySelector(".modal-ok") as HTMLButtonElement).onclick = ok;
+  (overlay.querySelector(".modal-cancel") as HTMLButtonElement).onclick = close;
+  overlay.onmousedown = e => { if (e.target === overlay) close(); };
+  input.onkeydown = e => {
+    if (e.key === "Enter") ok();
+    if (e.key === "Escape") close();
+  };
+}
+
+const pendingDeletes = new Map<string, ReturnType<typeof setTimeout>>();
+
+function renameTrack(t: LocalTrack, raw: string) {
+  if (!musicDir) return;
+  const clean = sanitizeName(raw);
+  if (!clean || clean === t.name) return;
+  const dir = path.dirname(t.path), ext = path.extname(t.path);
+  const tag = t.yt ? ` [${t.yt}]` : "";
+  const target = path.join(dir, `${clean}${tag}${ext}`);
+  if (fs.existsSync(target)) { showHint("A file with that name already exists"); return; }
+  try { fs.renameSync(t.path, target); }
+  catch { showHint("Rename failed (file may be in use)"); return; }
+  engine.loadLibrary(musicDir); renderLibrary(); replicator.syncUp();
+}
+
+function deleteTrack(t: LocalTrack) {
+  if (pendingDeletes.has(t.id)) return;
+  pendingDeletes.set(t.id, setTimeout(() => commitDelete(t), 5000));
+  renderLibrary();
+}
+function undoDelete(id: string) {
+  const timer = pendingDeletes.get(id);
+  if (timer) clearTimeout(timer);
+  pendingDeletes.delete(id);
+  renderLibrary();
+}
+function commitDelete(t: LocalTrack) {
+  pendingDeletes.delete(t.id);
+  if (!musicDir) return;
+  try { if (fs.existsSync(t.path)) fs.unlinkSync(t.path); }
+  catch { showHint("Delete failed (file may be in use)"); renderLibrary(); return; }
+  if (engine.player.current?.id === t.id) { engine.player.stop(); engine.publish(); }
+  engine.loadLibrary(musicDir); renderLibrary();
+  replicator.syncUp(); // reconcile tombstones the cloud doc (local gone + shadow)
+}
+
+async function redownloadTrack(t: LocalTrack) {
+  if (!t.yt || !musicDir) { showHint("Can't redownload a local-only file"); return; }
+  const status = $("dl-status");
+  try {
+    status.textContent = `Redownloading “${t.name}”…`;
+    await downloadTrack(`https://www.youtube.com/watch?v=${t.yt}`, musicDir,
+      p => { status.textContent = `${t.name} — ${p.label}`; });
+    status.textContent = "Done ✓";
+    engine.loadLibrary(musicDir); renderLibrary(); replicator.syncUp();
+    setTimeout(() => { if (status.textContent === "Done ✓") status.textContent = ""; }, 4000);
+  } catch (e) {
+    pushFailed(t.name, e instanceof Error ? e.message : String(e));
+    status.textContent = "";
+  }
+}
+
+/** Open the crop editor — twin of iOS CropSongSheet. Needs the cloud doc
+ *  (crop is `cropStartMs/cropEndMs` on the library doc, keyed by yt). */
+function editCrop(t: LocalTrack) {
+  if (!t.yt || coord.demo) { showHint("Crop needs a cloud-synced track"); return; }
+  showCropSheet({
+    name: t.name,
+    fileUrl: pathToFileURL(t.path).href,
+    crop: replicator.cropFor(t.yt),
+    volume: fx.volume,
+    pauseMain: () => {
+      const was = coord.role === "owner" && engine.player.playing;
+      if (was) engine.pause();
+      return was;
+    },
+    resumeMain: () => engine.play(),
+    onApply: r => {
+      void replicator.setCrop(t.yt!, r);
+      // Twin of iOS applyCrop's restart-with-new-crop when it's the live track:
+      // apply the window immediately (the doc echo re-applies it) and restart.
+      if (coord.role === "owner" && engine.player.current?.yt === t.yt) {
+        engine.player.setCrop(r?.startMs, r?.endMs);
+        engine.seekMs(0);
+        engine.publish();
+      }
+      renderNow();
+      showHint(r ? "Crop saved" : "Crop removed");
+    },
+  });
+}
+
+let lastMenuXY = { x: 0, y: 0 };
+/** Row action menu for a library track (twin of the iOS row context menu). */
+function trackMenu(x: number, y: number, t: LocalTrack) {
+  lastMenuXY = { x, y };
+  const items: MenuItem[] = [
+    { label: "Play", onClick: () => run(() => engine.playLocal(t)) },
+    { label: "Add to queue", onClick: () => engine.queueLocal(t) },
+    { label: "Add to playlist…", onClick: () => addToPlaylistMenu(lastMenuXY.x, lastMenuXY.y,
+        t.yt ? { id: t.id, name: t.name, yt: t.yt } : { id: t.id, name: t.name }) },
+    "sep",
+    { label: "Rename…", onClick: () => showPrompt("Rename song", t.name, v => renameTrack(t, v)) },
+    { label: "Song info", onClick: () => showInfoPop(lastMenuXY.x, lastMenuXY.y, t) },
+  ];
+  if (t.yt && !coord.demo)
+    items.push({ label: "Crop…", onClick: () => editCrop(t) });
+  if (t.yt) items.push({ label: "Redownload", onClick: () => void redownloadTrack(t) });
+  items.push("sep", { label: "Delete", danger: true, onClick: () => deleteTrack(t) });
+  showMenu(x, y, items);
+}
+
+// Failed downloads (manual + redownload + replicator) — twin of FailedDownloadsBanner.
+const failed: { name: string; error: string }[] = [];
+function pushFailed(name: string, error: string) {
+  failed.unshift({ name, error });
+  if (failed.length > 20) failed.pop();
+  renderFailed();
+}
+function renderFailed() {
+  const panel = $("failed-panel");
+  panel.hidden = failed.length === 0;
+  if (!failed.length) return;
+  $("failed-title").textContent =
+    `${failed.length} download${failed.length === 1 ? "" : "s"} failed`;
+  const body = $("failed-body");
+  body.innerHTML = "";
+  for (const f of failed) {
+    const d = document.createElement("div");
+    d.className = "fp-item";
+    d.innerHTML = `<b>${escapeHtml(f.name)}</b> — ${escapeHtml(f.error)}`;
+    body.appendChild(d);
+  }
+}
+
 async function createPlaylist() {
   const input = $("pl-new-input") as HTMLInputElement;
   const name = input.value.trim();
@@ -808,8 +1170,8 @@ async function createPlaylist() {
   await playlistSync.create(name);
 }
 
-function playPlaylist(p: CloudPlaylist) {
-  const locals = p.tracks
+function playPlaylist(p: CloudPlaylist, doShuffle = false) {
+  let locals = p.tracks
     .map(tr => resolve({ id: tr.id, name: tr.name, folder: "", yt: tr.yt }, engine.library))
     .filter((t): t is LocalTrack => !!t);
   if (!locals.length) {
@@ -817,7 +1179,47 @@ function playPlaylist(p: CloudPlaylist) {
     renderNow();
     return;
   }
+  if (doShuffle) locals = shuffle(locals);
   run(() => engine.playAll(locals));
+}
+
+// Open-playlist total duration, probed lazily (bounded to the open list, not
+// every card) and cached. Mirrors iOS's per-playlist duration line.
+const plDurationCache = new Map<string, number>();
+const plDurationPending = new Set<string>();
+
+function openPlaylist(id: string) {
+  openPlaylistId = id;
+  const p = playlistSync.get(id);
+  if (p && !plDurationCache.has(id) && !plDurationPending.has(id)) void computePlaylistDuration(p);
+  renderLibrary();
+}
+
+async function computePlaylistDuration(p: CloudPlaylist) {
+  plDurationPending.add(p.id);
+  let total = 0;
+  for (const tr of p.tracks) {
+    const local = resolve({ id: tr.id, name: tr.name, folder: "", yt: tr.yt }, engine.library);
+    if (local) { const d = await fileDurationSec(local.path); if (d) total += d; }
+  }
+  plDurationPending.delete(p.id);
+  plDurationCache.set(p.id, total);
+  if (openPlaylistId === p.id) renderPlaylists();
+}
+
+/** Playlist card context menu (right-click / ⋯): open, play, shuffle, rename, delete. */
+function playlistMenu(x: number, y: number, p: CloudPlaylist) {
+  showMenu(x, y, [
+    { label: "Open", onClick: () => openPlaylist(p.id) },
+    { label: "Play all", onClick: () => playPlaylist(p) },
+    { label: "Shuffle all", onClick: () => playPlaylist(p, true) },
+    "sep",
+    { label: "Rename…", onClick: () => showPrompt("Rename playlist", p.name, v => void playlistSync.rename(p.id, v)) },
+    { label: "Delete", danger: true, onClick: () => showConfirm(`Delete playlist “${p.name}”?`, () => {
+        if (openPlaylistId === p.id) openPlaylistId = null;
+        void playlistSync.remove(p.id);
+      }) },
+  ]);
 }
 
 function renderPlaylists() {
@@ -830,31 +1232,48 @@ function renderPlaylists() {
   if (openPlaylistId && !open) openPlaylistId = null; // deleted elsewhere
 
   if (open) {
-    // Detail: back / name / play-all / delete, then the tracks.
+    // Detail: back / name / count·duration / shuffle / play-all / rename / delete,
+    // then the tracks (drag to reorder).
+    const dur = plDurationCache.get(open.id);
     const head = document.createElement("li");
     head.appendChild(rowBtn("←", "All playlists", () => { openPlaylistId = null; renderLibrary(); }));
     head.appendChild(titleSpan(open.name));
+    head.appendChild(chipSpan(`${open.tracks.length} · ${dur != null ? fmtDuration(dur) : "…"}`));
     head.appendChild(rowBtn("▶", "Play all", () => playPlaylist(open)));
-    head.appendChild(rowBtn("✕", "Delete playlist", () => {
-      openPlaylistId = null;
-      void playlistSync.remove(open.id);
-    }));
+    head.appendChild(rowBtn("🔀", "Shuffle all", () => playPlaylist(open, true)));
+    head.appendChild(rowBtn("✎", "Rename playlist",
+      () => showPrompt("Rename playlist", open.name, v => void playlistSync.rename(open.id, v))));
+    head.appendChild(rowBtn("🗑", "Delete playlist", () => showConfirm(
+      `Delete playlist “${open.name}”?`, () => { openPlaylistId = null; void playlistSync.remove(open.id); })));
     listEl.appendChild(head);
 
     if (!open.tracks.length) {
       const d = document.createElement("div");
       d.className = "list-empty";
-      d.textContent = "Empty — use ♪ on a library row to add songs";
+      d.textContent = "Empty — use ♪ (or ⋯ → Add to playlist) on a library row";
       listEl.appendChild(d);
     }
     for (const tr of open.tracks) {
       const local = resolve({ id: tr.id, name: tr.name, folder: "", yt: tr.yt }, engine.library);
       const li = document.createElement("li");
       if (!local) li.className = "ghost";
+      // Drag to reorder — persists via playlistSync.reorder.
+      li.draggable = true;
+      li.ondragstart = e => e.dataTransfer?.setData("text/plain", tr.id);
+      li.ondragover = e => e.preventDefault();
+      li.ondrop = e => {
+        e.preventDefault();
+        const dragId = e.dataTransfer?.getData("text/plain");
+        if (!dragId || sameId(dragId, tr.id)) return;
+        const from = open.tracks.findIndex(x => sameId(x.id, dragId));
+        const to = open.tracks.findIndex(x => sameId(x.id, tr.id));
+        const arr = moveIndex(open.tracks, from, to);
+        if (arr !== open.tracks) void playlistSync.reorder(open.id, arr);
+      };
       li.appendChild(thumbEl(tr.yt));
       li.appendChild(titleSpan(tr.name));
       if (!local) li.appendChild(chipSpan("not here yet"));
-      else li.ondblclick = () => run(() => engine.playLocal(local));
+      else li.onclick = rowClick(() => run(() => engine.playLocal(local)));
       li.appendChild(rowBtn("✕", "Remove from playlist",
         () => void playlistSync.removeTrack(open.id, tr.id)));
       listEl.appendChild(li);
@@ -868,11 +1287,17 @@ function renderPlaylists() {
     }
     for (const p of playlistSync.playlists) {
       const li = document.createElement("li");
+      li.oncontextmenu = e => { e.preventDefault(); playlistMenu(e.clientX, e.clientY, p); };
+      li.appendChild(thumbEl(p.tracks.find(t => t.yt)?.yt));   // cover = first art
       li.appendChild(titleSpan(p.name));
       li.appendChild(chipSpan(String(p.tracks.length)));
       li.appendChild(rowBtn("▶", "Play all", () => playPlaylist(p)));
-      li.appendChild(rowBtn("›", "Open", () => { openPlaylistId = p.id; renderLibrary(); }));
-      li.ondblclick = () => { openPlaylistId = p.id; renderLibrary(); };
+      li.appendChild(rowBtn("🔀", "Shuffle all", () => playPlaylist(p, true)));
+      const moreBtn = document.createElement("button");
+      moreBtn.className = "row-btn"; moreBtn.textContent = "⋯"; moreBtn.title = "More actions";
+      moreBtn.onclick = () => { const r = moreBtn.getBoundingClientRect(); playlistMenu(r.right, r.bottom, p); };
+      li.appendChild(moreBtn);
+      li.onclick = rowClick(() => openPlaylist(p.id));
       listEl.appendChild(li);
     }
   }
@@ -891,18 +1316,37 @@ function renderLibrary() {
   queueEl.innerHTML = "";
   const q = coord.remote?.queue ?? [];
   $("upnext-count").textContent = q.length ? String(q.length) : "";
-  if (q.length === 0) {
-    queueEl.innerHTML = `<div class="list-empty">Queue is empty</div>`;
+  $("queue-clear").hidden = q.length === 0 && !engine.inPlaylistMode;
+  if (q.length === 0 && !engine.inPlaylistMode) {
+    queueEl.innerHTML = `<div class="list-empty">Queue is empty — hover a library song and press ＋, or drag songs in</div>`;
   }
-  for (const ref of q) {
+  q.forEach((ref, i) => {
     const ghost = engine.isGhost(ref);
     const syncing = ghost && replicator.status.includes(ref.name);
     const li = document.createElement("li");
     li.className = syncing ? "ghost syncing" : ghost ? "ghost" : "";
+    // Drag to reorder — place the dragged item just before this row (afterId =
+    // the row above it; null when this is the head → moves to front).
+    li.draggable = true;
+    li.ondragstart = e => e.dataTransfer?.setData("text/plain", ref.id);
+    li.ondragover = e => e.preventDefault();
+    li.ondrop = e => {
+      e.preventDefault();
+      const dragId = e.dataTransfer?.getData("text/plain");
+      if (!dragId || sameId(dragId, ref.id)) return;
+      const afterId = i > 0 ? q[i - 1].id : null;
+      // Dropping onto the row just below the source is a no-op: the anchor above
+      // the target *is* the dragged row, and rebase can't anchor to a row it just
+      // removed — it would otherwise fling the item to the tail.
+      if (afterId && sameId(afterId, dragId)) return;
+      engine.queueMove(dragId, afterId);
+    };
     li.appendChild(thumbEl(ref.yt));
     const t = document.createElement("span");
     t.className = "title"; t.textContent = ref.name;
     li.appendChild(t);
+    // A resolvable queued track plays on click (drops out of the queue).
+    if (!ghost) li.onclick = rowClick(() => playFromQueue(ref));
     if (ghost) {
       const chip = document.createElement("span");
       chip.className = "chip";
@@ -914,24 +1358,59 @@ function renderLibrary() {
     rm.onclick = () => { engine.queueRemove(ref.id); };
     li.appendChild(rm);
     queueEl.appendChild(li);
+  });
+
+  // Up Next from Playlist — owner-only playlist remainder (iOS currentPlaylist,
+  // never synced). A follower's playlistUpNext is empty, so this stays hidden.
+  const plUp = coord.role === "owner" ? engine.playlistUpNext : [];
+  if (plUp.length) {
+    const head = document.createElement("li");
+    head.textContent = "Up Next from Playlist";
+    head.style.cssText = "list-style:none; opacity:.55; font-size:11px; " +
+      "text-transform:uppercase; letter-spacing:.08em; padding:10px 0 2px; cursor:default";
+    queueEl.appendChild(head);
+    for (const t of plUp) {
+      const li = document.createElement("li");
+      li.appendChild(thumbEl(t.yt));
+      li.appendChild(titleSpan(t.name));
+      li.onclick = rowClick(() => engine.playFromPlaylist(t));   // jump, stay in playlist mode
+      queueEl.appendChild(li);
+    }
   }
 
-  // Library — filtered, capped for DOM sanity.
+  // Library — filtered, capped for DOM sanity (cap surfaced below [U6]).
   const listEl = $("library-list");
   listEl.innerHTML = "";
   const term = norm(searchTerm);
-  const rows = engine.library
-    .filter(t => !term || norm(t.name).includes(term) || norm(t.folder).includes(term))
-    .slice(0, 500);
+  const filtered = engine.library
+    .filter(t => !term || norm(t.name).includes(term) || norm(t.folder).includes(term));
+  const rows = filtered.slice(0, 500);
   if (rows.length === 0) {
     listEl.innerHTML = `<div class="list-empty">${
       engine.library.length === 0 ? "Choose a music folder below" : "No matches"}</div>`;
   }
-  const playingName = coord.remote?.playback.track?.name;
+  // "Playing" highlight matches by resolved id, not name — duplicate titles
+  // no longer double-highlight [U12].
+  const playingRef = coord.remote?.playback.track;
+  const playingLocal = playingRef ? resolve(playingRef, engine.library) : undefined;
   for (const t of rows) {
     const li = document.createElement("li");
-    if (playingName && norm(playingName) === norm(t.name)) li.className = "playing";
-    li.ondblclick = () => run(() => engine.playLocal(t));
+
+    // Delete-in-progress row: muted, with an Undo (5 s window). Twin of iOS
+    // "Tap to undo (5s)".
+    if (pendingDeletes.has(t.id)) {
+      li.className = "deleting";
+      li.appendChild(thumbEl(t.yt));
+      li.appendChild(titleSpan(t.name));
+      li.appendChild(chipSpan("deleting…"));
+      li.appendChild(rowBtn("Undo", "Undo delete", () => undoDelete(t.id)));
+      listEl.appendChild(li);
+      continue;
+    }
+
+    if (playingLocal && sameId(playingLocal.id, t.id)) li.className = "playing";
+    li.onclick = rowClick(() => run(() => engine.playLocal(t)));
+    li.oncontextmenu = e => { e.preventDefault(); trackMenu(e.clientX, e.clientY, t); };
 
     li.appendChild(thumbEl(t.yt));
 
@@ -961,7 +1440,21 @@ function renderLibrary() {
       }));
     }
 
+    // ⋯ = rename / info / redownload / delete (also on right-click).
+    const moreBtn = document.createElement("button");
+    moreBtn.className = "row-btn"; moreBtn.textContent = "⋯"; moreBtn.title = "More actions";
+    moreBtn.onclick = () => { const r = moreBtn.getBoundingClientRect(); trackMenu(r.right, r.bottom, t); };
+    li.appendChild(moreBtn);
+
     listEl.appendChild(li);
+  }
+
+  // Cap indicator — the 500-row slice used to be silent [U6].
+  if (filtered.length > rows.length) {
+    const d = document.createElement("div");
+    d.className = "list-empty";
+    d.textContent = `Showing ${rows.length} of ${filtered.length} — search to narrow`;
+    listEl.appendChild(d);
   }
 }
 

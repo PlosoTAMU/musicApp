@@ -68,8 +68,16 @@ export class PlaylistSync {
     return p && !p.deleted ? p : undefined;
   }
 
-  async create(name: string): Promise<void> {
-    await this.write(crypto.randomUUID().toUpperCase(), name, []);
+  async create(name: string): Promise<string> {
+    return this.createWith(name, []);
+  }
+
+  /** Create a playlist already holding `tracks` in a single write — lets
+   *  "New playlist… + add this song" avoid a create→addTrack snapshot race. */
+  async createWith(name: string, tracks: PlaylistTrack[]): Promise<string> {
+    const id = crypto.randomUUID().toUpperCase();
+    await this.write(id, name, tracks);
+    return id;
   }
 
   async addTrack(id: string, t: PlaylistTrack): Promise<void> {
@@ -83,6 +91,19 @@ export class PlaylistSync {
     if (!p) return;
     await this.write(id, p.name,
       p.tracks.filter(x => x.id.toUpperCase() !== trackId.toUpperCase()));
+  }
+
+  async rename(id: string, name: string): Promise<void> {
+    const p = this.get(id);
+    if (!p || !name.trim()) return;
+    await this.write(id, name.trim(), p.tracks);
+  }
+
+  /** Persist a reordered track list (drag-to-reorder in the open playlist). */
+  async reorder(id: string, tracks: PlaylistTrack[]): Promise<void> {
+    const p = this.get(id);
+    if (!p) return;
+    await this.write(id, p.name, tracks);
   }
 
   /** Tombstone, not delete — an offline phone must not resurrect it. */
