@@ -11,12 +11,28 @@ import { spawn } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { isBarePlaylistURL } from "./urls";
 
 export interface DownloadProgress {
   label: string; // human status line: "Downloading… 42%"
 }
 
 const PROGRESS_RE = /\[download\]\s+([\d.]+)%/;
+const ITEM_RE = /\[download\] Downloading item (\d+) of (\d+)/;
+
+/** Pull percent / playlist-position facts out of a yt-dlp stdout chunk.
+ *  Pure — Node-tested. Last match in the chunk wins (yt-dlp rewrites the
+ *  progress line with \r). */
+export function parseDlChunk(chunk: string): { pct?: number; item?: number; total?: number } {
+  const out: { pct?: number; item?: number; total?: number } = {};
+  for (const line of chunk.split(/\r?\n|\r/)) {
+    const m = PROGRESS_RE.exec(line);
+    if (m) out.pct = Math.round(parseFloat(m[1]));
+    const it = ITEM_RE.exec(line);
+    if (it) { out.item = parseInt(it[1], 10); out.total = parseInt(it[2], 10); }
+  }
+  return out;
+}
 
 async function spotifyToSearch(url: string): Promise<string> {
   const res = await fetch(
@@ -70,11 +86,21 @@ function ensureYtDlp(onProgress: (p: DownloadProgress) => void): Promise<string>
   return ytdlpPath;
 }
 
-/** Downloads one track into `dir`, auto-fetching yt-dlp itself on first run
- *  if it's not already installed. */
+/** Downloads one track — or a whole set for a BARE playlist/album link
+ *  (twin of iOS downloadPlaylist detection) — into `dir`, auto-fetching
+ *  yt-dlp itself on first run if it's not already installed. */
 export async function downloadTrack(
   url: string, dir: string, onProgress: (p: DownloadProgress) => void,
 ): Promise<void> {
+  // Spotify sets can't ride the oEmbed→ytsearch1 trick — it resolves ONE
+  // title (the playlist's name), which would fetch garbage. Point at the
+  // YouTube equivalent instead of silently downloading the wrong thing.
+  const wholeSet = isBarePlaylistURL(url);
+  if (wholeSet && /open\.spotify\.com/.test(url)) {
+    throw new Error(
+      "Spotify playlist/album links aren't supported here yet — paste a YouTube playlist link");
+  }
+
   const [target, bin] = await Promise.all([
     /open\.spotify\.com/.test(url) ? spotifyToSearch(url) : Promise.resolve(url),
     ensureYtDlp(onProgress),
@@ -86,7 +112,7 @@ export async function downloadTrack(
     // typically ~160 kbps VBR Opus in webm — Chromium + the scanner already
     // handle opus/webm natively.
     "-f", "bestaudio",
-    "--no-playlist",
+    wholeSet ? "--yes-playlist" : "--no-playlist",
     "-o", path.join(dir, "%(title)s [%(id)s].%(ext)s"),
     target,
   ];
@@ -94,9 +120,15 @@ export async function downloadTrack(
   await new Promise<void>((resolve, reject) => {
     const p = spawn(bin, args, { windowsHide: true });
 
+    let item = 0, total = 0;
     p.stdout.on("data", (b: Buffer) => {
-      const m = PROGRESS_RE.exec(b.toString());
-      if (m) onProgress({ label: `Downloading… ${Math.round(parseFloat(m[1]))}%` });
+      const f = parseDlChunk(b.toString());
+      if (f.item) { item = f.item; total = f.total ?? total; }
+      if (f.pct !== undefined) {
+        onProgress({ label: total > 1
+          ? `Track ${item}/${total} — ${f.pct}%`
+          : `Downloading… ${f.pct}%` });
+      }
     });
 
     let stderr = "";
