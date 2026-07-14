@@ -202,8 +202,11 @@ New/changed fields, all optional for backward compatibility with existing
 docs:
 
 - `name` — now mutable.
-- `folder` — now mutable; iOS starts uploading its real folder value
-  (e.g. "YouTube Downloads" or the import folder name) instead of `""`.
+- `folder` — now mutable, with **desktop as the folder authority**: only
+  desktop (where folders are real subdirectories the user rearranges) ever
+  writes it; iOS consumes it for display grouping and never writes it. (If
+  iOS pushed its literal "YouTube Downloads" folder as authoritative, every
+  desktop file would get physically moved into that subdirectory.)
 - `cropStartMs`, `cropEndMs` — integers, absent = uncropped.
 - `deleted` — tombstone flag (see deletion semantics).
 - `metaAt` (server timestamp) + `metaBy` (device id) — stamped on every
@@ -323,8 +326,8 @@ is a careful static review plus this manual matrix on a real pair:
    rename on desktop (file manager) → phone shows new title.
 9. Crop on phone → desktop playback of that track starts/ends at the crop
    bounds, duration displays cropped, lyrics align without manual nudge.
-10. Move a file between desktop subfolders → phone regroups it; phone's
-    next mirror uploads real folder names.
+10. Move a file between desktop subfolders → phone regroups it under the
+    new folder name (display only; no iOS files move).
 11. Delete on one device → gone everywhere (including a device that was
     offline during the delete); re-download of the same video succeeds and
     replicates again.
