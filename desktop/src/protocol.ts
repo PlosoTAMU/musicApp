@@ -52,6 +52,15 @@ export interface TrackMeta {
   ext: string;
   path?: string;
   by: string;
+  // Mutable metadata (sync-completeness, 2026-07). Absent on legacy docs.
+  // LWW: last metadata writer wins; metaBy breaks echo loops (a device
+  // ignores changes it authored). Folder authority is DESKTOP — iOS never
+  // writes `folder`, only displays it.
+  cropStartMs?: number;  // crop window start ms — playback metadata, file untouched
+  cropEndMs?: number;
+  deleted?: boolean;     // revivable tombstone: re-mirroring the same yt revives the doc
+  metaAt?: unknown;      // serverTimestamp of the last metadata write
+  metaBy?: string;       // device id of the last metadata writer
 }
 
 export const LEASE_TTL_MS = 45_000;

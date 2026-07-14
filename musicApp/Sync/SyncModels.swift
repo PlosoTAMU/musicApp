@@ -84,6 +84,12 @@ struct TrackMeta {
     let yt: String?
     let ext: String
     let by: String
+    // Mutable metadata — absent on legacy docs. LWW via last write; metaBy
+    // breaks echo loops. Folder authority is desktop; iOS displays only.
+    let cropStartMs: Int?
+    let cropEndMs: Int?
+    let deleted: Bool
+    let metaBy: String?
 
     init?(dict: [String: Any]) {
         guard let name = dict["name"] as? String,
@@ -92,6 +98,10 @@ struct TrackMeta {
               let by = dict["by"] as? String else { return nil }
         self.name = name; self.folder = folder; self.ext = ext; self.by = by
         self.yt = dict["yt"] as? String
+        self.cropStartMs = dict["cropStartMs"] as? Int
+        self.cropEndMs = dict["cropEndMs"] as? Int
+        self.deleted = dict["deleted"] as? Bool ?? false
+        self.metaBy = dict["metaBy"] as? String
     }
 }
 
