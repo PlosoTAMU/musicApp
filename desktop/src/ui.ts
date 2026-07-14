@@ -22,6 +22,7 @@ import { SettingsSync } from "./settingsSync";
 import { extractYtId } from "./urls";
 import { shuffle, fmtDuration, moveIndex } from "./listOps";
 import { TrackFxStore } from "./trackFx";
+import { showCropSheet } from "./cropSheet";
 
 const coord = new SessionCoordinator(db);
 const engine = new SyncEngine(db, coord);
@@ -785,6 +786,11 @@ function renderNow() {
   ($("btn-playhere") as HTMLButtonElement).disabled = busy || !coord.online;
 
   $("track-title").textContent = pb?.track?.name ?? (idle ? "Pick a song →" : "Nothing playing");
+  // ✂ CROPPED badge — twin of the iOS Now Playing capsule. cropFor reads the
+  // synced meta, so followers see it too.
+  const badgeYt = pb?.track ? (resolve(pb.track, engine.library)?.yt ?? pb.track.yt) : undefined;
+  const cw = badgeYt ? replicator.cropFor(badgeYt) : {};
+  $("crop-badge").hidden = cw.startMs == null && cw.endMs == null;
   $("eq").hidden = !pb?.playing;
   $("btn-toggle").innerHTML = pb?.playing ? ICON_PAUSE : ICON_PLAY;
 
@@ -1049,6 +1055,36 @@ async function redownloadTrack(t: LocalTrack) {
   }
 }
 
+/** Open the crop editor — twin of iOS CropSongSheet. Needs the cloud doc
+ *  (crop is `cropStartMs/cropEndMs` on the library doc, keyed by yt). */
+function editCrop(t: LocalTrack) {
+  if (!t.yt || coord.demo) { showHint("Crop needs a cloud-synced track"); return; }
+  showCropSheet({
+    name: t.name,
+    fileUrl: pathToFileURL(t.path).href,
+    crop: replicator.cropFor(t.yt),
+    volume: fx.volume,
+    pauseMain: () => {
+      const was = coord.role === "owner" && engine.player.playing;
+      if (was) engine.pause();
+      return was;
+    },
+    resumeMain: () => engine.play(),
+    onApply: r => {
+      void replicator.setCrop(t.yt!, r);
+      // Twin of iOS applyCrop's restart-with-new-crop when it's the live track:
+      // apply the window immediately (the doc echo re-applies it) and restart.
+      if (coord.role === "owner" && engine.player.current?.yt === t.yt) {
+        engine.player.setCrop(r?.startMs, r?.endMs);
+        engine.seekMs(0);
+        engine.publish();
+      }
+      renderNow();
+      showHint(r ? "Crop saved" : "Crop removed");
+    },
+  });
+}
+
 let lastMenuXY = { x: 0, y: 0 };
 /** Row action menu for a library track (twin of the iOS row context menu). */
 function trackMenu(x: number, y: number, t: LocalTrack) {
@@ -1062,6 +1098,8 @@ function trackMenu(x: number, y: number, t: LocalTrack) {
     { label: "Rename…", onClick: () => showPrompt("Rename song", t.name, v => renameTrack(t, v)) },
     { label: "Song info", onClick: () => showInfoPop(lastMenuXY.x, lastMenuXY.y, t) },
   ];
+  if (t.yt && !coord.demo)
+    items.push({ label: "Crop…", onClick: () => editCrop(t) });
   if (t.yt) items.push({ label: "Redownload", onClick: () => void redownloadTrack(t) });
   items.push("sep", { label: "Delete", danger: true, onClick: () => deleteTrack(t) });
   showMenu(x, y, items);

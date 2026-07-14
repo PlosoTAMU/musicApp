@@ -7,7 +7,8 @@
 // Up: any local file with no cloud metadata match (yt, then normalized name)
 // gets a metadata-only doc — receiving devices fetch their own audio.
 import {
-  Firestore, collection, doc, onSnapshot, setDoc, updateDoc, serverTimestamp, Unsubscribe,
+  Firestore, collection, doc, onSnapshot, setDoc, updateDoc, serverTimestamp,
+  deleteField, Unsubscribe,
 } from "firebase/firestore";
 import * as path from "path";
 import * as fs from "fs";
@@ -83,6 +84,20 @@ export class Replicator {
       if (m.yt === yt && !m.deleted)
         return { startMs: m.cropStartMs, endMs: m.cropEndMs };
     return {};
+  }
+
+  /** Push a crop window (null = uncropped) to the track's library doc — twin
+   *  of iOS pushMeta's crop fields (absent = FieldValue.delete()). The
+   *  snapshot echo re-applies it locally via onCropChanged. */
+  async setCrop(yt: string, r: { startMs: number; endMs: number } | null) {
+    if (!this.uid) return;
+    const entry = [...this.meta.entries()].find(([, m]) => m.yt === yt && !m.deleted);
+    if (!entry) return;
+    await updateDoc(doc(this.db, "users", this.uid, "library", entry[0]), {
+      cropStartMs: r ? r.startMs : deleteField(),
+      cropEndMs: r ? r.endMs : deleteField(),
+      metaAt: serverTimestamp(), metaBy: DEVICE_ID,
+    }).catch(() => {});
   }
 
   private hasLocally(m: TrackMeta): boolean {
