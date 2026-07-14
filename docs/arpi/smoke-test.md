@@ -74,9 +74,16 @@ Playlist mode (wrap):
 - [ ] Directly single-click a **library** track while a playlist is playing → playback switches and playlist-wrap stops (a plain single-track play exits playlist mode).
 - [ ] **Clear** the queue → wrap stops (next end-of-track stops instead of looping).
 
-> ⚠️ Known gap (item 16, deferred): manually **queued** songs are appended after the
-> playlist remainder rather than interleaved to play *next*, and Up Next is one flat
-> list (no "Up Next from Playlist" split). See NOTES → OPEN. Not covered by this pass.
+Playlist mode (interleave + Up Next split, item 16):
+- [ ] **Play all** a playlist, then hover a library song and press ＋ (or ⋯ → Add to queue) → the queued song plays **next**, *before* the playlist continues (not after the whole playlist).
+- [ ] Up Next shows two labeled groups: **Up Next** (your queued songs) then **Up Next from Playlist** (the upcoming playlist tracks). With no queued songs, only the playlist group shows.
+- [ ] Click a row under **Up Next from Playlist** → it jumps to that track and keeps playing the playlist from there (still in playlist mode; your queued songs still play next).
+- [ ] Let the last playlist track end → it **wraps** to the top.
+- [ ] **Clear** while in playlist mode (even with an empty user queue) → exits playlist mode; the next track-end stops instead of looping.
+
+Two devices (real secret; desktop owns a playlist):
+- [ ] On the **follower**, Up Next shows only the shared user queue — **no** "Up Next from Playlist" section (the playlist is owner-local, like iOS).
+- [ ] Follower taps **Play Here** → it takes over the user queue and playlist mode ends (matches iOS: currentPlaylist isn't synced).
 
 Two devices (real secret):
 - [ ] Reorder / clear the queue on desktop → the phone's queue reflects it (and vice-versa).
