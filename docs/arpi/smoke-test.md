@@ -185,3 +185,20 @@ Requires yt-dlp reachable + a music folder. (Static gate covered the parsers; th
 - [ ] A private/empty Spotify or YouTube set → a clear error in the failed panel (not a crash).
 - [ ] The post-download **"add to playlist" prompt does NOT pop** during a batch (only for single-link downloads).
 - [ ] Single-track YouTube + Spotify **track** links still download exactly as before, with the duplicate guard and the post-download playlist prompt.
+
+---
+
+## Audit-2 Phase D — Now Playing rail + transport polish
+
+Single device (offline preview), a yt-sourced track playing:
+- [ ] **Crop from the rail**: a ✂ button sits in the rail action row; it's dimmed/disabled when nothing local+yt is playing (and in Offline Preview). With a yt track playing on a real session, clicking it opens the crop editor.
+- [ ] **Rename current track**: double-click the big Now Playing title → the rename modal opens pre-filled; renaming updates the file + row (and, with a secret, the phone).
+- [ ] **fx per-slider reset**: nudge a slider, then **double-click** it → it snaps back to default (Volume 100%, Speed 1.00×, Pitch 0st, Bass 0dB, Reverb 0%).
+- [ ] **Reset all**: the link under the sliders resets Speed/Pitch/Bass/Reverb but **leaves Volume** where it is.
+- [ ] **Hold ⏪**: a quick click still jumps −10s; press-and-hold scrubs backward (~0.5s every 200ms) until release, stopping at 0:00.
+- [ ] **Hold ⏩**: a quick click still jumps +10s; press-and-hold plays at **2×** until you release, then returns to the normal rate (works even with effects bypassed).
+- [ ] **>60s pause auto-restart**: pause a track, wait just over a minute, press play → it restarts from the beginning. Pausing briefly (<60s) resumes in place. Seeking while paused, then resuming, honors the seek.
+
+Two devices (real secret):
+- [ ] Hold ⏩ on the **owner** → the following device's progress speeds up to match (rate re-published); releasing returns both to normal.
+- [ ] On a **follower**, ⏪/⏩ are plain −/+10s (no hold effects) — no command spam.

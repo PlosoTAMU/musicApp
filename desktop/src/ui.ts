@@ -179,9 +179,28 @@ function wire() {
   $("btn-prev").onclick = () => engine.prev();
   $("btn-next").onclick = () => engine.next();
   $("btn-toggle").onclick = toggleCmd;
-  $("btn-back10").onclick = () => seekCmd(Math.max(0, currentPosMs() - 10_000));
-  $("btn-fwd10").onclick = () => seekCmd(currentPosMs() + 10_000);
   $("btn-playhere").onclick = () => run(() => engine.takeOverHere());
+
+  // Seek ±10 with press-and-hold twins of the iOS Rewind/FastForward buttons:
+  // a quick click jumps ±10 s; holding ⏪ scrubs back 0.5 s every 200 ms, and
+  // holding ⏩ plays at 2× until release. The hold effects need the local audio
+  // element, so they're owner-only; followers always get the ±10 s click.
+  const ownerHold = () => coord.role === "owner";
+  bindHoldButton("btn-back10", {
+    enabled: ownerHold,
+    click: () => seekCmd(Math.max(0, currentPosMs() - 10_000)),
+    holdTick: () => engine.seekMs(Math.max(0, engine.player.posMs - 500)),
+  });
+  bindHoldButton("btn-fwd10", {
+    enabled: ownerHold,
+    click: () => seekCmd(currentPosMs() + 10_000),
+    holdStart: () => {
+      const el = engine.player.element;
+      el.defaultPlaybackRate = 2; el.playbackRate = 2;  // survives a src swap mid-hold
+      engine.publish();                                 // followers extrapolate at 2×
+    },
+    holdEnd: () => applyFx(true),                        // restore rate from fx state + republish
+  });
 
   const slider = $("progress") as HTMLInputElement;
   slider.oninput = () => { dragMs = Number(slider.value); };
@@ -270,6 +289,14 @@ function wire() {
     renderNow();
   };
   $("rail-lyrics").onclick = () => ($("btn-lyrics") as HTMLButtonElement).click();
+  // Crop from the rail — twin of the iOS Now Playing ✂ button. Acts on the
+  // current track when it resolves to a local yt-bearing file (editCrop guards
+  // demo + local-only and shows its own hint) [#8].
+  $("rail-crop").onclick = () => {
+    const cur = currentLocalTrack();
+    if (!cur) { showHint("Nothing here to crop"); return; }
+    editCrop(cur);
+  };
   // Add-to-playlist from the now-playing rail — opens the picker for any device's
   // current track (no need to open a playlist first, like iOS).
   $("rail-addpl").onclick = () => {
@@ -279,6 +306,13 @@ function wire() {
     addToPlaylistMenu(r.right, r.bottom,
       ref.yt ? { id: ref.id, name: ref.name, yt: ref.yt } : { id: ref.id, name: ref.name });
   };
+  // Rename the current track — double-click the title (desktop idiom for the
+  // iOS long-press). Only when it resolves locally [#8].
+  $("track-title").ondblclick = () => {
+    const cur = currentLocalTrack();
+    if (!cur) { showHint("No local track to rename"); return; }
+    showPrompt("Rename song", cur.name, v => renameTrack(cur, v));
+  };
 
   // Effects — speed also republishes rate (followers extrapolate with it).
   // Pitch is LOCAL-ONLY (iOS doesn't sync it) — no settings push.
@@ -287,6 +321,17 @@ function wire() {
   bindFx("fx-pitch", v => { fx.pitch = v; });
   bindFx("fx-bass", v => { fx.bass = v; pushSettingsDebounced(); });
   bindFx("fx-reverb", v => { fx.reverb = v / 100; pushSettingsDebounced(); });
+
+  // fx resets — double-click a slider to reset just that control; "Reset all"
+  // resets everything EXCEPT volume (twin of iOS per-slider Reset + Reset All).
+  // Re-dispatching "input" reuses each slider's bindFx handler, so the fx state,
+  // per-track memory, and settings push all fire exactly as a drag would.
+  for (const id of Object.keys(FX_SLIDER_DEFAULT))
+    ($(id) as HTMLInputElement).ondblclick = () => resetFxSlider(id);
+  $("fx-reset-all").onclick = () => {
+    for (const id of ["fx-speed", "fx-pitch", "fx-bass", "fx-reverb"]) resetFxSlider(id);
+    showHint("Effects reset");
+  };
 
   settingsSync.onRemote = s => {
     fx.speed = Math.min(Math.max(s.speed, 0.5), 2.0);
@@ -350,6 +395,45 @@ function wire() {
 
 const currentPosMs = () =>
   coord.role === "owner" ? engine.player.posMs : engine.mirrorPositionMs();
+
+/** Press-and-hold button (twin of iOS RewindButton/FastForwardButton). A quick
+ *  press fires `click`; holding past 400 ms starts the hold (`holdStart` once,
+ *  then `holdTick` every 200 ms) and releasing runs `holdEnd` while suppressing
+ *  the click. `enabled` gates whether a hold can begin at all — when it returns
+ *  false the press is always a plain click. mouseup is on window so a release
+ *  outside the button still ends the hold. */
+function bindHoldButton(id: string, opts: {
+  click: () => void;
+  enabled?: () => boolean;
+  holdStart?: () => void;
+  holdTick?: () => void;
+  holdEnd?: () => void;
+}) {
+  const btn = $(id);
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
+  let tickTimer: ReturnType<typeof setInterval> | null = null;
+  let held = false, pressed = false;
+  const stopTimers = () => {
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+    if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+  };
+  btn.addEventListener("mousedown", () => {
+    pressed = true; held = false;
+    if (opts.enabled && !opts.enabled()) return;   // hold disabled → plain click on release
+    holdTimer = setTimeout(() => {
+      held = true;
+      opts.holdStart?.();
+      if (opts.holdTick) { opts.holdTick(); tickTimer = setInterval(opts.holdTick, 200); }
+    }, 400);
+  });
+  window.addEventListener("mouseup", () => {
+    if (!pressed) return;
+    pressed = false;
+    stopTimers();
+    if (held) { opts.holdEnd?.(); held = false; }
+    else opts.click();
+  });
+}
 
 // ── Optimistic follower echo ───────────────────────────────────────────────
 // A follower command round-trips 0.7–2 s; patch the mirror immediately — the
@@ -444,6 +528,27 @@ function initFxSliders() {
   ($("fx-bass") as HTMLInputElement).value = String(fx.bass);
   ($("fx-reverb") as HTMLInputElement).value = String(Math.round(fx.reverb * 100));
   applyFx();
+}
+
+// Slider-unit defaults (not fx-state units): volume 100%, speed 1.00× = 100,
+// pitch 0 st, bass 0 dB, reverb 0%. Used by the double-click / Reset-all resets.
+const FX_SLIDER_DEFAULT: Record<string, number> = {
+  "fx-volume": 100, "fx-speed": 100, "fx-pitch": 0, "fx-bass": 0, "fx-reverb": 0,
+};
+
+/** Reset one fx slider to its default and replay its "input" event so the
+ *  bound handler applies the change (fx state + per-track memory + sync push). */
+function resetFxSlider(id: string) {
+  const s = $(id) as HTMLInputElement;
+  s.value = String(FX_SLIDER_DEFAULT[id]);
+  s.dispatchEvent(new Event("input"));
+}
+
+/** The currently-playing track resolved to a local file on this device, or
+ *  undefined when nothing plays / it isn't in this library. */
+function currentLocalTrack(): LocalTrack | undefined {
+  const ref = coord.remote?.playback.track;
+  return ref ? resolve(ref, engine.library) : undefined;
 }
 
 // ── Downloads (desktop ingest — yt-dlp) ────────────────────────────────────
@@ -934,6 +1039,9 @@ function renderNow() {
   fxBtn.title = fx.bypass ? "Effects bypassed — click to re-enable"
                           : "Effects active — click to bypass";
   $("rail-lyrics").classList.toggle("on", lyricsOpen);
+  // Crop is only meaningful for a local yt-bearing track on a synced session.
+  const cropTrack = currentLocalTrack();
+  ($("rail-crop") as HTMLButtonElement).disabled = !(cropTrack?.yt && !coord.demo);
 
   $("lib-status").textContent = `${engine.library.length} local tracks`;
   $("repl-status").textContent = Date.now() < hintUntil ? hint : replicator.status;
