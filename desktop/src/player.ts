@@ -99,6 +99,12 @@ export class LocalPlayer {
   private cropEndMs?: number;
   private endFired = false;
 
+  // Twin of iOS lastPausedAt/autoRestartThreshold: a resume after a long pause
+  // restarts the track from the top instead of picking up mid-song. Owner-local
+  // (only the device with the real element pauses/resumes here).
+  private lastPausedAt: number | null = null;
+  private static readonly AUTO_RESTART_MS = 60_000;
+
   setCrop(startMs?: number, endMs?: number) {
     this.cropStartMs = startMs ?? 0;
     this.cropEndMs = endMs;
@@ -140,17 +146,29 @@ export class LocalPlayer {
     this.current = t;
     this.onTrack?.(t);
     this.endFired = false;
+    this.lastPausedAt = null;   // fresh track — no stale pause timer
     this.el.src = pathToFileURL(t.path).href;  // implicit load()
     this.el.currentTime = (atMs + this.cropStartMs) / 1000;  // crop-relative → absolute
     if (!startPaused) void this.el.play().catch(e => console.log("[player] play failed:", e));
     this.onChange?.();
   }
 
-  resume() { if (this.current) void this.el.play().catch(() => {}); }
-  pause() { this.el.pause(); }
+  resume() {
+    if (!this.current) return;
+    // Paused longer than the threshold → restart at the crop start (iOS resume()).
+    if (this.lastPausedAt !== null
+        && Date.now() - this.lastPausedAt > LocalPlayer.AUTO_RESTART_MS) {
+      this.el.currentTime = this.cropStartMs / 1000;
+      this.endFired = false;
+    }
+    this.lastPausedAt = null;
+    void this.el.play().catch(() => {});
+  }
+  pause() { this.el.pause(); this.lastPausedAt = Date.now(); }
   seekMs(ms: number) {
     this.el.currentTime = (ms + this.cropStartMs) / 1000;
     this.endFired = false;
+    this.lastPausedAt = null;   // a deliberate seek is where the user wants to resume
     this.onChange?.();
   }
   stop() { this.el.pause(); this.el.removeAttribute("src"); this.current = undefined; this.onChange?.(); }

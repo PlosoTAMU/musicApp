@@ -81,12 +81,24 @@ export const positionAt = (pb: PlaybackState, serverNowMs: number): number =>
 export const leaseExpired = (s: SessionState, serverNowMs: number): boolean =>
   serverNowMs > s.leaseMs + LEASE_TTL_MS;
 
+/** Nothing is playing anywhere in the session — no owner, or the owner
+ *  published an empty playback (queue drained / stopped). Queue-adds while
+ *  idle start playback instead of parking (twin of iOS addToQueue /
+ *  queuePlaylist's currentTrack == nil branch). */
+export const sessionIdle = (s: SessionState | undefined): boolean =>
+  !s || !s.ownerDeviceID || !s.playback.track;
+
+// Queue ops are CLIENT-LOCAL intents (rebased against the live queue inside a
+// transaction, never serialized) — extending this union does not touch the
+// wire contract. append/injectFront twin queuePlaylist/injectAtFrontOfQueue.
 export type QueueOp =
   | { kind: "insert"; ref: TrackRef; afterId: string | null }
   | { kind: "remove"; id: string }
   | { kind: "move"; id: string; afterId: string | null }
   | { kind: "consumeHead"; expected: string }
-  | { kind: "replaceAll"; queue: TrackRef[] };
+  | { kind: "replaceAll"; queue: TrackRef[] }
+  | { kind: "append"; refs: TrackRef[] }
+  | { kind: "injectFront"; refs: TrackRef[]; removeIds: string[] };
 
 export const sameId = (a: string, b: string) =>
   a.toLowerCase() === b.toLowerCase();

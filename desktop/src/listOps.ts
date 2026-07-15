@@ -34,12 +34,6 @@ export function moveIndex<T>(list: T[], from: number, to: number): T[] {
   return out;
 }
 
-/** Next index in a wrapping playlist — twin of iOS next()'s (i+1) % count.
- *  Returns 0 for an empty playlist. */
-export function nextPlaylistIndex(i: number, len: number): number {
-  return len > 0 ? (i + 1) % len : 0;
-}
-
 /** Case-insensitive name sort — twin of the iOS library ordering (desktop
  *  previously showed raw dir-walk order). */
 export const byName = <T extends { name: string }>(a: T, b: T): number =>

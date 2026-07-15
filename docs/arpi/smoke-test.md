@@ -138,3 +138,77 @@ Keyboard & chrome:
 - [ ] **Role chip** tooltip: hover "Playing Here" / "Remote" / "Offline Preview" → sensible explanation each.
 - [ ] Play a track with a **very long name** → the title scrolls gently back and forth; short names don't move.
 - [ ] **Retake `shot-*.png`** screenshots once everything above passes (setup, pairing, session, main — plus the new fx/crop UI if you like).
+
+---
+
+## Audit-2 Phase A — Queue-based playlist semantics (live-iOS parity)
+
+Single device (offline preview):
+- [ ] **Play** on a playlist (card ▶, open-header ▶, or menu "Play all") while a song is playing → nothing interrupts; all tracks land in **Up Next**; the button reads **"Play now?"** for ~2 s.
+- [ ] Click **"Play now?"** within 2 s → the first playlist track plays immediately; the remaining tracks sit at the **front** of the queue (no duplicates left behind).
+- [ ] Same double-tap for **Shuffle / "Shuffle now?"** — the confirm keeps the same shuffled order it queued.
+- [ ] Let the 2 s lapse → button returns to ▶ / 🔀; the queued tracks simply stay queued.
+- [ ] Starting Play while "Shuffle now?" is pending (or vice versa) resets the other button.
+- [ ] **No wrap**: let a queued playlist drain → playback stops at the end (no loop back to the top). The "Up Next from Playlist" section is gone for good.
+- [ ] **Loop auto-disables**: turn 🔁 on, then add a song to the queue / queue a playlist / "Play now?" / click a queued row → 🔁 turns off each time (no infinite repeat of one track).
+- [ ] **Idle queue starts playback**: with nothing playing, press ＋ on a library row → the song starts immediately instead of parking. Same with playlist Play while idle → first track plays, rest queue.
+- [ ] **Prev after playing from the queue**: click a queued row to jump to it, then press ⏮ → you return to the song you left (not a restart).
+- [ ] **Click the playing row** (library, open playlist, or queue) → toggles pause/resume; clicking it again resumes. Other rows still play fresh.
+
+Two devices (real secret):
+- [ ] Start a playlist from the **desktop** → the **phone's** queue shows every upcoming playlist track; reordering/removing on the phone changes what plays next on desktop.
+- [ ] "Play now?" double-tap on desktop while the phone is mid-song → desktop takes over immediately, rest of the playlist queued at the front, phone mirrors.
+
+---
+
+## Audit-2 Phase B — Queue panel parity
+
+Single device (offline preview), with a few songs played and queued:
+- [ ] **Previously Played**: after a couple of natural track advances (or ⏭), the Up Next panel shows a muted **Previously Played** divider with the past tracks, oldest at top / most recent at the bottom.
+- [ ] Click a **Previously Played** row → it plays; press ⏮ afterward → returns to the song you left (current was pushed onto history first).
+- [ ] **Status strip**: while a song is playing, a small "PLAYING FROM QUEUE · N songs" strip sits above the queue; N = previous + current + upcoming, and it updates as songs advance / are queued.
+- [ ] **Queue-row context menu**: right-click a queued (resolvable) row → the full row menu (Play / Add to queue / Add to playlist / Rename / Song info / Crop / Redownload / Delete). Ghost rows have no menu.
+- [ ] **Drag-to-queue**: drag a **library** row onto the Up Next panel → a dashed drop cue appears; releasing adds it to the queue (hint confirms "Queued …"). Works onto the empty-queue state too.
+- [ ] Dragging a **queue** row still only reorders it (the library-drag and reorder gestures don't cross).
+- [ ] "Clear" still empties the upcoming queue; the Previously Played list is history and is kept.
+
+---
+
+## Audit-2 Phase C — Downloads parity (per-track playlist/album)
+
+Requires yt-dlp reachable + a music folder. (Static gate covered the parsers; this is the live pass.)
+- [ ] **YouTube playlist** (`youtube.com/playlist?list=…`): downloads **one track at a time**; status shows "Track N/M — Downloading… X%". Tracks already in the library are skipped (final line notes "… already had").
+- [ ] Kill one track mid-playlist (e.g. an unavailable video) → it lands as its **own row** in the failed panel; the rest keep going (no single aggregate error).
+- [ ] Final status reads "Playlist done — X added[, Y already had][, Z failed]" and clears after a few seconds.
+- [ ] Re-run the same YouTube playlist → every track is skipped ("All N tracks already downloaded"), nothing re-fetched.
+- [ ] **Spotify playlist / album** (`open.spotify.com/playlist/…` or `/album/…`): resolves the set via the public embed page, then downloads each track via `ytsearch1:<artist> - <title>` one at a time. Files land tagged `[ytid]` and sync up.
+- [ ] A private/empty Spotify or YouTube set → a clear error in the failed panel (not a crash).
+- [ ] The post-download **"add to playlist" prompt does NOT pop** during a batch (only for single-link downloads).
+- [ ] Single-track YouTube + Spotify **track** links still download exactly as before, with the duplicate guard and the post-download playlist prompt.
+
+---
+
+## Audit-2 Phase D — Now Playing rail + transport polish
+
+Single device (offline preview), a yt-sourced track playing:
+- [ ] **Crop from the rail**: a ✂ button sits in the rail action row; it's dimmed/disabled when nothing local+yt is playing (and in Offline Preview). With a yt track playing on a real session, clicking it opens the crop editor.
+- [ ] **Rename current track**: double-click the big Now Playing title → the rename modal opens pre-filled; renaming updates the file + row (and, with a secret, the phone).
+- [ ] **fx per-slider reset**: nudge a slider, then **double-click** it → it snaps back to default (Volume 100%, Speed 1.00×, Pitch 0st, Bass 0dB, Reverb 0%).
+- [ ] **Reset all**: the link under the sliders resets Speed/Pitch/Bass/Reverb but **leaves Volume** where it is.
+- [ ] **Hold ⏪**: a quick click still jumps −10s; press-and-hold scrubs backward (~0.5s every 200ms) until release, stopping at 0:00.
+- [ ] **Hold ⏩**: a quick click still jumps +10s; press-and-hold plays at **2×** until you release, then returns to the normal rate (works even with effects bypassed).
+- [ ] **>60s pause auto-restart**: pause a track, wait just over a minute, press play → it restarts from the beginning. Pausing briefly (<60s) resumes in place. Seeking while paused, then resuming, honors the seek.
+
+Two devices (real secret):
+- [ ] Hold ⏩ on the **owner** → the following device's progress speeds up to match (rate re-published); releasing returns both to normal.
+- [ ] On a **follower**, ⏪/⏩ are plain −/+10s (no hold effects) — no command spam.
+
+---
+
+## Audit-2 Phase E — Small parity + cosmetics
+
+Single device (offline preview + a few playlists):
+- [ ] **Bulk "Add songs"**: open a playlist → the header has a **＋** button → a checkmark modal lists the library; multi-select several, the footer shows "N selected", **Add** files them all into the playlist at once. A search box narrows the list; songs already in the playlist show "added" and can't be re-picked.
+- [ ] **Playlist card durations**: every playlist card (and the open header) shows "**count · m:ss**" (was count only). The duration fills in shortly after the cards appear and updates when you add/remove tracks.
+- [ ] **rail-addpl tooltip**: hover the ▤+ button in the Now Playing rail → it reads "**Add current track to a playlist**" (was "…to open playlist").
+- [ ] **Effects-bypass default**: on a **fresh install** (clear app data / new machine), effects start **bypassed** (rail fx button slashed), matching iOS. Existing installs keep whatever you last set.
