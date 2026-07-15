@@ -171,3 +171,17 @@ Single device (offline preview), with a few songs played and queued:
 - [ ] **Drag-to-queue**: drag a **library** row onto the Up Next panel → a dashed drop cue appears; releasing adds it to the queue (hint confirms "Queued …"). Works onto the empty-queue state too.
 - [ ] Dragging a **queue** row still only reorders it (the library-drag and reorder gestures don't cross).
 - [ ] "Clear" still empties the upcoming queue; the Previously Played list is history and is kept.
+
+---
+
+## Audit-2 Phase C — Downloads parity (per-track playlist/album)
+
+Requires yt-dlp reachable + a music folder. (Static gate covered the parsers; this is the live pass.)
+- [ ] **YouTube playlist** (`youtube.com/playlist?list=…`): downloads **one track at a time**; status shows "Track N/M — Downloading… X%". Tracks already in the library are skipped (final line notes "… already had").
+- [ ] Kill one track mid-playlist (e.g. an unavailable video) → it lands as its **own row** in the failed panel; the rest keep going (no single aggregate error).
+- [ ] Final status reads "Playlist done — X added[, Y already had][, Z failed]" and clears after a few seconds.
+- [ ] Re-run the same YouTube playlist → every track is skipped ("All N tracks already downloaded"), nothing re-fetched.
+- [ ] **Spotify playlist / album** (`open.spotify.com/playlist/…` or `/album/…`): resolves the set via the public embed page, then downloads each track via `ytsearch1:<artist> - <title>` one at a time. Files land tagged `[ytid]` and sync up.
+- [ ] A private/empty Spotify or YouTube set → a clear error in the failed panel (not a crash).
+- [ ] The post-download **"add to playlist" prompt does NOT pop** during a batch (only for single-link downloads).
+- [ ] Single-track YouTube + Spotify **track** links still download exactly as before, with the duplicate guard and the post-download playlist prompt.

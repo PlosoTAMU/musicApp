@@ -16,10 +16,10 @@ import { LocalTrack, norm, resolve } from "./player";
 import { LyricsStore, LyricLine, parseLRC, activeIndex } from "./lyrics";
 import { BeatFeed, BeatOutput } from "./beat";
 import { AudioGraph } from "./audioGraph";
-import { downloadTrack } from "./download";
+import { downloadTrack, resolvePlaylist, downloadPlaylistItem } from "./download";
 import { PlaylistSync, CloudPlaylist } from "./playlists";
 import { SettingsSync } from "./settingsSync";
-import { extractYtId } from "./urls";
+import { extractYtId, parsePlaylistURL, PlaylistLink } from "./urls";
 import { shuffle, fmtDuration, moveIndex } from "./listOps";
 import { TrackFxStore } from "./trackFx";
 import { showCropSheet } from "./cropSheet";
@@ -454,6 +454,9 @@ async function startDownload() {
   const url = input.value.trim();
   if (!url) return;
   if (!musicDir) { status.textContent = "Choose a music folder first"; return; }
+  // Bare playlist/album link → per-track batch pipeline (YouTube or Spotify).
+  const set = parsePlaylistURL(url);
+  if (set) { input.value = ""; await downloadPlaylistBatch(set); return; }
   // Duplicate guard (YouTube only — Spotify's yt id isn't known until it resolves).
   const yt = extractYtId(url);
   if (yt) {
@@ -485,6 +488,61 @@ async function startDownload() {
     pushFailed("Download", msg);
     status.textContent = msg;
   }
+}
+
+/** Whole-set download — twin of iOS downloadPlaylist + its sequential queue.
+ *  Resolve the set to tracks, skip ones already in the library, then download
+ *  ONE AT A TIME with per-track progress; each failure lands its own row in the
+ *  failed panel (not one aggregate error). The post-download playlist prompt is
+ *  never raised here — this is the batch path (iOS isBatchDownloading). */
+async function downloadPlaylistBatch(link: PlaylistLink) {
+  const status = $("dl-status");
+  let items;
+  try {
+    items = await resolvePlaylist(link, p => { status.textContent = p.label; });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    pushFailed(link.service === "spotify" ? "Spotify set" : "Playlist", msg);
+    status.textContent = msg;
+    return;
+  }
+
+  // Skip tracks already downloaded — YouTube by videoID (reliable), Spotify by
+  // normalized title (best-effort; the yt-dlp filename differs, so a re-run may
+  // re-fetch — a known edge, since desktop keys the library by YouTube id).
+  const pending = items.filter(it => it.videoID
+    ? !engine.library.some(t => t.yt === it.videoID)
+    : !engine.library.some(t => norm(t.name) === norm(it.title)));
+  const skipped = items.length - pending.length;
+  if (!pending.length) {
+    status.textContent = skipped
+      ? `All ${skipped} track${skipped === 1 ? "" : "s"} already downloaded`
+      : "Nothing to download";
+    return;
+  }
+
+  let done = 0, failedCount = 0;
+  for (let i = 0; i < pending.length; i++) {
+    const it = pending[i];
+    try {
+      await downloadPlaylistItem(it, musicDir!,
+        p => { status.textContent = `Track ${i + 1}/${pending.length} — ${p.label}`; });
+      done++;
+      engine.loadLibrary(musicDir!);   // surface each finished track immediately…
+      renderLibrary();
+      replicator.syncUp();             // …and push it toward the phone
+    } catch (e) {
+      failedCount++;
+      pushFailed(it.title, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  status.textContent = `Playlist done — ${done} added` +
+    (skipped ? `, ${skipped} already had` : "") +
+    (failedCount ? `, ${failedCount} failed` : "");
+  setTimeout(() => {
+    if (status.textContent?.startsWith("Playlist done")) status.textContent = "";
+  }, 6000);
 }
 
 // ── Bluetooth handoff (desktop half) ───────────────────────────────────────
