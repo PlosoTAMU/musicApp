@@ -138,3 +138,23 @@ Keyboard & chrome:
 - [ ] **Role chip** tooltip: hover "Playing Here" / "Remote" / "Offline Preview" → sensible explanation each.
 - [ ] Play a track with a **very long name** → the title scrolls gently back and forth; short names don't move.
 - [ ] **Retake `shot-*.png`** screenshots once everything above passes (setup, pairing, session, main — plus the new fx/crop UI if you like).
+
+---
+
+## Audit-2 Phase A — Queue-based playlist semantics (live-iOS parity)
+
+Single device (offline preview):
+- [ ] **Play** on a playlist (card ▶, open-header ▶, or menu "Play all") while a song is playing → nothing interrupts; all tracks land in **Up Next**; the button reads **"Play now?"** for ~2 s.
+- [ ] Click **"Play now?"** within 2 s → the first playlist track plays immediately; the remaining tracks sit at the **front** of the queue (no duplicates left behind).
+- [ ] Same double-tap for **Shuffle / "Shuffle now?"** — the confirm keeps the same shuffled order it queued.
+- [ ] Let the 2 s lapse → button returns to ▶ / 🔀; the queued tracks simply stay queued.
+- [ ] Starting Play while "Shuffle now?" is pending (or vice versa) resets the other button.
+- [ ] **No wrap**: let a queued playlist drain → playback stops at the end (no loop back to the top). The "Up Next from Playlist" section is gone for good.
+- [ ] **Loop auto-disables**: turn 🔁 on, then add a song to the queue / queue a playlist / "Play now?" / click a queued row → 🔁 turns off each time (no infinite repeat of one track).
+- [ ] **Idle queue starts playback**: with nothing playing, press ＋ on a library row → the song starts immediately instead of parking. Same with playlist Play while idle → first track plays, rest queue.
+- [ ] **Prev after playing from the queue**: click a queued row to jump to it, then press ⏮ → you return to the song you left (not a restart).
+- [ ] **Click the playing row** (library, open playlist, or queue) → toggles pause/resume; clicking it again resumes. Other rows still play fresh.
+
+Two devices (real secret):
+- [ ] Start a playlist from the **desktop** → the **phone's** queue shows every upcoming playlist track; reordering/removing on the phone changes what plays next on desktop.
+- [ ] "Play now?" double-tap on desktop while the phone is mid-song → desktop takes over immediately, rest of the playlist queued at the front, phone mirrors.

@@ -82,5 +82,14 @@ export function rebase(op: QueueOp, queue: TrackRef[]): TrackRef[] | null {
       return queue[0] && sameId(queue[0].id, op.expected) ? queue.slice(1) : null;
     case "replaceAll":
       return op.queue;
+    case "append":
+      // Bulk enqueue — twin of queuePlaylist's queue.append(contentsOf:).
+      return op.refs.length ? [...queue, ...op.refs] : null;
+    case "injectFront": {
+      // Twin of injectAtFrontOfQueue: pull the set out of wherever it sits,
+      // then plant the not-now-playing remainder at the head.
+      const rm = new Set(op.removeIds.map(id => id.toLowerCase()));
+      return [...op.refs, ...queue.filter(t => !rm.has(t.id.toLowerCase()))];
+    }
   }
 }

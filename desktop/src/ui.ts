@@ -1006,12 +1006,12 @@ function addToPlaylistMenu(x: number, y: number, ref: { id: string; name: string
   showMenu(x, y, items);
 }
 
-/** Play a queued track now — resolve, drop it from the queue, play it. */
+/** Play a queued track now — resolve, drop it from the queue, play it
+ *  (engine pushes the current track onto prev-history first, like iOS). */
 function playFromQueue(ref: TrackRef) {
   const local = resolve(ref, engine.library);
   if (!local) { showHint("Not on this device yet"); return; }
-  engine.queueRemove(ref.id);
-  run(() => engine.playLocal(local));
+  run(() => engine.playFromQueue(local, ref.id));
 }
 
 /** Text-input modal — Electron has no window.prompt(). Reused for playlists. */
@@ -1170,7 +1170,35 @@ async function createPlaylist() {
   await playlistSync.create(name);
 }
 
+// Playlist play is queue-based with a 2 s double-tap confirm — twin of the
+// live iOS PlaylistActionButtons. First activation enqueues the whole list
+// into the SHARED queue (visible/reorderable on every device) without
+// interrupting; the button flips to "Play now?"/"Shuffle now?", and a second
+// activation within 2 s injects those same tracks at the queue front and
+// plays immediately. The captured track order is reused by the second tap,
+// so a shuffle confirms with the order the user just heard about.
+let plPending: { plId: string; kind: "play" | "shuffle"; tracks: LocalTrack[] } | null = null;
+let plPendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearPlPending() {
+  if (plPendingTimer) clearTimeout(plPendingTimer);
+  plPendingTimer = null;
+  plPending = null;
+}
+
+const isPlPending = (plId: string, kind: "play" | "shuffle") =>
+  !!plPending && plPending.plId === plId && plPending.kind === kind;
+
 function playPlaylist(p: CloudPlaylist, doShuffle = false) {
+  const kind = doShuffle ? "shuffle" : "play";
+  if (isPlPending(p.id, kind)) {
+    const tracks = plPending!.tracks;
+    clearPlPending();
+    run(() => engine.injectAtFront(tracks));
+    renderLibrary();
+    return;
+  }
+  clearPlPending();   // starting Play resets a pending Shuffle and vice versa
   let locals = p.tracks
     .map(tr => resolve({ id: tr.id, name: tr.name, folder: "", yt: tr.yt }, engine.library))
     .filter((t): t is LocalTrack => !!t);
@@ -1180,7 +1208,11 @@ function playPlaylist(p: CloudPlaylist, doShuffle = false) {
     return;
   }
   if (doShuffle) locals = shuffle(locals);
-  run(() => engine.playAll(locals));
+  run(() => engine.queueMany(locals));
+  plPending = { plId: p.id, kind, tracks: locals };
+  plPendingTimer = setTimeout(() => { clearPlPending(); renderLibrary(); }, 2000);
+  showHint(`Queued ${locals.length} song${locals.length === 1 ? "" : "s"} — click again to play now`);
+  renderLibrary();
 }
 
 // Open-playlist total duration, probed lazily (bounded to the open list, not
@@ -1211,8 +1243,10 @@ async function computePlaylistDuration(p: CloudPlaylist) {
 function playlistMenu(x: number, y: number, p: CloudPlaylist) {
   showMenu(x, y, [
     { label: "Open", onClick: () => openPlaylist(p.id) },
-    { label: "Play all", onClick: () => playPlaylist(p) },
-    { label: "Shuffle all", onClick: () => playPlaylist(p, true) },
+    { label: isPlPending(p.id, "play") ? "Play now?" : "Play all",
+      onClick: () => playPlaylist(p) },
+    { label: isPlPending(p.id, "shuffle") ? "Shuffle now?" : "Shuffle all",
+      onClick: () => playPlaylist(p, true) },
     "sep",
     { label: "Rename…", onClick: () => showPrompt("Rename playlist", p.name, v => void playlistSync.rename(p.id, v)) },
     { label: "Delete", danger: true, onClick: () => showConfirm(`Delete playlist “${p.name}”?`, () => {
@@ -1222,11 +1256,26 @@ function playlistMenu(x: number, y: number, p: CloudPlaylist) {
   ]);
 }
 
+/** Play/Shuffle button for a playlist — flips to "Play now?"/"Shuffle now?"
+ *  while its 2 s confirm window is open (twin of the iOS capsule buttons). */
+function plActionBtn(p: CloudPlaylist, kind: "play" | "shuffle"): HTMLButtonElement {
+  const pending = isPlPending(p.id, kind);
+  const b = rowBtn(
+    pending ? (kind === "play" ? "Play now?" : "Shuffle now?") : (kind === "play" ? "▶" : "🔀"),
+    pending ? "Click again to play immediately"
+      : kind === "play" ? "Play all — adds to the queue" : "Shuffle all — adds to the queue",
+    () => playPlaylist(p, kind === "shuffle"));
+  if (pending) b.classList.add("confirm");
+  return b;
+}
+
 function renderPlaylists() {
   const n = playlistSync.playlists.length;
   $("pl-count").textContent = n ? String(n) : "";
   const listEl = $("pl-list");
   listEl.innerHTML = "";
+  const playingRef = coord.remote?.playback.track;
+  const playingLocal = playingRef ? resolve(playingRef, engine.library) : undefined;
 
   const open = openPlaylistId ? playlistSync.get(openPlaylistId) : undefined;
   if (openPlaylistId && !open) openPlaylistId = null; // deleted elsewhere
@@ -1239,8 +1288,8 @@ function renderPlaylists() {
     head.appendChild(rowBtn("←", "All playlists", () => { openPlaylistId = null; renderLibrary(); }));
     head.appendChild(titleSpan(open.name));
     head.appendChild(chipSpan(`${open.tracks.length} · ${dur != null ? fmtDuration(dur) : "…"}`));
-    head.appendChild(rowBtn("▶", "Play all", () => playPlaylist(open)));
-    head.appendChild(rowBtn("🔀", "Shuffle all", () => playPlaylist(open, true)));
+    head.appendChild(plActionBtn(open, "play"));
+    head.appendChild(plActionBtn(open, "shuffle"));
     head.appendChild(rowBtn("✎", "Rename playlist",
       () => showPrompt("Rename playlist", open.name, v => void playlistSync.rename(open.id, v))));
     head.appendChild(rowBtn("🗑", "Delete playlist", () => showConfirm(
@@ -1273,6 +1322,12 @@ function renderPlaylists() {
       li.appendChild(thumbEl(tr.yt));
       li.appendChild(titleSpan(tr.name));
       if (!local) li.appendChild(chipSpan("not here yet"));
+      // Clicking the playing track's row toggles pause/resume (iOS handleTap);
+      // any other row plays that track.
+      else if (playingLocal && sameId(playingLocal.id, local.id)) {
+        li.classList.add("playing");
+        li.onclick = rowClick(toggleCmd);
+      }
       else li.onclick = rowClick(() => run(() => engine.playLocal(local)));
       li.appendChild(rowBtn("✕", "Remove from playlist",
         () => void playlistSync.removeTrack(open.id, tr.id)));
@@ -1291,8 +1346,8 @@ function renderPlaylists() {
       li.appendChild(thumbEl(p.tracks.find(t => t.yt)?.yt));   // cover = first art
       li.appendChild(titleSpan(p.name));
       li.appendChild(chipSpan(String(p.tracks.length)));
-      li.appendChild(rowBtn("▶", "Play all", () => playPlaylist(p)));
-      li.appendChild(rowBtn("🔀", "Shuffle all", () => playPlaylist(p, true)));
+      li.appendChild(plActionBtn(p, "play"));
+      li.appendChild(plActionBtn(p, "shuffle"));
       const moreBtn = document.createElement("button");
       moreBtn.className = "row-btn"; moreBtn.textContent = "⋯"; moreBtn.title = "More actions";
       moreBtn.onclick = () => { const r = moreBtn.getBoundingClientRect(); playlistMenu(r.right, r.bottom, p); };
@@ -1311,13 +1366,18 @@ function renderLibrary() {
   if (coord.role === "none") return;
   renderPlaylists();
 
+  // "Playing" highlight + pause/resume toggle match by resolved id, not name —
+  // duplicate titles no longer double-highlight [U12].
+  const playingRef = coord.remote?.playback.track;
+  const playingLocal = playingRef ? resolve(playingRef, engine.library) : undefined;
+
   // Up Next — from REMOTE refs (session truth); ghosts flagged, not hidden.
   const queueEl = $("queue");
   queueEl.innerHTML = "";
   const q = coord.remote?.queue ?? [];
   $("upnext-count").textContent = q.length ? String(q.length) : "";
-  $("queue-clear").hidden = q.length === 0 && !engine.inPlaylistMode;
-  if (q.length === 0 && !engine.inPlaylistMode) {
+  $("queue-clear").hidden = q.length === 0;
+  if (q.length === 0) {
     queueEl.innerHTML = `<div class="list-empty">Queue is empty — hover a library song and press ＋, or drag songs in</div>`;
   }
   q.forEach((ref, i) => {
@@ -1345,8 +1405,14 @@ function renderLibrary() {
     const t = document.createElement("span");
     t.className = "title"; t.textContent = ref.name;
     li.appendChild(t);
-    // A resolvable queued track plays on click (drops out of the queue).
-    if (!ghost) li.onclick = rowClick(() => playFromQueue(ref));
+    // A resolvable queued track plays on click (drops out of the queue) —
+    // unless it IS the playing track (a duplicate), then click toggles.
+    if (!ghost) {
+      const localQ = resolve(ref, engine.library);
+      li.onclick = rowClick(
+        localQ && playingLocal && sameId(playingLocal.id, localQ.id)
+          ? toggleCmd : () => playFromQueue(ref));
+    }
     if (ghost) {
       const chip = document.createElement("span");
       chip.className = "chip";
@@ -1360,24 +1426,6 @@ function renderLibrary() {
     queueEl.appendChild(li);
   });
 
-  // Up Next from Playlist — owner-only playlist remainder (iOS currentPlaylist,
-  // never synced). A follower's playlistUpNext is empty, so this stays hidden.
-  const plUp = coord.role === "owner" ? engine.playlistUpNext : [];
-  if (plUp.length) {
-    const head = document.createElement("li");
-    head.textContent = "Up Next from Playlist";
-    head.style.cssText = "list-style:none; opacity:.55; font-size:11px; " +
-      "text-transform:uppercase; letter-spacing:.08em; padding:10px 0 2px; cursor:default";
-    queueEl.appendChild(head);
-    for (const t of plUp) {
-      const li = document.createElement("li");
-      li.appendChild(thumbEl(t.yt));
-      li.appendChild(titleSpan(t.name));
-      li.onclick = rowClick(() => engine.playFromPlaylist(t));   // jump, stay in playlist mode
-      queueEl.appendChild(li);
-    }
-  }
-
   // Library — filtered, capped for DOM sanity (cap surfaced below [U6]).
   const listEl = $("library-list");
   listEl.innerHTML = "";
@@ -1389,10 +1437,6 @@ function renderLibrary() {
     listEl.innerHTML = `<div class="list-empty">${
       engine.library.length === 0 ? "Choose a music folder below" : "No matches"}</div>`;
   }
-  // "Playing" highlight matches by resolved id, not name — duplicate titles
-  // no longer double-highlight [U12].
-  const playingRef = coord.remote?.playback.track;
-  const playingLocal = playingRef ? resolve(playingRef, engine.library) : undefined;
   for (const t of rows) {
     const li = document.createElement("li");
 
@@ -1408,8 +1452,11 @@ function renderLibrary() {
       continue;
     }
 
-    if (playingLocal && sameId(playingLocal.id, t.id)) li.className = "playing";
-    li.onclick = rowClick(() => run(() => engine.playLocal(t)));
+    // Clicking the playing track's row = pause/resume toggle, like tapping the
+    // current row on iOS (DownloadRow.handleTap); other rows play fresh.
+    const isCurrent = !!playingLocal && sameId(playingLocal.id, t.id);
+    if (isCurrent) li.className = "playing";
+    li.onclick = rowClick(isCurrent ? toggleCmd : () => run(() => engine.playLocal(t)));
     li.oncontextmenu = e => { e.preventDefault(); trackMenu(e.clientX, e.clientY, t); };
 
     li.appendChild(thumbEl(t.yt));

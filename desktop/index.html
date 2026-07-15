@@ -315,6 +315,10 @@
     }
     .panel li:hover .row-btn { opacity: 1; }
     .row-btn:hover { color: var(--red-light); }
+    /* Playlist Play/Shuffle in their 2 s "…now?" confirm window — always
+       visible + hot, like the iOS emberLight capsule. */
+    .row-btn.confirm { opacity: 1; color: var(--red-light); font-weight: 700;
+                       white-space: nowrap; }
     .list-empty { color: var(--bone-faint); font-size: 13px; padding: 12px 4px; }
     .panel-head { display: flex; align-items: center; }
     .panel-head .eyebrow { flex: 1; }
