@@ -731,6 +731,7 @@ function vizLoop(now: number) {
   const ownerPlaying = coord.role === "owner" && engine.player.playing;
   const btn = $("btn-toggle");
   const bpmChip = $("bpm");
+  const art = $("art");
 
   if (!ownerPlaying) {
     if (!vizIdle) {
@@ -739,7 +740,9 @@ function vizLoop(now: number) {
       vizCtx?.clearRect(0, 0, cv.clientWidth, cv.clientHeight);
       btn.style.transform = "";
       btn.style.boxShadow = "";
-      bpmChip.hidden = true;
+      art.style.transform = "";
+      art.style.boxShadow = "";
+      bpmChip.classList.add("off");
     }
     return;
   }
@@ -774,11 +777,17 @@ function vizLoop(now: number) {
   btn.style.boxShadow =
     `0 6px ${Math.round(24 + out.pulse * 30)}px rgba(241,43,38,${(0.45 + out.pulse * 0.4).toFixed(3)})`;
 
+  // The thumbnail throbs on every beat — twin of the iOS PulsingThumbnailView,
+  // with a shadow bloom that swells on the hit.
+  art.style.transform = `scale(${(1 + out.pulse * 0.06).toFixed(4)})`;
+  art.style.boxShadow =
+    `0 ${Math.round(8 + out.pulse * 6)}px ${Math.round(22 + out.pulse * 26)}px rgba(0,0,0,${(0.45 + out.pulse * 0.35).toFixed(3)})`;
+
   if (out.confidence > 0.5) {
-    bpmChip.hidden = false;
+    bpmChip.classList.remove("off");
     bpmChip.textContent = `${Math.round(out.bpm)} bpm`;
   } else {
-    bpmChip.hidden = true;
+    bpmChip.classList.add("off");
   }
 }
 

@@ -169,13 +169,16 @@
       88%, 100% { transform: translateX(var(--marq, 0px)); }
     }
 
-    /* Now-playing artwork (YouTube thumb via the track's yt id) */
+    /* Now-playing artwork (YouTube thumb via the track's yt id).
+       transform/box-shadow are driven per-frame by the beat engine so the
+       thumbnail pulses with the beat (twin of the iOS PulsingThumbnailView) —
+       no CSS transition on them or the throb would smear. */
     #art {
       width: 168px; height: 168px; border-radius: 22px; overflow: hidden;
       background: var(--smoke-raised); border: 1px solid var(--seam);
       display: flex; align-items: center; justify-content: center;
       font-size: 46px; color: var(--bone-faint); margin: 10px 0 2px;
-      flex: none;
+      flex: none; will-change: transform, box-shadow;
     }
     #art img { width: 100%; height: 100%; object-fit: cover; }
 
@@ -246,6 +249,11 @@
     .rail-top { display: flex; align-items: center; gap: 10px; }
     /* nowrap keeps the label one line; chips shrink + ellipsize instead. */
     .rail-top .eyebrow { flex: 1; min-width: 0; white-space: nowrap; }
+    /* BPM rides the far right of the row, away from the "Now Playing" tag.
+       It toggles with visibility (not display) so its slot never collapses —
+       the tag and the action row stay put whether or not a tempo is locked. */
+    .rail-top #bpm { margin-left: auto; flex: none; }
+    .rail-top #bpm.off { visibility: hidden; }
     .rail-actions { display: flex; gap: 8px; }
     .rail-actions button {
       position: relative;
@@ -543,7 +551,7 @@
         <div class="rail-top">
           <div class="eyebrow">Now Playing
             <span id="owner-dead" class="chip warn" hidden>owner offline</span>
-            <span id="bpm" class="chip" hidden></span>
+            <span id="bpm" class="chip off"></span>
           </div>
           <div class="rail-actions">
             <button id="rail-loop" title="Loop this track">

@@ -105,9 +105,21 @@ final class PlaybackSyncEngine: ObservableObject {
             .store(in: &bag)
     }
 
+    // Ask the current owner to re-publish once per distinct owner we observe.
+    // Covers the join-mid-playback case: our first snapshot may be a cached or
+    // long-stale frame, so we pull a fresh authoritative state (new anchor)
+    // instead of trusting whatever the doc held when we attached.
+    private var syncedOwner: String?
+
     private func handleRemote(_ state: SessionState) {
         mirror = state.playback
         mirrorTrack = state.playback.track.flatMap { resolver.resolve($0) }
+
+        let owner = state.ownerDeviceID
+        if !owner.isEmpty, owner != SyncDevice.id, owner != syncedOwner {
+            syncedOwner = owner
+            commands.send(.requestStatus)
+        }
 
         // Queue: resolve remote refs to local tracks; track ghosts separately.
         let resolvedPairs = state.queue.map { ($0, resolver.resolve($0)) }
@@ -122,15 +134,19 @@ final class PlaybackSyncEngine: ObservableObject {
     }
 
     private func applyCommand(_ cmd: SyncCommand) {
+        // Resync ping — answer with our authoritative state, no transport change.
+        if case .requestStatus = cmd { publishNow(); return }
+
         isApplyingRemotePlaybackCommand = true
         defer { isApplyingRemotePlaybackCommand = false }
-        
+
         switch cmd {
         case .play: player.resume()
         case .pause: player.pause()
         case .next: player.next()
         case .previous: player.previous()
         case .seek(let ms): player.seek(to: Double(ms) / 1000.0)
+        case .requestStatus: break   // handled above
         }
         // Direct publish removes the observer's 200 ms debounce from the remote
         // command round trip. Transport mutations land via audioQueue → main
@@ -403,6 +419,8 @@ final class PlaybackSyncEngine: ObservableObject {
             pb.anchorMs = now
         case .next, .previous:
             return  // target track unknown until the owner's snapshot arrives
+        case .requestStatus:
+            return  // not a transport command — never routed through here
         }
         mirror = pb
     }

@@ -10,6 +10,10 @@ import FirebaseFirestore
 enum SyncCommand {
     case play, pause, next, previous
     case seek(ms: Int)
+    /// Resync ping: a device that just joined asks the current owner to
+    /// re-publish its authoritative playback (fresh anchor). Not a transport
+    /// mutation — the owner answers with a publish, nothing plays.
+    case requestStatus
 
     var dict: [String: Any] {
         var d: [String: Any] = ["by": SyncDevice.id, "at": FieldValue.serverTimestamp()]
@@ -19,6 +23,7 @@ enum SyncCommand {
         case .next: d["t"] = "next"
         case .previous: d["t"] = "prev"
         case .seek(let ms): d["t"] = "seek"; d["ms"] = ms
+        case .requestStatus: d["t"] = "status"
         }
         return d
     }
@@ -30,6 +35,7 @@ enum SyncCommand {
         case "next": self = .next
         case "prev": self = .previous
         case "seek": guard let ms = dict["ms"] as? Int else { return nil }; self = .seek(ms: ms)
+        case "status": self = .requestStatus
         default: return nil
         }
     }

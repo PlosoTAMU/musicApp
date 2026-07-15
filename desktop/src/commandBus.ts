@@ -10,7 +10,12 @@ import { serverClock } from "./serverClock";
 
 export type Command =
   | { t: "play" } | { t: "pause" } | { t: "next" } | { t: "prev" }
-  | { t: "seek"; ms: number };
+  | { t: "seek"; ms: number }
+  // Resync ping: a device that just joined asks the current owner to
+  // re-publish its authoritative playback (fresh anchor). Not a transport
+  // mutation — the owner answers with a publish, nothing plays. Twin of
+  // SyncCommand.requestStatus.
+  | { t: "status" };
 
 const STALE_MS = 30_000;
 

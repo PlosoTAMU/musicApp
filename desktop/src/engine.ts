@@ -6,7 +6,7 @@ import { QueueSync, rebase } from "./queueSync";
 import { CommandBus, Command } from "./commandBus";
 import { LocalPlayer, LocalTrack, scanLibrary, resolve, toRef } from "./player";
 import {
-  PlaybackState, SessionState, TrackRef, positionAt, sameId, sessionIdle,
+  PlaybackState, SessionState, TrackRef, DEVICE_ID, positionAt, sameId, sessionIdle,
 } from "./protocol";
 import { serverClock } from "./serverClock";
 
@@ -111,7 +111,21 @@ export class SyncEngine {
     this.player.queue = s.queue
       .map(r => resolve(r, this.library))
       .filter((t): t is LocalTrack => !!t);
+    this.maybeRequestStatus(s);
     this.onChange?.();
+  }
+
+  // Ask the current owner to re-publish once per distinct owner we observe.
+  // Covers the join-mid-playback case: our first snapshot may be a cached or
+  // long-stale frame, so we pull a fresh authoritative state (new anchor)
+  // instead of trusting whatever the doc happened to hold when we attached.
+  private syncedOwner: string | null = null;
+  private maybeRequestStatus(s: SessionState) {
+    const owner = s.ownerDeviceID;
+    if (owner && !sameId(owner, DEVICE_ID) && owner !== this.syncedOwner) {
+      this.syncedOwner = owner;
+      this.commands.send({ t: "status" });
+    }
   }
 
   // ── Controls: one call site, both roles (command-bus bridge) ───────────
@@ -128,6 +142,8 @@ export class SyncEngine {
   }
 
   private applyLocal(cmd: Command) {
+    // Resync ping — answer with our authoritative state, no transport change.
+    if (cmd.t === "status") { this.publish(); return; }
     switch (cmd.t) {
       case "play": this.player.resume(); break;
       case "pause": this.player.pause(); break;
