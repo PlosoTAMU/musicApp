@@ -28,6 +28,7 @@ audit findings (see `docs/arpi/desktop-parity-findings.md`), strict priority ord
 - 2026-07-14 P4 crop editor gated to yt-bearing tracks — crop lives on the yt-keyed library doc; local-only files have no doc to carry it. Known parity edge, recorded here.
 - 2026-07-14 P5 bare Spotify playlist/album links are REJECTED with a pointer to YouTube playlists — the oEmbed→ytsearch1 trick resolves one title, so it would download garbage; real support needs iOS's per-track playlist scraping (not ported).
 - 2026-07-14 P5 local artwork extraction (item 27) DEFERRED — needs an audio-tag parser (ID3/MP4) or an npm dep; low priority per the plan. Rows/hero keep the neutral placeholder for non-yt files.
+- 2026-07-14 AUDIT 2 discovery: iOS `loadPlaylist` (playlist-mode wrap/interleave) is DEAD CODE — live iOS playlist play is queue-based (`queuePlaylist` + 2s "Play now?" `injectAtFrontOfQueue`, rides the SYNCED queue). P3 item 16 twinned the dead path; audit-2 plan Phase A proposes reversing it (pending user call).
 
 ## ASSUMPTIONS
 - [unconfirmed] Firestore doc contracts stay frozen; parity work must not change wire field names (they are the cross-platform contract — see SettingsSync.swift header).
@@ -47,7 +48,10 @@ audit findings (see `docs/arpi/desktop-parity-findings.md`), strict priority ord
 - **Phase 4** (Web Audio rebuild): one graph in new `audioGraph.ts` [18]; bass −10..+20 dB with iOS 5-band shaping + settingsSync clamp fix [#14/19]; pitch ±12 st via vendored WSOLA AudioWorklet, local-only [#8/20]; per-track fx memory `trackFx.ts` [#15/21]; crop editor `cropSheet.ts` + replicator.setCrop + ✂ CROPPED badge [#5/22]. New pure `fxMath.ts` + `pitchShifter.ts`. Gates: tsc + both bundles green; logic 23/23 (fxMath) + 8/8 (pitch DSP: 440→880/220/659 Hz ±5%, exact 0-st passthrough) + 6/6 (trackFx) PASS. GUI smoke deferred to user (smoke-test.md Phase 4).
 - **Phase 5** (downloads & discoverability): bare-playlist downloads w/ Track N/M progress, Spotify sets rejected [#12/23]; lyrics Try Again (force refetch past both caches) [#16/24]; case-insensitive library sort [28]; "Showing 500 of N" cap footer [U6/25]; disk-edit sync hint in statusline [U5/26]; Esc/focus-search keys + full hints [U10]; fx-bypass slash + tooltip [U9]; role-chip tooltip, id-based playing highlight, title marquee [U12/misc]. Item 27 (local artwork) deferred — see DECISIONS. Gates: tsc + bundles green; logic 12/12 PASS (parseDlChunk, isBarePlaylistURL routing, byName). GUI smoke incl. screenshot refresh deferred to user (smoke-test.md Phase 5). ALL PLANNED PHASES CODE-COMPLETE.
 
+- **Second audit (2026-07-14, post P1–P5)**: full re-read of both ends → `docs/arpi/desktop-parity-audit-2.md` (19 findings + phased plan A–E). Highlights: playlist semantics diverge from live iOS (dead-code discovery above), loop never auto-disables, idle add-to-queue inert, no visible history, click-playing-row restarts, Spotify sets, drag hint lies.
+
 ## OPEN  (unanswered / deferred / known issues)
+- Audit-2 phases A–E unimplemented — awaiting user go + the A1 decision (replace wrap loop with live-iOS shared-queue semantics?) and C10 scope (Spotify playlist port).
 - GUI smoke pass for ALL phases (P1–P5) pending on the user's machine — `docs/arpi/smoke-test.md`; includes retaking `shot-*.png`.
 - How to verify Firestore-touching changes offline: use `--btn-demo` (offline preview) path for playback UX; sync writes verified by reading back the doc only when a real home secret is available.
 - Crop on local-only (no yt) files: no cloud doc to carry the window — deferred unless the user wants a local-crop store.
