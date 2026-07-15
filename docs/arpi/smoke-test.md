@@ -202,3 +202,13 @@ Single device (offline preview), a yt-sourced track playing:
 Two devices (real secret):
 - [ ] Hold ⏩ on the **owner** → the following device's progress speeds up to match (rate re-published); releasing returns both to normal.
 - [ ] On a **follower**, ⏪/⏩ are plain −/+10s (no hold effects) — no command spam.
+
+---
+
+## Audit-2 Phase E — Small parity + cosmetics
+
+Single device (offline preview + a few playlists):
+- [ ] **Bulk "Add songs"**: open a playlist → the header has a **＋** button → a checkmark modal lists the library; multi-select several, the footer shows "N selected", **Add** files them all into the playlist at once. A search box narrows the list; songs already in the playlist show "added" and can't be re-picked.
+- [ ] **Playlist card durations**: every playlist card (and the open header) shows "**count · m:ss**" (was count only). The duration fills in shortly after the cards appear and updates when you add/remove tracks.
+- [ ] **rail-addpl tooltip**: hover the ▤+ button in the Now Playing rail → it reads "**Add current track to a playlist**" (was "…to open playlist").
+- [ ] **Effects-bypass default**: on a **fresh install** (clear app data / new machine), effects start **bypassed** (rail fx button slashed), matching iOS. Existing installs keep whatever you last set.

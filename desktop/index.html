@@ -445,6 +445,23 @@
       margin-top: 16px; align-items: center; }
     .modal-actions .pill { width: auto; padding: 9px 22px; font-size: 14px; }
 
+    /* ── Bulk "Add songs" picker (twin of iOS Add-Songs checkmark list) ───── */
+    .select-card { width: 460px; max-width: 92vw; }
+    .select-card .sel-search { margin-bottom: 10px; }
+    .sel-list { max-height: 46vh; overflow-y: auto; margin: 0 -4px;
+                border-top: 1px solid var(--seam); }
+    .sel-row { display: flex; align-items: center; gap: 10px; padding: 8px 6px;
+      border-bottom: 1px solid var(--seam); font-size: 14px; border-radius: 6px;
+      cursor: pointer; }
+    .sel-row:hover { background: rgba(255,255,255,.03); }
+    .sel-row .title { flex: 1; overflow: hidden; text-overflow: ellipsis;
+                      white-space: nowrap; }
+    .sel-row.on .title { color: var(--red-light); }
+    .sel-row.done { cursor: default; opacity: .6; }
+    .sel-check { width: 18px; text-align: center; color: var(--red-light);
+                 font-weight: 700; flex: none; }
+    .sel-count { margin-right: auto; font-size: 12px; color: var(--bone-dim); }
+
     /* ── Crop editor modal (twin of iOS CropSongSheet) ──────────────────── */
     .crop-card { width: 480px; }
     .crop-meta { display: flex; justify-content: space-between; font-size: 12px;
@@ -541,7 +558,7 @@
             <button id="rail-lyrics" title="Lyrics (L)">
               <svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M4 3h16c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2h-6.6L9 21.5V17H4c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2zm3.6 4.5h2.6v3.4c0 1.6-.9 2.7-2.6 3.1v-1.5c.8-.2 1.1-.7 1.1-1.5H7.6V7.5zm5.8 0H16v3.4c0 1.6-.9 2.7-2.6 3.1v-1.5c.8-.2 1.1-.7 1.1-1.5h-1.1V7.5z"/></svg>
             </button>
-            <button id="rail-addpl" title="Add current track to open playlist">
+            <button id="rail-addpl" title="Add current track to a playlist">
               <svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zM3 10h12v2H3zM3 14h8v2H3zM17 10h2v3h3v2h-3v3h-2v-3h-3v-2h3v-3z"/></svg>
             </button>
           </div>

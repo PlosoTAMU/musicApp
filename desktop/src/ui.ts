@@ -478,7 +478,9 @@ const FX_KEY = "fx.v1";
 // doc); volume is not an effect and stays live while bypassed.
 const fx = ((): { volume: number; speed: number; pitch: number; bass: number;
                   reverb: number; bypass: boolean } => {
-  const base = { volume: 1, speed: 1, pitch: 0, bass: 0, reverb: 0, bypass: false };
+  // Fresh installs ship with effects BYPASSED, matching iOS effectsBypass=true
+  // [#19]. A stored fx (existing installs) keeps whatever the user last set.
+  const base = { volume: 1, speed: 1, pitch: 0, bass: 0, reverb: 0, bypass: true };
   try { return { ...base, ...JSON.parse(localStorage.getItem(FX_KEY) ?? "{}") }; }
   catch { return base; }
 })();
@@ -1229,6 +1231,102 @@ function showPrompt(title: string, initial: string, onOk: (v: string) => void) {
   };
 }
 
+/** Bulk "Add songs" — a checkmark modal over the library (twin of iOS
+ *  CreatePlaylistSheet's Add-Songs list). Multi-select, then add all at once to
+ *  the given playlist. Tracks already in the playlist are shown pre-marked and
+ *  aren't re-addable; a search box narrows a large library [#15]. */
+function showSelectSongs(playlistId: string) {
+  closePop();
+  const pl = playlistSync.get(playlistId);
+  if (!pl) return;
+  const already = new Set(pl.tracks.map(t => t.id.toLowerCase()));
+  const selected = new Set<string>();
+  let term = "";
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML =
+    `<div class="modal-card select-card"><h4>Add songs to “${escapeHtml(pl.name)}”</h4>` +
+    `<input class="modal-input sel-search" type="text" placeholder="Search your library…" />` +
+    `<div class="sel-list"></div>` +
+    `<div class="modal-actions"><span class="sel-count"></span>` +
+    `<button class="link sel-cancel">Cancel</button>` +
+    `<button class="pill sel-add" disabled>Add</button></div></div>`;
+  document.body.appendChild(overlay);
+
+  const listEl = overlay.querySelector(".sel-list") as HTMLElement;
+  const countEl = overlay.querySelector(".sel-count") as HTMLElement;
+  const searchEl = overlay.querySelector(".sel-search") as HTMLInputElement;
+  const addBtn = overlay.querySelector(".sel-add") as HTMLButtonElement;
+
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey, true);
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+
+  const updateCount = () => {
+    countEl.textContent = selected.size ? `${selected.size} selected` : "";
+    addBtn.disabled = selected.size === 0;
+  };
+
+  const renderRows = () => {
+    const t = norm(term);
+    const rows = engine.library
+      .filter(x => !t || norm(x.name).includes(t) || norm(x.folder).includes(t))
+      .slice(0, 500);
+    listEl.innerHTML = "";
+    if (!rows.length) {
+      listEl.innerHTML = `<div class="list-empty">${
+        engine.library.length ? "No matches" : "Library is empty"}</div>`;
+      return;
+    }
+    for (const x of rows) {
+      const inPl = already.has(x.id.toLowerCase());
+      const row = document.createElement("div");
+      row.className = "sel-row" + ((inPl || selected.has(x.id)) ? " on" : "") + (inPl ? " done" : "");
+      const check = document.createElement("span");
+      check.className = "sel-check";
+      check.textContent = (inPl || selected.has(x.id)) ? "✓" : "";
+      row.appendChild(check);
+      row.appendChild(thumbEl(x.yt));
+      const name = document.createElement("span");
+      name.className = "title"; name.textContent = x.name;
+      row.appendChild(name);
+      if (inPl) {
+        const c = document.createElement("span");
+        c.className = "chip"; c.textContent = "added";
+        row.appendChild(c);
+      } else {
+        row.onclick = () => {
+          const nowOn = !selected.has(x.id);
+          nowOn ? selected.add(x.id) : selected.delete(x.id);
+          row.classList.toggle("on", nowOn);
+          check.textContent = nowOn ? "✓" : "";
+          updateCount();
+        };
+      }
+      listEl.appendChild(row);
+    }
+  };
+
+  searchEl.oninput = () => { term = searchEl.value; renderRows(); };
+  (overlay.querySelector(".sel-cancel") as HTMLButtonElement).onclick = close;
+  addBtn.onclick = () => {
+    const n = selected.size;
+    for (const id of selected) {
+      const x = engine.library.find(t => sameId(t.id, id));
+      if (x) void playlistSync.addTrack(playlistId,
+        x.yt ? { id: x.id, name: x.name, yt: x.yt } : { id: x.id, name: x.name });
+    }
+    close();
+    showHint(`Added ${n} song${n === 1 ? "" : "s"} to “${pl.name}”`);
+  };
+  overlay.onmousedown = e => { if (e.target === overlay) close(); };
+
+  renderRows();
+  updateCount();
+  searchEl.focus();
+}
+
 const pendingDeletes = new Map<string, ReturnType<typeof setTimeout>>();
 
 function renameTrack(t: LocalTrack, raw: string) {
@@ -1407,28 +1505,38 @@ function playPlaylist(p: CloudPlaylist, doShuffle = false) {
   renderLibrary();
 }
 
-// Open-playlist total duration, probed lazily (bounded to the open list, not
-// every card) and cached. Mirrors iOS's per-playlist duration line.
-const plDurationCache = new Map<string, number>();
+// Per-playlist total duration, probed lazily and cached (twin of iOS's
+// per-card duration line). Cache records the track count it was computed for,
+// so an add/remove invalidates it. Shown on every card now [#16], not just the
+// open list.
+const plDurationCache = new Map<string, { count: number; seconds: number }>();
 const plDurationPending = new Set<string>();
+
+/** Cached total seconds for a playlist, or undefined while it (re)computes.
+ *  Kicks off the probe on a cache miss / stale count. */
+function playlistDuration(p: CloudPlaylist): number | undefined {
+  const c = plDurationCache.get(p.id);
+  if (c && c.count === p.tracks.length) return c.seconds;
+  if (!plDurationPending.has(p.id)) void computePlaylistDuration(p);
+  return undefined;
+}
 
 function openPlaylist(id: string) {
   openPlaylistId = id;
-  const p = playlistSync.get(id);
-  if (p && !plDurationCache.has(id) && !plDurationPending.has(id)) void computePlaylistDuration(p);
   renderLibrary();
 }
 
 async function computePlaylistDuration(p: CloudPlaylist) {
   plDurationPending.add(p.id);
+  const count = p.tracks.length;
   let total = 0;
   for (const tr of p.tracks) {
     const local = resolve({ id: tr.id, name: tr.name, folder: "", yt: tr.yt }, engine.library);
     if (local) { const d = await fileDurationSec(local.path); if (d) total += d; }
   }
   plDurationPending.delete(p.id);
-  plDurationCache.set(p.id, total);
-  if (openPlaylistId === p.id) renderPlaylists();
+  plDurationCache.set(p.id, { count, seconds: total });
+  renderPlaylists();   // refresh whichever cards/open header are showing "…"
 }
 
 /** Playlist card context menu (right-click / ⋯): open, play, shuffle, rename, delete. */
@@ -1473,13 +1581,14 @@ function renderPlaylists() {
   if (openPlaylistId && !open) openPlaylistId = null; // deleted elsewhere
 
   if (open) {
-    // Detail: back / name / count·duration / shuffle / play-all / rename / delete,
-    // then the tracks (drag to reorder).
-    const dur = plDurationCache.get(open.id);
+    // Detail: back / name / count·duration / add-songs / shuffle / play-all /
+    // rename / delete, then the tracks (drag to reorder).
+    const dur = playlistDuration(open);
     const head = document.createElement("li");
     head.appendChild(rowBtn("←", "All playlists", () => { openPlaylistId = null; renderLibrary(); }));
     head.appendChild(titleSpan(open.name));
     head.appendChild(chipSpan(`${open.tracks.length} · ${dur != null ? fmtDuration(dur) : "…"}`));
+    head.appendChild(rowBtn("＋", "Add songs", () => showSelectSongs(open.id)));
     head.appendChild(plActionBtn(open, "play"));
     head.appendChild(plActionBtn(open, "shuffle"));
     head.appendChild(rowBtn("✎", "Rename playlist",
@@ -1491,7 +1600,7 @@ function renderPlaylists() {
     if (!open.tracks.length) {
       const d = document.createElement("div");
       d.className = "list-empty";
-      d.textContent = "Empty — use ♪ (or ⋯ → Add to playlist) on a library row";
+      d.textContent = "Empty — use ＋ Add songs, ♪ on a library row, or ⋯ → Add to playlist";
       listEl.appendChild(d);
     }
     for (const tr of open.tracks) {
@@ -1537,7 +1646,9 @@ function renderPlaylists() {
       li.oncontextmenu = e => { e.preventDefault(); playlistMenu(e.clientX, e.clientY, p); };
       li.appendChild(thumbEl(p.tracks.find(t => t.yt)?.yt));   // cover = first art
       li.appendChild(titleSpan(p.name));
-      li.appendChild(chipSpan(String(p.tracks.length)));
+      // Count + duration on every card, like iOS PlaylistCardLabel [#16].
+      const dur = playlistDuration(p);
+      li.appendChild(chipSpan(`${p.tracks.length} · ${dur != null ? fmtDuration(dur) : "…"}`));
       li.appendChild(plActionBtn(p, "play"));
       li.appendChild(plActionBtn(p, "shuffle"));
       const moreBtn = document.createElement("button");
