@@ -320,6 +320,23 @@
     .row-btn.confirm { opacity: 1; color: var(--red-light); font-weight: 700;
                        white-space: nowrap; }
     .list-empty { color: var(--bone-faint); font-size: 13px; padding: 12px 4px; }
+    /* Queue status strip — "PLAYING FROM QUEUE · N songs" (twin of iOS). */
+    #queue-status { display: flex; align-items: center; gap: 8px; margin-top: 8px;
+      font-size: 10px; font-weight: 600; letter-spacing: 1.2px;
+      text-transform: uppercase; color: var(--bone-dim); }
+    #queue-status .qs-icon { color: var(--red-light); font-size: 13px;
+      line-height: 1; letter-spacing: 0; }
+    #queue-status .qs-count { margin-left: auto; letter-spacing: .5px;
+      color: var(--bone-faint); }
+    /* "Previously Played" divider + muted history rows. */
+    .queue-section { list-style: none; opacity: .55; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .08em; padding: 10px 0 2px;
+      cursor: default; }
+    .panel li.previous .title { color: var(--bone-dim); }
+    .panel li.previous .thumb { opacity: .6; }
+    /* Drop-target cue while dragging a library song over the queue. */
+    #queue.drop-hint { outline: 1.5px dashed rgba(255,94,84,.5);
+      outline-offset: 3px; border-radius: 8px; }
     .panel-head { display: flex; align-items: center; }
     .panel-head .eyebrow { flex: 1; }
     .count { font-size: 11px; color: var(--bone-faint); }
@@ -614,6 +631,11 @@
           <span class="count" id="upnext-count"></span>
           <button id="queue-clear" class="row-btn" style="opacity:1; margin-left:8px"
                   title="Clear the queue" hidden>Clear</button>
+        </div>
+        <div id="queue-status" hidden>
+          <span class="qs-icon">≡</span>
+          <span class="qs-label">Playing from queue</span>
+          <span class="qs-count" id="queue-status-count"></span>
         </div>
         <ul id="queue"></ul>
       </div>

@@ -55,6 +55,9 @@ lyricsStore.onOffset = (trackId, offsetMs) => {
 
 const SECRET_KEY = "pulsor.secret";
 const DIR_KEY = "sync.music.dir";
+// Custom drag payload for library→queue drops — kept distinct from the queue
+// reorder drag's text/plain so the two gestures never cross (Phase B item 8).
+const LIB_DRAG_TYPE = "application/x-pulsor-track";
 
 let error: string | undefined;
 let busy = false;
@@ -299,6 +302,29 @@ function wire() {
   };
   $("failed-clear").onclick = () => { failed.length = 0; renderFailed(); };
   $("queue-clear").onclick = () => engine.clearQueue();
+
+  // Drag-to-queue drop target — the whole Up Next panel accepts library-row
+  // drags (incl. the empty state). Library drags carry LIB_DRAG_TYPE; queue
+  // reorder drags carry text/plain, which this handler ignores so the two
+  // gestures don't cross. The queue ul persists across renders, so wiring once
+  // here is enough.
+  const queuePanel = $("upnext-panel");
+  queuePanel.addEventListener("dragover", e => {
+    if (!e.dataTransfer?.types.includes(LIB_DRAG_TYPE)) return;
+    e.preventDefault();
+    $("queue").classList.add("drop-hint");
+  });
+  queuePanel.addEventListener("dragleave", e => {
+    if (!queuePanel.contains(e.relatedTarget as Node)) $("queue").classList.remove("drop-hint");
+  });
+  queuePanel.addEventListener("drop", e => {
+    $("queue").classList.remove("drop-hint");
+    const id = e.dataTransfer?.getData(LIB_DRAG_TYPE);
+    if (!id) return;   // a queue-reorder drop (text/plain) — handled by the row
+    e.preventDefault();
+    const t = engine.library.find(x => sameId(x.id, id));
+    if (t) { engine.queueLocal(t); showHint(`Queued “${t.name}”`); }
+  });
 
   // Bluetooth handoff banner (popup path)
   $("handoff-play").onclick = () => {
@@ -1376,9 +1402,40 @@ function renderLibrary() {
   queueEl.innerHTML = "";
   const q = coord.remote?.queue ?? [];
   $("upnext-count").textContent = q.length ? String(q.length) : "";
-  $("queue-clear").hidden = q.length === 0;
+
+  // Previously Played — owner-local history, oldest→newest so the most recent
+  // sits at the bottom (twin of iOS "Previous"). Muted; click replays. A
+  // follower's history is empty, so this is owner-only.
+  const prev = coord.role === "owner" ? engine.previousTracks : [];
+  if (prev.length) {
+    const head = document.createElement("li");
+    head.className = "queue-section";
+    head.textContent = "Previously Played";
+    queueEl.appendChild(head);
+    for (const t of prev) {
+      const li = document.createElement("li");
+      li.className = "previous";
+      li.appendChild(thumbEl(t.yt));
+      li.appendChild(titleSpan(t.name));
+      li.onclick = rowClick(() => run(() => engine.playFromHistory(t)));
+      li.oncontextmenu = e => { e.preventDefault(); trackMenu(e.clientX, e.clientY, t); };
+      queueEl.appendChild(li);
+    }
+  }
+
+  // Status strip — "PLAYING FROM QUEUE · N songs" (previous + current + queue),
+  // shown whenever something is playing. Twin of the iOS QueueView strip.
+  const hasCurrent = !!playingRef;
+  $("queue-status").hidden = !hasCurrent;
+  $("queue-status-count").textContent =
+    `${prev.length + (hasCurrent ? 1 : 0) + q.length} songs`;
+
+  $("queue-clear").hidden = q.length === 0 && prev.length === 0;
   if (q.length === 0) {
-    queueEl.innerHTML = `<div class="list-empty">Queue is empty — hover a library song and press ＋, or drag songs in</div>`;
+    const d = document.createElement("div");
+    d.className = "list-empty";
+    d.textContent = "Queue is empty — hover a library song and press ＋, or drag songs in";
+    queueEl.appendChild(d);
   }
   q.forEach((ref, i) => {
     const ghost = engine.isGhost(ref);
@@ -1406,12 +1463,15 @@ function renderLibrary() {
     t.className = "title"; t.textContent = ref.name;
     li.appendChild(t);
     // A resolvable queued track plays on click (drops out of the queue) —
-    // unless it IS the playing track (a duplicate), then click toggles.
+    // unless it IS the playing track (a duplicate), then click toggles. It also
+    // gets the full row context menu (rename/redownload/…) [#14].
     if (!ghost) {
       const localQ = resolve(ref, engine.library);
       li.onclick = rowClick(
         localQ && playingLocal && sameId(playingLocal.id, localQ.id)
           ? toggleCmd : () => playFromQueue(ref));
+      if (localQ)
+        li.oncontextmenu = e => { e.preventDefault(); trackMenu(e.clientX, e.clientY, localQ); };
     }
     if (ghost) {
       const chip = document.createElement("span");
@@ -1458,6 +1518,14 @@ function renderLibrary() {
     if (isCurrent) li.className = "playing";
     li.onclick = rowClick(isCurrent ? toggleCmd : () => run(() => engine.playLocal(t)));
     li.oncontextmenu = e => { e.preventDefault(); trackMenu(e.clientX, e.clientY, t); };
+
+    // Draggable into the queue panel — carries the custom LIB_DRAG_TYPE so the
+    // queue's reorder gesture (text/plain) doesn't pick it up [#10].
+    li.draggable = true;
+    li.ondragstart = e => {
+      e.dataTransfer?.setData(LIB_DRAG_TYPE, t.id);
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
+    };
 
     li.appendChild(thumbEl(t.yt));
 

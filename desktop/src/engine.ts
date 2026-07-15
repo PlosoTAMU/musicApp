@@ -33,6 +33,19 @@ export class SyncEngine {
     if (this.history.length > SyncEngine.HISTORY_MAX) this.history.shift();
   }
 
+  /** Owner-local play history, oldest→newest (most recent last) — twin of iOS
+   *  previousQueue. Read-only for the queue panel's "Previously Played". A
+   *  follower's is empty, so the section is owner-only, like iOS. */
+  get previousTracks(): readonly LocalTrack[] { return this.history; }
+
+  /** Click a "Previously Played" row: push the current track onto history so
+   *  ⏮ (or re-tapping) returns to it, then play the chosen one. Twin of iOS
+   *  tapping a Previous row → play(track). */
+  async playFromHistory(t: LocalTrack) {
+    this.pushHistory(this.player.current);
+    await this.playLocal(t);
+  }
+
   /** Twin of the iOS auto-disable sites (addToQueue / queuePlaylist /
    *  injectAtFrontOfQueue / playFromQueue): any queue-driven action turns the
    *  local loop off so queued songs actually advance instead of silently

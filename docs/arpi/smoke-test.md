@@ -158,3 +158,16 @@ Single device (offline preview):
 Two devices (real secret):
 - [ ] Start a playlist from the **desktop** → the **phone's** queue shows every upcoming playlist track; reordering/removing on the phone changes what plays next on desktop.
 - [ ] "Play now?" double-tap on desktop while the phone is mid-song → desktop takes over immediately, rest of the playlist queued at the front, phone mirrors.
+
+---
+
+## Audit-2 Phase B — Queue panel parity
+
+Single device (offline preview), with a few songs played and queued:
+- [ ] **Previously Played**: after a couple of natural track advances (or ⏭), the Up Next panel shows a muted **Previously Played** divider with the past tracks, oldest at top / most recent at the bottom.
+- [ ] Click a **Previously Played** row → it plays; press ⏮ afterward → returns to the song you left (current was pushed onto history first).
+- [ ] **Status strip**: while a song is playing, a small "PLAYING FROM QUEUE · N songs" strip sits above the queue; N = previous + current + upcoming, and it updates as songs advance / are queued.
+- [ ] **Queue-row context menu**: right-click a queued (resolvable) row → the full row menu (Play / Add to queue / Add to playlist / Rename / Song info / Crop / Redownload / Delete). Ghost rows have no menu.
+- [ ] **Drag-to-queue**: drag a **library** row onto the Up Next panel → a dashed drop cue appears; releasing adds it to the queue (hint confirms "Queued …"). Works onto the empty-queue state too.
+- [ ] Dragging a **queue** row still only reorders it (the library-drag and reorder gestures don't cross).
+- [ ] "Clear" still empties the upcoming queue; the Previously Played list is history and is kept.
