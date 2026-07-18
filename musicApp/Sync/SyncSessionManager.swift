@@ -114,23 +114,50 @@ final class SyncSessionManager: ObservableObject {
     func connect(secret: String) async throws {
         let creds = Self.deriveCreds(secret: secret)
         do {
-            uid = try await Auth.auth().signIn(withEmail: creds.email,
-                                               password: creds.password).user.uid
+            uid = try await Self.withTimeout(label: "Sign-in") {
+                try await Auth.auth().signIn(withEmail: creds.email,
+                                             password: creds.password).user.uid
+            }
         } catch {
             // First device ever creates the home account.
             do {
-                uid = try await Auth.auth().createUser(withEmail: creds.email,
-                                                       password: creds.password).user.uid
+                uid = try await Self.withTimeout(label: "Sign-in") {
+                    try await Auth.auth().createUser(withEmail: creds.email,
+                                                     password: creds.password).user.uid
+                }
             } catch {
                 throw SyncError.corrupt  // surfaced as "could not connect"
             }
         }
-        try await coordinator.attach(uid: uid)
+        let coordinator = self.coordinator
+        let attachUID = uid
+        try await Self.withTimeout(label: "Session load") {
+            try await coordinator.attach(uid: attachUID)
+        }
         replicator?.activate(uid: uid)
         playlistSync?.activate(uid: uid)
         settingsSync?.activate(uid: uid)
         UserDefaults.standard.set(secret, forKey: Self.secretKey)
         isConnected = true
+    }
+
+    /// A hung connect stage must surface as an error, not an eternal freeze —
+    /// twin of desktop ui.ts's withTimeout. Doesn't cancel the underlying call;
+    /// if it completes late, state heals on the next retry/relaunch.
+    private static func withTimeout<T: Sendable>(
+        seconds: TimeInterval = 25, label: String,
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw SyncError.timeout(label)
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
     }
 
     /// Wire two-way playlist replication:

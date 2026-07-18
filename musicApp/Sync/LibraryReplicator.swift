@@ -18,7 +18,6 @@ final class LibraryReplicator {
     // Serial upload pump — one file in flight, cellular-friendly.
     private var pendingUploads: [Download] = []
     private var uploadInFlight = false
-    private var localDownloads: [Download] = []
 
     // Down-sync: cloud → local via yt-dlp, one file in flight.
     private var listener: ListenerRegistration?
@@ -27,6 +26,7 @@ final class LibraryReplicator {
     private var downloadingYT: Set<String> = []        // in-flight yt ids (≤1 at a time)
     private var downFails: [String: Int] = [:]         // yt id → attempts
     private var processedFailures: Set<UUID> = []
+    private var localNames: Set<String> = []            // normalized names, for hasLocally()
     private let findDuplicate: (String) -> Download?
     private let startDownload: (String, String, DownloadSource, String) -> Void
     private let applyMeta: (String, TrackMeta) -> Void
@@ -54,9 +54,15 @@ final class LibraryReplicator {
         self.applyDeletion = applyDeletion
 
         // Immediate cache for down-sync's "do we already have this" check —
-        // must not wait on the upload pump's 2s debounce.
+        // must not wait on the upload pump's 2s debounce. Normalized names are
+        // pre-hashed into a Set: the initial listener snapshot delivers every
+        // cloud doc as one batch of "added" changes, and hasLocally() runs once
+        // per doc — an O(n) linear scan there made the whole batch O(n²) on the
+        // main actor, freezing the app on launch for any sizeable library.
         downloads
-            .sink { [weak self] list in self?.localDownloads = list }
+            .sink { [weak self] list in
+                self?.localNames = Set(list.map { Self.normalize($0.name) })
+            }
             .store(in: &bag)
 
         // Debounce: DownloadManager mutates its array repeatedly mid-download;
@@ -131,8 +137,7 @@ final class LibraryReplicator {
     private func hasLocally(_ m: TrackMeta) -> Bool {
         guard let yt = m.yt else { return true }  // nothing fetchable — treat as handled
         if findDuplicate(yt) != nil { return true }
-        let name = Self.normalize(m.name)
-        return localDownloads.contains { Self.normalize($0.name) == name }
+        return localNames.contains(Self.normalize(m.name))
     }
 
     private func pumpDownloads() {

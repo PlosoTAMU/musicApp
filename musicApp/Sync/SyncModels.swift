@@ -10,6 +10,7 @@ enum SyncError: Error {
     case badCode       // pairing code invalid/expired
     case codeCollision
     case queueStale    // offline queue replay lost to a newer edit
+    case timeout(String)   // a connect-stage call hung — twin of desktop's withTimeout
 }
 
 // MARK: - Device identity (stable per install)
