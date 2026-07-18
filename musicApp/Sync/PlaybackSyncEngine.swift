@@ -46,6 +46,37 @@ final class PlaybackSyncEngine: ObservableObject {
         !(coordinator.remote?.ownerDeviceID.isEmpty ?? true)
     }
 
+    /// Stricter than isRemoteControlled: the owner is ANOTHER device and its
+    /// lease is fresh — commands sent now will actually be executed. This is
+    /// the gate for routing local play taps to the owner; a dead owner means
+    /// commands go nowhere, so playback falls back to "play here" (takeover).
+    var hasLiveRemoteOwner: Bool {
+        guard coordinator.role == .follower,
+              let s = coordinator.remote,
+              !s.ownerDeviceID.isEmpty,
+              s.ownerDeviceID != SyncDevice.id,
+              !s.leaseExpired else { return false }
+        return true
+    }
+
+    /// Remote-mode play routing (wired into AudioPlayerManager.playRouter):
+    /// while another device owns playback, a local tap becomes a `playTrack`
+    /// command over there — this device stays silent. Returns true when routed.
+    func routePlayIfRemote(_ track: Track) -> Bool {
+        guard hasLiveRemoteOwner else { return false }
+        let ref = TrackRef(track: track)
+        commands.send(.playTrack(ref))
+        // Optimistic mirror — the command round-trips 0.7–2 s; show the chosen
+        // track now. The owner's settle publish replaces the whole mirror.
+        let now = ServerClock.shared.nowMs
+        mirror = PlaybackState(track: ref, isPlaying: true, positionMs: 0,
+                               anchorMs: now,
+                               rateX1000: mirror?.rateX1000 ?? 1000,
+                               durationMs: 0, rev: mirror?.rev ?? 0)
+        mirrorTrack = track
+        return true
+    }
+
     private var bag = Set<AnyCancellable>()
     private var isApplyingRemotePlaybackCommand = false
     private let publishTrigger = PassthroughSubject<Void, Never>()
@@ -175,6 +206,12 @@ final class PlaybackSyncEngine: ObservableObject {
         case .next: player.next()
         case .previous: player.previous()
         case .seek(let ms): player.seek(to: Double(ms) / 1000.0)
+        case .playTrack(let ref):
+            // Remote device tapped a song — play it HERE (we own the audio).
+            // Unresolvable (not in this library) plays nothing; the settle
+            // publish below re-asserts our truth and corrects the sender's
+            // optimistic mirror.
+            if let track = resolver.resolve(ref) { player.play(track) }
         case .requestStatus: break   // handled above
         }
         // Direct publish removes the observer's 200 ms debounce from the remote

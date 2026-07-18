@@ -5,12 +5,15 @@ import {
   Firestore, DocumentReference, collection, addDoc, onSnapshot, query, orderBy,
   serverTimestamp, deleteDoc, Timestamp, Unsubscribe,
 } from "firebase/firestore";
-import { DEVICE_ID } from "./protocol";
+import { DEVICE_ID, TrackRef } from "./protocol";
 import { serverClock } from "./serverClock";
 
 export type Command =
   | { t: "play" } | { t: "pause" } | { t: "next" } | { t: "prev" }
   | { t: "seek"; ms: number }
+  // Remote-mode "tap a song": ask the OWNER to play this track over there.
+  // Twin of SyncCommand.playTrack.
+  | { t: "playTrack"; ref: TrackRef }
   // Resync ping: a device that just joined asks the current owner to
   // re-publish its authoritative playback (fresh anchor). Not a transport
   // mutation — the owner answers with a publish, nothing plays. Twin of

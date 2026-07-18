@@ -652,12 +652,29 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - Sync routing (injected by SyncSessionManager)
+
+    /// Remote-control routing: returns true when the play was forwarded to the
+    /// device that owns the shared session — local audio must NOT start. Every
+    /// user-initiated play (library tap, playlist, queue, Siri) funnels through
+    /// play(_:), so this single gate makes the whole app act as a remote while
+    /// another device is playing. nil / false ⇒ play here as always.
+    var playRouter: ((Track) -> Bool)?
+    /// True while another device actively owns playback — gates the
+    /// "nothing playing → auto-start" branches so queue/playlist adds append
+    /// to the shared queue instead of starting audio on this device.
+    var sessionHasRemotePlayback: (() -> Bool)?
+
     /// - Parameters:
     ///   - startOffset: seconds (relative to crop start) to begin playback at.
     ///     Used by the sync engine for session-handover continuity.
     ///   - startPaused: hand over into a paused state — loads track metadata and
     ///     arms resume() at startOffset without scheduling any audio.
     func play(_ track: Track, at startOffset: Double = 0, startPaused: Bool = false) {
+        // Plain plays route to the owning device while it's alive; the
+        // handover path (offset/paused — only the sync engine calls it, and
+        // only once ownership is already ours) never routes.
+        if startOffset == 0, !startPaused, playRouter?(track) == true { return }
         PerformanceMonitor.shared.start("AudioPlayer_Play") // ✅ ADDED
         defer { PerformanceMonitor.shared.end("AudioPlayer_Play") } // ✅ ADDED
         currentPlaybackSessionID = UUID()
@@ -1587,7 +1604,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 print("🔁 [AudioPlayer] Loop disabled - song added to queue")
             }
             
-            if self.currentTrack == nil {
+            // Auto-start only when nothing plays ANYWHERE — with a live remote
+            // owner the append lands in the shared queue over there instead.
+            if self.currentTrack == nil, !(self.sessionHasRemotePlayback?() ?? false) {
                 // Only exit playlist mode if nothing is playing
                 if !self.isPlaylistMode {
                     let firstTrack = self.queue.removeFirst()
@@ -1614,7 +1633,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 print("🔁 [AudioPlayer] Loop disabled - playlist queued")
             }
             
-            if self.currentTrack == nil {
+            // Session-aware auto-start: another device playing ⇒ append only
+            // (twin of desktop queueMany's sessionIdle check).
+            if self.currentTrack == nil, !(self.sessionHasRemotePlayback?() ?? false) {
                 let first = orderedTracks[0]
                 let rest = Array(orderedTracks.dropFirst())
                 self.queue.append(contentsOf: rest)

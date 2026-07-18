@@ -6,7 +6,8 @@ import { QueueSync, rebase } from "./queueSync";
 import { CommandBus, Command } from "./commandBus";
 import { LocalPlayer, LocalTrack, scanLibrary, resolve, toRef } from "./player";
 import {
-  PlaybackState, SessionState, TrackRef, DEVICE_ID, positionAt, sameId, sessionIdle,
+  PlaybackState, SessionState, TrackRef, DEVICE_ID, LEASE_TTL_MS, positionAt,
+  sameId, sessionIdle,
 } from "./protocol";
 import { serverClock } from "./serverClock";
 
@@ -150,6 +151,18 @@ export class SyncEngine {
       case "next": this.trackEnded(); break;
       case "prev": this.goPrevious(); break;
       case "seek": this.player.seekMs(cmd.ms); break;
+      case "playTrack": {
+        // Remote device tapped a song — play it HERE (we own the audio).
+        // Unresolvable ⇒ play nothing; the publish below re-asserts our
+        // truth and corrects the sender's optimistic mirror.
+        const local = resolve(cmd.ref, this.library);
+        if (local) {
+          this.pushHistory(this.player.current);
+          this.applyCrop(local);
+          this.player.play(local);
+        }
+        break;
+      }
     }
     this.publish();
   }
@@ -234,10 +247,33 @@ export class SyncEngine {
     if (this.coord.role === "owner") void this.coord.publishPlayback(this.snapshot());
   }
 
-  // ── Local library playback: implicit takeover ──────────────────────────
+  // ── Local library playback: remote-first, takeover fallback ────────────
 
-  /** Click a library track → this device becomes the owner and plays it. */
+  /** The owner is ANOTHER device with a fresh lease — commands sent now will
+   *  actually execute. Gate for remote-mode routing; a dead owner falls back
+   *  to "play here" (takeover), since its commands would go nowhere. */
+  hasLiveRemoteOwner(): boolean {
+    const s = this.coord.remote;
+    return !this.coord.demo && this.coord.role !== "owner" &&
+      !!s && !!s.ownerDeviceID && !sameId(s.ownerDeviceID, DEVICE_ID) &&
+      serverClock.nowMs <= s.leaseMs + LEASE_TTL_MS;
+  }
+
+  /** Click a track while another device is playing → that device plays it;
+   *  this one stays silent (pure remote). Otherwise play here (takeover). */
   async playLocal(t: LocalTrack) {
+    if (this.hasLiveRemoteOwner()) {
+      this.commands.send({ t: "playTrack", ref: toRef(t) });
+      // Optimistic mirror — the command round-trips 0.7–2 s; show the chosen
+      // track now. The owner's publish overwrites the whole playback blob.
+      const pb = this.coord.remote!.playback;
+      pb.track = toRef(t);
+      pb.pos = 0;
+      pb.anchor = serverClock.nowMs;
+      pb.playing = true;
+      this.onChange?.();
+      return;
+    }
     if (this.coord.role !== "owner") {
       await this.coord.takeOver();
       this.becomeCommandTarget();

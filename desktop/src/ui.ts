@@ -1831,7 +1831,8 @@ function renderLibrary() {
     li.appendChild(folder);
 
     const playBtn = document.createElement("button");
-    playBtn.className = "row-btn"; playBtn.innerHTML = "▶"; playBtn.title = "Play here now";
+    playBtn.className = "row-btn"; playBtn.innerHTML = "▶";
+    playBtn.title = "Play now (on whichever device is playing)";
     playBtn.onclick = () => run(() => engine.playLocal(t));
     li.appendChild(playBtn);
 

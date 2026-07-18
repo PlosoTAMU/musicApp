@@ -46,6 +46,22 @@ final class SyncSessionManager: ObservableObject {
         self.routeMonitor = RouteHandoffMonitor(
             player: player, coordinator: coordinator, engine: engine)
 
+        // Remote mode: while another device owns playback, every local play
+        // funnels through play(_:) and is routed to the owner instead of
+        // starting audio here; queue/playlist auto-start branches append to
+        // the shared queue rather than blasting audio on this device.
+        player.playRouter = { [weak engine] track in
+            engine?.routePlayIfRemote(track) ?? false
+        }
+        // "Remote playback" = a live remote owner that is mid-track. A live
+        // but IDLE owner must not suppress auto-start: the play(first) that
+        // follows goes through playRouter and starts over there — twin of
+        // desktop queueMany's sessionIdle branch.
+        player.sessionHasRemotePlayback = { [weak engine] in
+            (engine?.hasLiveRemoteOwner ?? false) &&
+            engine?.coordinator.remote?.playback.track != nil
+        }
+
         // Views observe syncManager; changes actually happen on the nested
         // coordinator/engine. Forward their objectWillChange so role flips and
         // mirror updates re-render SwiftUI without each view observing both.

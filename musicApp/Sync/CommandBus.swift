@@ -10,6 +10,10 @@ import FirebaseFirestore
 enum SyncCommand {
     case play, pause, next, previous
     case seek(ms: Int)
+    /// Remote-mode "tap a song": ask the OWNER to play this track over there.
+    /// The whole point of remote mode — a tap on the controlling device must
+    /// never start audio locally.
+    case playTrack(TrackRef)
     /// Resync ping: a device that just joined asks the current owner to
     /// re-publish its authoritative playback (fresh anchor). Not a transport
     /// mutation — the owner answers with a publish, nothing plays.
@@ -23,6 +27,7 @@ enum SyncCommand {
         case .next: d["t"] = "next"
         case .previous: d["t"] = "prev"
         case .seek(let ms): d["t"] = "seek"; d["ms"] = ms
+        case .playTrack(let ref): d["t"] = "playTrack"; d["ref"] = ref.dict
         case .requestStatus: d["t"] = "status"
         }
         return d
@@ -35,6 +40,10 @@ enum SyncCommand {
         case "next": self = .next
         case "prev": self = .previous
         case "seek": guard let ms = dict["ms"] as? Int else { return nil }; self = .seek(ms: ms)
+        case "playTrack":
+            guard let raw = dict["ref"] as? [String: Any],
+                  let ref = TrackRef(dict: raw) else { return nil }
+            self = .playTrack(ref)
         case "status": self = .requestStatus
         default: return nil
         }
