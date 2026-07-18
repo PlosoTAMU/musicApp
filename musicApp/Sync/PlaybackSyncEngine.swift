@@ -493,7 +493,7 @@ final class PlaybackSyncEngine: ObservableObject {
         case .seek(let ms):
             pb.positionMs = ms
             pb.anchorMs = now
-        case .next, .previous:
+        case .next, .previous, .playTrack:
             return  // target track unknown until the owner's snapshot arrives
         case .requestStatus:
             return  // not a transport command — never routed through here

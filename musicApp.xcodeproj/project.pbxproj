@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		DE32EC0C4986530AF2E7AEDD /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 1F16DD0E7E68AAB04FA82480 /* FirebaseAuth */; };
+		E0807A34F2B291EE21FDB65C /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 340D1342B8676642B7971C19 /* FirebaseCore */; };
+		1D641DD55844D67BEAC1DD8E /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = C7D1F4E74AAADD8674916D47 /* FirebaseFirestore */; };
 		BF1938442F2079030067A7A8 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BFB82D972F203CDD005AC5A2 /* Python.xcframework */; };
 		BF1938452F2079030067A7A8 /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BFB82D972F203CDD005AC5A2 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		BF20D2662F2D74B500ACD1B3 /* ShareToPulsor.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BFDA0F372F2D6997008E3F67 /* ShareToPulsor.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -191,6 +194,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DE32EC0C4986530AF2E7AEDD /* FirebaseAuth in Frameworks */,
+				E0807A34F2B291EE21FDB65C /* FirebaseCore in Frameworks */,
+				1D641DD55844D67BEAC1DD8E /* FirebaseFirestore in Frameworks */,
 				BF3357592F1F0CDB00C362AD /* libswscale.xcframework in Frameworks */,
 				BF33574D2F1F0CD300C362AD /* libavcodec.xcframework in Frameworks */,
 				BF33574F2F1F0CD400C362AD /* libavdevice.xcframework in Frameworks */,
@@ -307,6 +313,9 @@
 			);
 			name = musicApp;
 			packageProductDependencies = (
+				1F16DD0E7E68AAB04FA82480 /* FirebaseAuth */,
+				340D1342B8676642B7971C19 /* FirebaseCore */,
+				C7D1F4E74AAADD8674916D47 /* FirebaseFirestore */,
 			);
 			productName = musicApp;
 			productReference = BFFDD5EF2F1C47850032409D /* Pulsor.app */;
@@ -394,7 +403,6 @@
 			mainGroup = BFFDD5E62F1C47850032409D;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				BF5782072F1EC0AB0056E8CB /* XCRemoteSwiftPackageReference "ffmpeg-kit" */,
 				BF57CC4E2FF5E4D60024C9E7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -910,23 +918,33 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		BF5782072F1EC0AB0056E8CB /* XCRemoteSwiftPackageReference "ffmpeg-kit" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/arthenica/ffmpeg-kit";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
 		BF57CC4E2FF5E4D60024C9E7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 12.15.0;
+				kind = upToNextMinorVersion;
+				minimumVersion = 12.14.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		1F16DD0E7E68AAB04FA82480 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BF57CC4E2FF5E4D60024C9E7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		340D1342B8676642B7971C19 /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BF57CC4E2FF5E4D60024C9E7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+		C7D1F4E74AAADD8674916D47 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BF57CC4E2FF5E4D60024C9E7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BFFDD5E72F1C47850032409D /* Project object */;
 }
