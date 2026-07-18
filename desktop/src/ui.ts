@@ -440,11 +440,18 @@ function bindHoldButton(id: string, opts: {
 // next authoritative snapshot overwrites it wholesale (coordinator replaces
 // coord.remote on every snapshot), so no rollback logic is needed.
 
+/** No live owner ⇒ no authoritative snapshot will ever correct an optimistic
+ *  patch — it would stick as a permanent lie. Patch only while the owner's
+ *  lease is fresh. */
+const ownerAlive = () =>
+  !!coord.remote && !!coord.remote.ownerDeviceID &&
+  !leaseExpired(coord.remote, serverClock.nowMs);
+
 function toggleCmd() {
   const pb = coord.remote?.playback;
   const playing = !!pb?.playing;
   playing ? engine.pause() : engine.play();
-  if (!pb || coord.role === "owner") return;
+  if (!pb || coord.role === "owner" || !ownerAlive()) return;
   pb.pos = Math.round(currentPosMs()); // re-anchor at the shown position
   pb.anchor = serverClock.nowMs;
   pb.playing = !playing;
@@ -454,7 +461,7 @@ function toggleCmd() {
 function seekCmd(ms: number) {
   engine.seekMs(ms);
   const pb = coord.remote?.playback;
-  if (!pb || coord.role === "owner") return;
+  if (!pb || coord.role === "owner" || !ownerAlive()) return;
   pb.pos = Math.round(ms);
   pb.anchor = serverClock.nowMs;
   renderNow();
@@ -1869,7 +1876,27 @@ requestAnimationFrame(positionLoop);
 initFxSliders();
 void outputSet().then(s => { knownOutputs = s; });
 navigator.mediaDevices.addEventListener("devicechange", () => void handleDeviceChange());
-const savedSecret = localStorage.getItem(SECRET_KEY);
-if (savedSecret) run(() => connect(savedSecret));
+// Auto-connect retries with backoff: launching offline (or before Wi-Fi is up)
+// must not leave sync dead until the app is restarted. Stops the moment a
+// connect lands or the user forgets the home.
+let autoRetryDelay = 5_000;
+function autoConnect() {
+  const secret = localStorage.getItem(SECRET_KEY);
+  if (!secret || coord.role !== "none") return;
+  busy = true; error = undefined; renderNow();
+  void (async () => {
+    try {
+      await connect(secret);
+      autoRetryDelay = 5_000;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      console.error("[pulsor]", e);
+      setTimeout(autoConnect, autoRetryDelay);
+      autoRetryDelay = Math.min(autoRetryDelay * 2, 60_000);
+    }
+    busy = false; renderNow();
+  })();
+}
+autoConnect();
 
 export type { LocalTrack };

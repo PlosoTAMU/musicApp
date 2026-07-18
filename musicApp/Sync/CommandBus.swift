@@ -65,9 +65,21 @@ final class CommandBus {
     func startListening(handler: @escaping (SyncCommand) -> Void) {
         stopListening()
         guard let ref = sessionRef() else { return }
+        // The initial batch is drained WITHOUT applying: those commands were
+        // aimed at the previous owner ("pause the old song"), and executing
+        // them against a fresh reign pauses/seeks playback the sender never
+        // meant to touch. The new owner publishes its state anyway.
+        var isInitialBatch = true
         listener = ref.collection("commands").order(by: "at")
             .addSnapshotListener { snap, _ in
                 guard let snap else { return }
+                defer { isInitialBatch = false }
+                if isInitialBatch {
+                    for change in snap.documentChanges where change.type == .added {
+                        change.document.reference.delete()
+                    }
+                    return
+                }
                 for change in snap.documentChanges where change.type == .added {
                     let doc = change.document
                     // serverTimestamp is nil until acked; treat pending as fresh.

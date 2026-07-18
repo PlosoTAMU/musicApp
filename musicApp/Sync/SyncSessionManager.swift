@@ -66,12 +66,33 @@ final class SyncSessionManager: ObservableObject {
                 password: sha("pulsor-key-v1|" + secret))
     }
 
+    private var connectRetryTask: Task<Void, Never>?
+    private var connectRetryDelay: TimeInterval = 5
+
     /// Silent auto-connect with a previously saved secret (call at app launch).
     /// Idempotent: safe to call more than once without double-attaching listeners.
+    /// A failure (launched offline, flaky network) retries with backoff — sync
+    /// must come alive when the network does, not stay dead until relaunch.
     func connectIfConfigured() async {
         guard !isConnected,
               let secret = UserDefaults.standard.string(forKey: Self.secretKey) else { return }
-        try? await connect(secret: secret)
+        do {
+            try await connect(secret: secret)
+            connectRetryDelay = 5
+        } catch {
+            scheduleConnectRetry()
+        }
+    }
+
+    private func scheduleConnectRetry() {
+        connectRetryTask?.cancel()
+        let delay = connectRetryDelay
+        connectRetryDelay = min(connectRetryDelay * 2, 60)
+        connectRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.connectIfConfigured()
+        }
     }
 
     func connect(secret: String) async throws {
@@ -136,6 +157,7 @@ final class SyncSessionManager: ObservableObject {
 
     /// Forget the home secret; back to setup.
     func forgetHome() {
+        connectRetryTask?.cancel(); connectRetryTask = nil
         UserDefaults.standard.removeObject(forKey: Self.secretKey)
         coordinator.detach()
         isConnected = false

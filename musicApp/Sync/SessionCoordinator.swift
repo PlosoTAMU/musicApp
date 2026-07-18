@@ -35,8 +35,12 @@ final class SessionCoordinator: ObservableObject {
 
     /// Fired when we discover another device took over — engine must pause local audio.
     var onDeposed: (() -> Void)?
-    /// Fired for remote states authored by *other* devices (anti-echo already applied).
-    var onRemoteState: ((SessionState) -> Void)?
+    /// Fired for EVERY parsed snapshot. `isEcho` = authored by this device.
+    /// Display (mirror) and join-resync must see echoes too — after a relaunch
+    /// the first snapshot often carries our own last write, and filtering it
+    /// out left the mirror empty forever ("now playing never loads").
+    /// Loop-sensitive consumers (queue apply) skip echoes themselves.
+    var onSessionState: ((SessionState, _ isEcho: Bool) -> Void)?
 
     private var listener: ListenerRegistration?
     private var leaseTimer: Timer?
@@ -83,6 +87,7 @@ final class SessionCoordinator: ObservableObject {
         uid = ""
         role = .none
         remote = nil
+        checkedStaleSelfOwnership = false
     }
 
     // MARK: - Snapshot listener (deposed detection + anti-echo + connectivity)
@@ -147,9 +152,48 @@ final class SessionCoordinator: ObservableObject {
             demote(reason: "epoch \(state.epoch) > \(mine)")
         }
 
-        // Anti-echo: never react to our own writes.
-        if state.updatedBy != SyncDevice.id {
-            onRemoteState?(state)
+        // Crashed-owner recovery: the doc still names THIS device as owner but
+        // we booted as a follower — a previous process died mid-reign. Left
+        // alone, every device (including us) sees a dead owner "playing"
+        // forever. Release once, on the first server-confirmed snapshot only
+        // (a cache frame could be stale, and a takeover we start later must
+        // never be undone — the txn is fenced on the epoch we saw here).
+        if !snap.metadata.isFromCache, !checkedStaleSelfOwnership {
+            checkedStaleSelfOwnership = true
+            if state.ownerDeviceID == SyncDevice.id, !role.isOwner {
+                let epoch = state.epoch
+                Task { await self.releaseStaleOwnership(epoch: epoch) }
+            }
+        }
+
+        onSessionState?(state, state.updatedBy == SyncDevice.id)
+    }
+
+    // MARK: - Stale self-ownership release
+
+    private var checkedStaleSelfOwnership = false
+
+    /// Fenced on the observed epoch: if anything (another device, or our own
+    /// takeover racing this task) bumped the epoch meanwhile, this aborts.
+    private func releaseStaleOwnership(epoch: Int) async {
+        guard !role.isOwner, let ref = sessionRef else { return }
+        let dev = SyncDevice.id
+        do {
+            try await db.txn { txn in
+                let snap = try txn.getDocument(ref)
+                guard let cur = SessionState(snap: snap),
+                      cur.epoch == epoch, cur.ownerDeviceID == dev else {
+                    throw SyncError.fenced
+                }
+                txn.updateData([
+                    "ownerDeviceID": "",
+                    "playback.playing": false,
+                    "updatedBy": dev,
+                ], forDocument: ref)
+            }
+            print("👑→👤 [Sync] Released stale self-ownership (crashed previous run)")
+        } catch {
+            // Someone took over meanwhile, or offline — either way nothing to do.
         }
     }
 

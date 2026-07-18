@@ -33,14 +33,21 @@ export class CommandBus {
       { ...cmd, by: DEVICE_ID, at: serverTimestamp() });
   }
 
-  /** Owner-side. Applies fresh commands in server order; deletes every doc. */
+  /** Owner-side. Applies fresh commands in server order; deletes every doc.
+   *  The INITIAL batch is drained without applying — those commands were aimed
+   *  at the previous owner, and replaying them against a fresh reign would
+   *  pause/seek playback the sender never meant to touch. */
   start(handler: (cmd: Command) => void) {
     this.stop();
     const ref = this.ref();
     if (!ref) return;
+    let initialBatch = true;
     this.unsub = onSnapshot(query(collection(ref, "commands"), orderBy("at")), snap => {
+      const purgeOnly = initialBatch;
+      initialBatch = false;
       for (const change of snap.docChanges()) {
         if (change.type !== "added") continue;
+        if (purgeOnly) { void deleteDoc(change.doc.ref); continue; }
         const d = change.doc.data();
         const at = d.at as Timestamp | null;                 // null until server-acked
         const ageMs = at ? serverClock.nowMs - at.toMillis() : 0;

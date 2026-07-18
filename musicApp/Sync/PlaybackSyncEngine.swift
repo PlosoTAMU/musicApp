@@ -87,8 +87,8 @@ final class PlaybackSyncEngine: ObservableObject {
             self?.player.pause()
             self?.commands.stopListening()
         }
-        coordinator.onRemoteState = { [weak self] state in
-            self?.handleRemote(state)
+        coordinator.onSessionState = { [weak self] state, isEcho in
+            self?.handleRemote(state, isEcho: isEcho)
         }
         coordinator.$role
             .removeDuplicates()
@@ -100,9 +100,31 @@ final class PlaybackSyncEngine: ObservableObject {
                     }
                 } else {
                     self.commands.stopListening()
+                    // Attach lands us in .follower — if local audio is ALREADY
+                    // playing (user played before connecting), the isPlaying
+                    // observer never fires (no transition), so claim here.
+                    if role == .follower { self.reconcileLocalPlayback() }
                 }
             }
             .store(in: &bag)
+
+        // Reconnect reconciliation: a claim that failed offline (or playback
+        // started while offline) must retry the moment we're back — otherwise
+        // this device plays audio the session doesn't know about, and a stale
+        // remote owner can double-play against us.
+        coordinator.$isOnline
+            .removeDuplicates()
+            .filter { $0 }
+            .sink { [weak self] _ in self?.reconcileLocalPlayback() }
+            .store(in: &bag)
+    }
+
+    /// Local audio playing while not owner ⇒ the session must be claimed.
+    /// Covers: play-before-connect, claim txn lost offline, reconnect races.
+    private func reconcileLocalPlayback() {
+        guard player.isPlaying, !coordinator.role.isOwner,
+              coordinator.role != .none else { return }
+        claimSessionForLocalPlayback()
     }
 
     // Ask the current owner to re-publish once per distinct owner we observe.
@@ -111,7 +133,10 @@ final class PlaybackSyncEngine: ObservableObject {
     // instead of trusting whatever the doc held when we attached.
     private var syncedOwner: String?
 
-    private func handleRemote(_ state: SessionState) {
+    private func handleRemote(_ state: SessionState, isEcho: Bool) {
+        // Display + join-resync run on EVERY snapshot, echoes included — the
+        // first frame after a relaunch is usually our own last write, and it
+        // must still populate the mirror and trigger the owner ping.
         mirror = state.playback
         mirrorTrack = state.playback.track.flatMap { resolver.resolve($0) }
 
@@ -120,6 +145,10 @@ final class PlaybackSyncEngine: ObservableObject {
             syncedOwner = owner
             commands.send(.requestStatus)
         }
+
+        // Queue application is loop-sensitive: replaying our own write echo
+        // could clobber a newer local edit — echoes stop here.
+        guard !isEcho else { return }
 
         // Queue: resolve remote refs to local tracks; track ghosts separately.
         let resolvedPairs = state.queue.map { ($0, resolver.resolve($0)) }
@@ -340,8 +369,15 @@ final class PlaybackSyncEngine: ObservableObject {
     }
 
 
+    // In-flight guard: reconcile can fire from several triggers (role flip,
+    // reconnect, isPlaying) — one takeover txn at a time.
+    private var claimInFlight = false
+
     private func claimSessionForLocalPlayback() {
+        guard !claimInFlight else { return }
+        claimInFlight = true
         Task { @MainActor in
+            defer { claimInFlight = false }
             do {
                 _ = try await coordinator.takeOver()
                 publishNow()
@@ -403,6 +439,9 @@ final class PlaybackSyncEngine: ObservableObject {
     /// responds now. The next authoritative snapshot replaces the whole mirror
     /// (handleRemote overwrites it), so no rollback logic is needed.
     private func patchMirror(_ cmd: SyncCommand) {
+        // No live owner ⇒ no authoritative snapshot will ever correct the
+        // patch — an optimistic lie would stick forever. Skip it.
+        guard !(coordinator.remote?.leaseExpired ?? true) else { return }
         guard var pb = mirror else { return }
         let now = ServerClock.shared.nowMs
         switch cmd {

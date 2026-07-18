@@ -11,7 +11,7 @@ import {
   runTransaction, updateDoc, deleteField, Unsubscribe,
 } from "firebase/firestore";
 import {
-  SessionState, PlaybackState, DEVICE_ID, FENCED,
+  SessionState, PlaybackState, DEVICE_ID, FENCED, sameId,
 } from "./protocol";
 import { serverClock } from "./serverClock";
 
@@ -37,7 +37,12 @@ export class SessionCoordinator {
   demo = false;
 
   onDeposed?: () => void;
-  onRemote?: (s: SessionState) => void;
+  /** Every parsed snapshot, echoes included. `isEcho` = authored by this
+   *  device. After a relaunch the first snapshot is often our own last write —
+   *  filtering it out starved the join-resync ping and the queue mirror
+   *  ("connect and now playing never loads"). Loop-sensitive consumers use
+   *  the flag. */
+  onRemote?: (s: SessionState, isEcho: boolean) => void;
   onChange?: () => void;
 
   private unsub?: Unsubscribe;
@@ -48,6 +53,7 @@ export class SessionCoordinator {
   private retryDelay = 2000;
   private listenRetryTimer?: ReturnType<typeof setTimeout>;
   private listenRetryDelay = 2000;
+  private staleChecked = false;
 
   constructor(readonly db: Firestore) {}
 
@@ -93,7 +99,28 @@ export class SessionCoordinator {
     this.outbox = undefined;
     this.role = "none"; this.myEpoch = 0; this.remote = undefined; this.uid = "";
     this.demo = false;
+    this.staleChecked = false;
     this.onChange?.();
+  }
+
+  /** Clear ownership a dead previous run of THIS device left behind. Fenced on
+   *  the observed epoch — any concurrent takeover (ours or another device's)
+   *  bumps it and this becomes a no-op. */
+  private async releaseStaleOwnership(epoch: number) {
+    const ref = this.ref;
+    if (!ref) return;
+    try {
+      await runTransaction(this.db, async txn => {
+        const snap = await txn.get(ref);
+        const cur = snap.data() as SessionState | undefined;
+        if (!cur || cur.epoch !== epoch || !sameId(cur.ownerDeviceID, DEVICE_ID))
+          throw FENCED;
+        txn.update(ref, {
+          ownerDeviceID: "", "playback.playing": false, updatedBy: DEVICE_ID,
+        });
+      });
+      console.log("[sync] released stale self-ownership (crashed previous run)");
+    } catch { /* superseded or offline — nothing to do */ }
   }
 
   /** (Re)subscribes the session listener. On a terminal listen error (the SDK
@@ -114,7 +141,16 @@ export class SessionCoordinator {
         if (this.role === "owner" && state.epoch > this.myEpoch) {
           this.demote(`epoch ${state.epoch} > ${this.myEpoch}`);
         }
-        if (state.updatedBy !== DEVICE_ID) this.onRemote?.(state);
+        // Crashed-owner recovery: doc names THIS device as owner but we booted
+        // as a follower — a previous process died mid-reign. Release once, on
+        // the first server-confirmed snapshot (fenced on the epoch seen here,
+        // so a takeover we start meanwhile can never be undone).
+        if (!snap.metadata.fromCache && !this.staleChecked) {
+          this.staleChecked = true;
+          if (sameId(state.ownerDeviceID, DEVICE_ID) && this.role !== "owner")
+            void this.releaseStaleOwnership(state.epoch);
+        }
+        this.onRemote?.(state, state.updatedBy === DEVICE_ID);
       }
       this.onChange?.();
     }, err => {

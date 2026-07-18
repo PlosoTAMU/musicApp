@@ -138,10 +138,13 @@ struct PlaybackState: Equatable {
                                      anchorMs: 0, rateX1000: 1000, durationMs: 0, rev: 0)
 
     /// Follower-side extrapolation — the reason progress_ms never needs streaming.
+    /// Clamped to the track length: a dead owner stops publishing, and
+    /// unbounded extrapolation would show 7:41 of a 3:05 song.
     func positionMs(atServerMs now: Int) -> Int {
         guard isPlaying else { return positionMs }
         let elapsed = max(0, now - anchorMs)
-        return positionMs + Int(Double(elapsed) * Double(rateX1000) / 1000.0)
+        let raw = positionMs + Int(Double(elapsed) * Double(rateX1000) / 1000.0)
+        return durationMs > 0 ? min(raw, durationMs) : raw
     }
 
     var dict: [String: Any] {

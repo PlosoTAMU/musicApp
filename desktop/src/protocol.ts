@@ -72,11 +72,14 @@ export const handoffActive = (s: SessionState, nowMs: number): boolean =>
   !!s.handoff && s.handoff.by !== DEVICE_ID &&
   nowMs - s.handoff.atMs < HANDOFF_WINDOW_MS;
 
-/** Same extrapolation as PlaybackState.positionMs(atServerMs:) in Swift. */
-export const positionAt = (pb: PlaybackState, serverNowMs: number): number =>
-  pb.playing
-    ? pb.pos + (Math.max(0, serverNowMs - pb.anchor) * pb.rate) / 1000
-    : pb.pos;
+/** Same extrapolation as PlaybackState.positionMs(atServerMs:) in Swift.
+ *  Clamped to track length — a dead owner stops publishing, and unbounded
+ *  extrapolation shows 7:41 of a 3:05 song. */
+export const positionAt = (pb: PlaybackState, serverNowMs: number): number => {
+  if (!pb.playing) return pb.pos;
+  const raw = pb.pos + (Math.max(0, serverNowMs - pb.anchor) * pb.rate) / 1000;
+  return pb.dur > 0 ? Math.min(raw, pb.dur) : raw;
+};
 
 export const leaseExpired = (s: SessionState, serverNowMs: number): boolean =>
   serverNowMs > s.leaseMs + LEASE_TTL_MS;
