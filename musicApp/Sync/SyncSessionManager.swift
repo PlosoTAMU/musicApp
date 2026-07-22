@@ -87,8 +87,22 @@ final class SyncSessionManager: ObservableObject {
             do {
                 uid = try await Auth.auth().createUser(withEmail: creds.email,
                                                        password: creds.password).user.uid
-            } catch {
-                throw SyncError.corrupt  // surfaced as "could not connect"
+            } catch let createErr {
+                // Sub-second race with another device that just created the
+                // account first (sync-audit-3.md F6). Retry signIn once —
+                // the password is deterministic from the same secret.
+                let code = (createErr as NSError).code
+                if code == AuthErrorCode.emailAlreadyInUse.rawValue {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    do {
+                        uid = try await Auth.auth().signIn(withEmail: creds.email,
+                                                           password: creds.password).user.uid
+                    } catch {
+                        throw SyncError.corrupt
+                    }
+                } else {
+                    throw SyncError.corrupt  // surfaced as "could not connect"
+                }
             }
         }
         try await coordinator.attach(uid: uid)

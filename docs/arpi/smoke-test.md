@@ -271,3 +271,19 @@ tests 33/33 (5 new F2 + 5 new F3 predicate cases in syncAudit-connection.test.ts
 - [ ] iPhone owns playback. Kill iPhone app (force-quit) without ever launching iPhone again. On desktop (follower, still running), wait past 45 s (LEASE_TTL_MS). Watch console; the follower issues a fenced clear. `remote.ownerDeviceID` becomes empty; the switchHerePill's text now says the seat is unclaimed rather than "Other device offline". A tap on ▶ from any library row cleanly takes the session over — no need to Play Here first.
 - [ ] Race safety: run two desktops as followers of a dead iPhone owner. Only one clear should land (the txn re-checks conditions at commit); the other logs a caught-error no-op.
 - [ ] Skew safety: kill iPhone owner, immediately relaunch desktop **offline**. serverClock is unsynced. Follower must NOT clear the seat until the clock has samples — the `isSynced` guard prevents the clear from firing on wall-clock alone.
+
+---
+
+## Audit-3 Phase 4 — Race polish (F6 + F11 + F12)
+
+**F6 — first-launch signIn race:**
+- [ ] Clear all app data on iPhone AND on desktop for the same account (or use a brand-new secret). Launch BOTH apps at the same time and enter the same secret. Both should end up connected — even the one that lost the createUser race. Pre-fix: one side got "Could not connect — check the secret and try again". Post-fix: both sides succeed after a 500 ms retry.
+
+**F11 — user queue edit during rapid track advance:**
+- [ ] Queue 5 songs on the phone as owner. Start playback. As the first track ends and advances to the second (~300 ms window), immediately drag a queue row to reorder. The reorder must land — check the queue on desktop mirror to confirm the new order was published. Pre-fix: rapid track-advance + edit would silently drop the reorder (the `suppressConsumePublish` flag ate it).
+- [ ] Regression: pure natural advance (no user edit) should NOT double-publish. Watch the console — a single consumeHead publish, no follow-up replaceAll for the same state.
+
+**F12 — follower skip debounce:**
+- [ ] Phone owns playback. On desktop (follower), rapidly click ⏭ twice within 200 ms. Only ONE track should advance on the phone. Pre-fix: both commands went through and skipped two tracks.
+- [ ] Same for ⏮. Rapid double-tap advances only once.
+- [ ] Regression: play/pause toggle still works at any speed (idempotent — never debounced). Seek still fires instantly.

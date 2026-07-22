@@ -75,6 +75,16 @@ export async function bootstrapAuth(secret: string): Promise<string> {
       try {
         return (await createUserWithEmailAndPassword(auth, email, password)).user.uid;
       } catch (e2: unknown) {
+        // Sub-second race with another device that just created the account
+        // first (sync-audit-3.md F6). Retry signIn once — the account exists
+        // now, and its password is deterministically the same as ours.
+        const code2 = (e2 as { code?: string })?.code ?? "";
+        if (code2 === "auth/email-already-in-use") {
+          await new Promise(r => setTimeout(r, 500));
+          try {
+            return (await signInWithEmailAndPassword(auth, email, password)).user.uid;
+          } catch (e3: unknown) { throw authError(e3); }
+        }
         throw authError(e2);
       }
     }

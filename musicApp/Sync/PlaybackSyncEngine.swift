@@ -62,7 +62,13 @@ final class PlaybackSyncEngine: ObservableObject {
 
     // Echo suppression.
     private var lastAppliedQueueIDs: [UUID]?
-    private var suppressConsumePublish = false
+    /// After a track-change fires our own `consumeHead`, the debounced queue
+    /// observer is expected to see the queue MINUS the popped head — snapshot
+    /// that state and, when the observer fires, skip publishing only if the
+    /// observed queue matches exactly. Any delta = the user also edited during
+    /// the debounce window; publish it (sync-audit-3.md F11 — the prior flag
+    /// silently ate that user intent).
+    private var expectedQueueAfterConsume: [UUID]?
 
     private var anchorTimer: Timer?
 
@@ -231,7 +237,12 @@ final class PlaybackSyncEngine: ObservableObject {
         // so a follower's concurrent insert survives.
         if let remoteHead = coordinator.remote?.queue.first,
            let newTrack, resolver.resolve(remoteHead)?.id == newTrack.id {
-            suppressConsumePublish = true
+            // player.queue was already mutated (head removed) by
+            // AudioPlayerManager.next(). If the debounced observer sees this
+            // exact same set of ids later, it's the natural consume-echo and
+            // we skip republishing. If it sees something different, the user
+            // edited during the debounce window — publish that intent.
+            expectedQueueAfterConsume = player.queue.map(\.id)
             let basis = coordinator.remote?.queueVersion ?? 0
             Task { await queueSync.apply(.consumeHead(expected: remoteHead.id), basisVersion: basis) }
         }
@@ -244,10 +255,12 @@ final class PlaybackSyncEngine: ObservableObject {
 
         // Echo of a remote apply — not user intent.
         if localIDs == lastAppliedQueueIDs { return }
-        // Echo of consumeHead's local mutation.
-        if suppressConsumePublish {
-            suppressConsumePublish = false
-            return
+        // Echo of our own consumeHead — but ONLY if the queue looks EXACTLY
+        // like what we snapshotted right after that consume. Any delta = user
+        // intent to publish (sync-audit-3.md F11).
+        if let expected = expectedQueueAfterConsume {
+            expectedQueueAfterConsume = nil
+            if localIDs == expected { return }
         }
         // Ghost suppression: if local == remote minus unresolvable tracks, the
         // delta is missing files, not intent. Publishing would delete those
@@ -379,13 +392,29 @@ final class PlaybackSyncEngine: ObservableObject {
     func requestPrevious()  { route(.previous) }
     func requestSeek(ms: Int) { route(.seek(ms: ms)) }
 
+    /// Non-idempotent commands (next/prev) get a short client-side rate-limit
+    /// so a rapid double-tap on the follower doesn't skip TWO tracks
+    /// (sync-audit-3.md F12). Idempotent commands (play/pause/seek) go through
+    /// unchanged: repeating pause on an already-paused session is a no-op.
+    private var lastSkipAt: Date?
+    private static let skipDebounce: TimeInterval = 0.3
+
     private func route(_ cmd: SyncCommand) {
         if coordinator.role.isOwner {
             applyCommand(cmd)
-        } else {
-            commands.send(cmd)
-            patchMirror(cmd)
+            return
         }
+        switch cmd {
+        case .next, .previous:
+            let now = Date()
+            if let last = lastSkipAt, now.timeIntervalSince(last) < Self.skipDebounce {
+                return
+            }
+            lastSkipAt = now
+        default: break
+        }
+        commands.send(cmd)
+        patchMirror(cmd)
     }
 
     /// Optimistic follower echo — twin of desktop ui.ts toggleCmd/seekCmd.
