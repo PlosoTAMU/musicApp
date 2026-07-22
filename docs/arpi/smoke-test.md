@@ -212,3 +212,26 @@ Single device (offline preview + a few playlists):
 - [ ] **Playlist card durations**: every playlist card (and the open header) shows "**count · m:ss**" (was count only). The duration fills in shortly after the cards appear and updates when you add/remove tracks.
 - [ ] **rail-addpl tooltip**: hover the ▤+ button in the Now Playing rail → it reads "**Add current track to a playlist**" (was "…to open playlist").
 - [ ] **Effects-bypass default**: on a **fresh install** (clear app data / new machine), effects start **bypassed** (rail fx button slashed), matching iOS. Existing installs keep whatever you last set.
+
+
+---
+
+## Audit-3 Phase 1 — MainActor freeze fix (F8 + F9)
+
+iOS only. Static gate: on-device Xcode build. Logic gate: desktop tests still 54/54 PASS (wire contract unchanged). Verify with the app:
+
+DEBUG build recommended (enables MainThreadWatchdog).
+
+Single device — first-launch on populated library:
+- [ ] Launch iOS app with a home secret already used elsewhere (so cloud library has ≥100 docs). Watch the console: MainThreadWatchdog stall lines (⚠️ [MainThreadWatchdog] Main thread stalled for …ms) should NOT scroll during the initial sync. Pre-fix: dozens per second during the first snapshot burst.
+- [ ] With a queue of ≥20 tracks and a library of ≥200 downloads, tap play on the phone. Console lag lines should stay quiet; UI should not stall on the tap.
+
+Two devices (real secret) — sync burst:
+- [ ] Play on desktop; on the phone (follower) drag the desktop speed/bass/reverb sliders rapidly for 5 s. Phone UI should stay responsive throughout — mini bar, tab bar, and gestures. Pre-fix: the phone would visibly stall or freeze while the sliders moved.
+- [ ] Add 20 songs to the shared queue on desktop in quick succession. Phone's queue view should update smoothly; no watchdog stalls.
+
+Regressions to check:
+- [ ] Rename a track locally → the row updates on both ends. (Confirms the resolver invalidation fires on rename, not just on add/delete.)
+- [ ] Delete a track locally → follower's queue view drops it. (Confirms invalidation on id change.)
+- [ ] Play a queued track that only lives in cloud (not yet downloaded) → shows as a ghost row, no crash. (Confirms nil-resolve path still works.)
+

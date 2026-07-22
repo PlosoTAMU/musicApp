@@ -105,21 +105,59 @@ struct TrackMeta {
     }
 }
 
-protocol TrackResolving {
+protocol TrackResolving: AnyObject {
     func resolve(_ ref: TrackRef) -> Track?
+    /// Discard any cached index so the next resolve rebuilds from the live source.
+    /// Callers must invoke this whenever the underlying library changes.
+    func invalidate()
 }
 
-struct LibraryTrackResolver: TrackResolving {
-    /// Closure so the resolver always sees the live library, not a snapshot.
-    let library: () -> [Track]
+/// Keyed-index resolver. `library` is a closure so the source stays live, but
+/// the built indexes are cached until `invalidate()` — every `resolve` used to
+/// call `library()` and linear-scan it, so a 100-track queue against a 500-track
+/// library did ~50k Track constructions + 50k scans on MainActor per remote
+/// snapshot (sync-audit-3.md F8). Cached lookups are O(1) each; the closure
+/// runs at most once per library change.
+final class LibraryTrackResolver: TrackResolving {
+    private let source: () -> [Track]
+    private var byId: [UUID: Track] = [:]
+    private var byYt: [String: Track] = [:]
+    private var byNameFolder: [String: Track] = [:]
+    private var byName: [String: Track] = [:]
+    private var built = false
+
+    init(library: @escaping () -> [Track]) {
+        self.source = library
+    }
+
+    func invalidate() { built = false }
+
+    private func rebuildIfNeeded() {
+        guard !built else { return }
+        let lib = source()
+        byId = [:]; byYt = [:]; byNameFolder = [:]; byName = [:]
+        byId.reserveCapacity(lib.count)
+        byNameFolder.reserveCapacity(lib.count)
+        byName.reserveCapacity(lib.count)
+        for t in lib {
+            byId[t.id] = t
+            // Prefer the injected ytIDProvider — the pipeline renames files to
+            // titles, so the "[<id>]" fallback usually returns nil.
+            if let yt = TrackRef.ytIDProvider?(t) ?? TrackRef.extractYTID(from: t.url) {
+                byYt[yt] = t
+            }
+            byNameFolder["\(t.name)|\(t.folderName)"] = t
+            byName[t.name] = t
+        }
+        built = true
+    }
 
     func resolve(_ ref: TrackRef) -> Track? {
-        let lib = library()
-        if let t = lib.first(where: { $0.id == ref.id }) { return t }
-        if let yt = ref.ytID,
-           let t = lib.first(where: { TrackRef.extractYTID(from: $0.url) == yt }) { return t }
-        if let t = lib.first(where: { $0.name == ref.name && $0.folderName == ref.folder }) { return t }
-        return lib.first(where: { $0.name == ref.name })
+        rebuildIfNeeded()
+        if let t = byId[ref.id] { return t }
+        if let yt = ref.ytID, let t = byYt[yt] { return t }
+        if let t = byNameFolder["\(ref.name)|\(ref.folder)"] { return t }
+        return byName[ref.name]
     }
 }
 

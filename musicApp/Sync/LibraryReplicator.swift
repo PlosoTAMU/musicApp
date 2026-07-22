@@ -19,10 +19,20 @@ final class LibraryReplicator {
     private var pendingUploads: [Download] = []
     private var uploadInFlight = false
     private var localDownloads: [Download] = []
+    // Normalized-name index over localDownloads. Rebuilt with `localDownloads`
+    // — `hasLocally` used to linear-scan every entry per pumpDownloads
+    // iteration (sync-audit-3.md F9).
+    private var localNames: Set<String> = []
 
     // Down-sync: cloud → local via yt-dlp, one file in flight.
     private var listener: ListenerRegistration?
     private var meta: [String: TrackMeta] = [:]        // docId → cloud metadata
+    private var metaByYt: [String: String] = [:]       // yt → docId — kills the
+                                                       // O(N) `meta.values.first`
+                                                       // that ran per snapshot doc
+                                                       // change and per pump step.
+    private var metaByNormName: [String: String] = [:] // normalized(name) → docId
+                                                       // for upload-side dedupe.
     private var downQueue: [TrackMeta] = []
     private var downloadingYT: Set<String> = []        // in-flight yt ids (≤1 at a time)
     private var downFails: [String: Int] = [:]         // yt id → attempts
@@ -56,7 +66,10 @@ final class LibraryReplicator {
         // Immediate cache for down-sync's "do we already have this" check —
         // must not wait on the upload pump's 2s debounce.
         downloads
-            .sink { [weak self] list in self?.localDownloads = list }
+            .sink { [weak self] list in
+                self?.localDownloads = list
+                self?.localNames = Set(list.map { Self.normalize($0.name) })
+            }
             .store(in: &bag)
 
         // Debounce: DownloadManager mutates its array repeatedly mid-download;
@@ -82,6 +95,8 @@ final class LibraryReplicator {
         self.uid = uid
         // Clear down-sync state to prevent stale metadata from interfering across account switches.
         meta.removeAll()
+        metaByYt.removeAll()
+        metaByNormName.removeAll()
         downQueue.removeAll()
         downloadingYT.removeAll()
         downFails.removeAll()
@@ -102,9 +117,27 @@ final class LibraryReplicator {
     private func handleSnapshot(_ snap: QuerySnapshot) {
         for change in snap.documentChanges {
             let id = change.document.documentID
-            if change.type == .removed { meta.removeValue(forKey: id); continue }
+            if change.type == .removed {
+                if let old = meta.removeValue(forKey: id) {
+                    if let yt = old.yt, metaByYt[yt] == id { metaByYt.removeValue(forKey: yt) }
+                    let n = Self.normalize(old.name)
+                    if metaByNormName[n] == id { metaByNormName.removeValue(forKey: n) }
+                }
+                continue
+            }
             guard let m = TrackMeta(dict: change.document.data()) else { continue }
+            // Keep secondary indexes in step with the primary map: a rename
+            // or yt-change (rare) leaves a stale pointer otherwise.
+            if let prev = meta[id] {
+                if let prevYt = prev.yt, prevYt != m.yt,
+                   metaByYt[prevYt] == id { metaByYt.removeValue(forKey: prevYt) }
+                let prevName = Self.normalize(prev.name)
+                if prevName != Self.normalize(m.name),
+                   metaByNormName[prevName] == id { metaByNormName.removeValue(forKey: prevName) }
+            }
             meta[id] = m
+            if let yt = m.yt { metaByYt[yt] = id }
+            metaByNormName[Self.normalize(m.name)] = id
             guard let yt = m.yt else { continue }
 
             if m.deleted {
@@ -131,18 +164,26 @@ final class LibraryReplicator {
     private func hasLocally(_ m: TrackMeta) -> Bool {
         guard let yt = m.yt else { return true }  // nothing fetchable — treat as handled
         if findDuplicate(yt) != nil { return true }
-        let name = Self.normalize(m.name)
-        return localDownloads.contains { Self.normalize($0.name) == name }
+        return localNames.contains(Self.normalize(m.name))
+    }
+
+    private func metaForYt(_ yt: String) -> TrackMeta? {
+        metaByYt[yt].flatMap { meta[$0] }
     }
 
     private func pumpDownloads() {
-        guard downloadingYT.isEmpty, !downQueue.isEmpty else { return }
-        let m = downQueue.removeFirst()
-        guard let yt = m.yt else { pumpDownloads(); return }
-        if meta.values.first(where: { $0.yt == yt })?.deleted == true { pumpDownloads(); return }
-        if hasLocally(m) { pumpDownloads(); return }  // raced with a manual/other-source add
-        downloadingYT.insert(yt)
-        startDownload("https://www.youtube.com/watch?v=\(yt)", yt, .youtube, m.name)
+        // Was recursive with an O(N) `meta.values.first` per iteration — on a
+        // first-sync backlog against a populated library that's ~N² work on
+        // MainActor (sync-audit-3.md F9). While-loop + yt-index makes it O(N).
+        while downloadingYT.isEmpty, !downQueue.isEmpty {
+            let m = downQueue.removeFirst()
+            guard let yt = m.yt else { continue }
+            if metaForYt(yt)?.deleted == true { continue }
+            if hasLocally(m) { continue }              // raced with a manual/other-source add
+            downloadingYT.insert(yt)
+            startDownload("https://www.youtube.com/watch?v=\(yt)", yt, .youtube, m.name)
+            return                                     // one file in flight
+        }
     }
 
     private func handleFailures(_ list: [FailedDownload]) {
@@ -153,7 +194,7 @@ final class LibraryReplicator {
             let attempts = (downFails[yt] ?? 0) + 1
             downFails[yt] = attempts
             // Up to 3 attempts, then drop until the next snapshot (mirrors replicator.ts).
-            if attempts < 3, let m = meta.values.first(where: { $0.yt == yt }) {
+            if attempts < 3, let m = metaForYt(yt) {
                 downQueue.append(m)
             }
         }
@@ -194,12 +235,14 @@ final class LibraryReplicator {
         // Already mirrored under a DIFFERENT doc id — e.g. this file just
         // arrived via down-sync (which mints a fresh local UUID). If the match
         // is a tombstone, this is a manual re-download: revive the doc in
-        // place (matched by yt) instead of minting a duplicate.
+        // place (matched by yt) instead of minting a duplicate. Was an O(N)
+        // dictionary scan per upload; now O(1) via the two secondary indexes.
         let name = Self.normalize(d.name)
-        if let (docId, m) = meta.first(where: {
-            ($0.value.yt != nil && $0.value.yt == d.videoID) ||
-            Self.normalize($0.value.name) == name
-        }).map({ ($0.key, $0.value) }) {
+        let matchDocId: String? = {
+            if let yt = d.videoID, let idByYt = metaByYt[yt] { return idByYt }
+            return metaByNormName[name]
+        }()
+        if let docId = matchDocId, let m = meta[docId] {
             if m.deleted {
                 let ref = db.collection("users").document(uid)
                     .collection("library").document(docId)
@@ -249,8 +292,7 @@ final class LibraryReplicator {
     // MARK: - Metadata push (local intent → cloud doc)
 
     private func docRef(forYT yt: String) -> DocumentReference? {
-        guard !uid.isEmpty,
-              let docId = meta.first(where: { $0.value.yt == yt })?.key else { return nil }
+        guard !uid.isEmpty, let docId = metaByYt[yt] else { return nil }
         return db.collection("users").document(uid).collection("library").document(docId)
     }
 
