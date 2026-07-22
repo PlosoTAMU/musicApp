@@ -49,6 +49,12 @@ final class SessionCoordinator: ObservableObject {
     private var retryTask: Task<Void, Never>?
     private var retryDelay: TimeInterval = 2
 
+    // First-fresh-snapshot handling: on the initial online snapshot after
+    // attach(), if the doc still names SELF as owner it's a zombie from a
+    // prior crash/kill — reclaim ownership so the epoch bumps once and we
+    // truly control the seat again (sync-audit-3.md F2). Reset on detach.
+    private var didHandleInitialSnapshot = false
+
     var sessionRef: DocumentReference? {
         uid.isEmpty ? nil : db.collection("users").document(uid)
             .collection("sync").document("session")
@@ -80,6 +86,7 @@ final class SessionCoordinator: ObservableObject {
         retryTask?.cancel(); retryTask = nil
         listenRetryTask?.cancel(); listenRetryTask = nil
         outbox = nil
+        didHandleInitialSnapshot = false
         uid = ""
         role = .none
         remote = nil
@@ -147,9 +154,67 @@ final class SessionCoordinator: ObservableObject {
             demote(reason: "epoch \(state.epoch) > \(mine)")
         }
 
+        // First fresh snapshot: reconcile attach-time assumptions with the
+        // actual doc. Only on real server snapshots — a cached snapshot says
+        // nothing about whether the recorded owner is really dead.
+        if isOnline {
+            let firstFresh = !didHandleInitialSnapshot
+            if firstFresh { didHandleInitialSnapshot = true }
+
+            if firstFresh, role == .follower,
+               state.ownerDeviceID == SyncDevice.id {
+                // F2 — the session doc still names SELF as owner; a prior app
+                // instance died before demoting cleanly. Reclaim it: takeOver
+                // bumps the epoch and gives us the seat authoritatively. Any
+                // real doppelganger with our old epoch is deposed by that same
+                // write.
+                print("👑 [Sync] Reclaiming ownership from prior instance (zombie)")
+                Task { [weak self] in _ = try? await self?.takeOver() }
+            } else if role != .owner,
+                      !state.ownerDeviceID.isEmpty,
+                      state.ownerDeviceID != SyncDevice.id,
+                      ServerClock.shared.isSynced,
+                      state.leaseExpired {
+                // F3 — another device owned the seat but hasn't heartbeated
+                // in > leaseTTLMs. Fenced-CAS the ownerDeviceID back to ""
+                // so the session reads idle again; whoever plays next takes
+                // it cleanly. Skip until the ServerClock has real samples:
+                // wall-clock skew alone must not nuke a live owner's seat.
+                // Races between followers are safe: the txn re-checks the
+                // expected owner AND expired-lease at commit, so only the
+                // first wins and the rest no-op.
+                let expectedOwner = state.ownerDeviceID
+                Task { [weak self] in await self?.clearExpiredOwnership(from: expectedOwner) }
+            }
+        }
+
         // Anti-echo: never react to our own writes.
         if state.updatedBy != SyncDevice.id {
             onRemoteState?(state)
+        }
+    }
+
+    /// Fenced-CAS clear of a stale owner. No-op unless the doc still names the
+    /// expected dead owner and its lease is still expired at commit time.
+    private func clearExpiredOwnership(from expectedOwner: String) async {
+        guard let ref = sessionRef else { return }
+        let dev = SyncDevice.id
+        let now = ServerClock.shared.nowMs
+        do {
+            try await db.txn { txn in
+                let snap = try txn.getDocument(ref)
+                guard let cur = SessionState(snap: snap),
+                      cur.ownerDeviceID == expectedOwner,
+                      cur.leaseExpired else { return }
+                txn.updateData([
+                    "ownerDeviceID": "",
+                    "leaseMs": now,
+                    "updatedBy": dev,
+                ], forDocument: ref)
+            }
+        } catch {
+            // Best-effort: another follower may have cleared it first, or the
+            // owner heartbeated between our snapshot and the txn.
         }
     }
 

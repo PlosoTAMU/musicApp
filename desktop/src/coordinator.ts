@@ -11,7 +11,7 @@ import {
   runTransaction, updateDoc, deleteField, Unsubscribe,
 } from "firebase/firestore";
 import {
-  SessionState, PlaybackState, DEVICE_ID, FENCED,
+  SessionState, PlaybackState, DEVICE_ID, FENCED, leaseExpired,
 } from "./protocol";
 import { serverClock } from "./serverClock";
 
@@ -48,6 +48,11 @@ export class SessionCoordinator {
   private retryDelay = 2000;
   private listenRetryTimer?: ReturnType<typeof setTimeout>;
   private listenRetryDelay = 2000;
+  // Twin of iOS didHandleInitialSnapshot: on the first fresh (non-cache)
+  // snapshot after attach, reconcile attach-time assumptions with the actual
+  // doc — reclaim ownership if the doc still names SELF (F2, zombie), fenced-
+  // clear the seat if the doc names a dead follower (F3, expired lease).
+  private didHandleInitialSnapshot = false;
 
   constructor(readonly db: Firestore) {}
 
@@ -91,6 +96,7 @@ export class SessionCoordinator {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.listenRetryTimer) clearTimeout(this.listenRetryTimer);
     this.outbox = undefined;
+    this.didHandleInitialSnapshot = false;
     this.role = "none"; this.myEpoch = 0; this.remote = undefined; this.uid = "";
     this.demo = false;
     this.onChange?.();
@@ -114,6 +120,34 @@ export class SessionCoordinator {
         if (this.role === "owner" && state.epoch > this.myEpoch) {
           this.demote(`epoch ${state.epoch} > ${this.myEpoch}`);
         }
+
+        // First-fresh-snapshot reconciliation (sync-audit-3.md F2/F3).
+        // Skip cached snapshots — a stale cache says nothing about whether
+        // the recorded owner is really dead.
+        if (this.online) {
+          const firstFresh = !this.didHandleInitialSnapshot;
+          if (firstFresh) this.didHandleInitialSnapshot = true;
+
+          if (firstFresh && this.role === "follower"
+              && state.ownerDeviceID === DEVICE_ID) {
+            // F2 — the doc still names SELF; a prior instance died before
+            // demoting cleanly. Reclaim ownership.
+            console.log("[sync] reclaiming ownership from prior instance (zombie)");
+            void this.takeOver().catch(() => {});
+          } else if (this.role !== "owner"
+                     && state.ownerDeviceID
+                     && state.ownerDeviceID !== DEVICE_ID
+                     && serverClock.isSynced
+                     && leaseExpired(state, serverClock.nowMs)) {
+            // F3 — another device owned the seat but hasn't heartbeated in
+            // > LEASE_TTL_MS. Fenced-CAS the ownerDeviceID back to "" so the
+            // next play() on any device takes it cleanly. Skip until the
+            // ServerClock has real samples: wall-clock skew alone must not
+            // nuke a live owner's seat.
+            void this.clearExpiredOwnership(ref, state.ownerDeviceID);
+          }
+        }
+
         if (state.updatedBy !== DEVICE_ID) this.onRemote?.(state);
       }
       this.onChange?.();
@@ -186,6 +220,26 @@ export class SessionCoordinator {
 
   private flushOutbox() {
     if (this.outbox) void this.publishPlayback(this.outbox);
+  }
+
+  /** F3 fenced-CAS clear of a stale owner. No-op unless the doc still names
+   *  the expected dead owner AND its lease is still expired at commit time —
+   *  so races between followers all trying to clear the seat resolve safely:
+   *  the first wins, the rest see updated state and no-op. */
+  private async clearExpiredOwnership(ref: DocumentReference, expectedOwner: string) {
+    try {
+      await runTransaction(this.db, async txn => {
+        const snap = await txn.get(ref);
+        const cur = snap.data() as SessionState | undefined;
+        if (!cur || cur.ownerDeviceID !== expectedOwner
+            || !leaseExpired(cur, serverClock.nowMs)) return;
+        txn.update(ref, {
+          ownerDeviceID: "",
+          leaseMs: serverClock.nowMs,
+          updatedBy: DEVICE_ID,
+        });
+      });
+    } catch { /* best-effort */ }
   }
 
   private scheduleRetry() {

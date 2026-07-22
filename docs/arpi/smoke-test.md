@@ -251,3 +251,23 @@ Check the fix:
 - [ ] Now play *Track α* on the phone (become owner). It should come back at **speed 1.25×, bass +8, reverb 20%** — the values you saved for α. **Pre-fix regression:** it came back with the desktop's pushed 2.0× / +10 / 60% because SettingsSync's `player.playbackSpeed = X` fired `saveCurrentTrackSettings` on whichever track was loaded when the snapshot landed.
 - [ ] Repeat with *Track β* → returns at 0.85× / -4 / 0%.
 - [ ] While the phone is playing *α* (owner), verify that manually adjusting sliders on the phone still saves — sliders should persist across a track switch and back.
+
+---
+
+## Audit-3 Phase 3 — Zombie owner + expired-seat reclaim (F1 + F2 + F3)
+
+iOS + desktop (both ends implement this symmetrically). Static gate:
+tests 33/33 (5 new F2 + 5 new F3 predicate cases in syncAudit-connection.test.ts).
+
+**F1 (iOS isRemoteControlled self-check):**
+- [ ] iPhone was the owner, force-quit (drag app up in switcher). Relaunch. Before any tap, the mini bar and Now Playing view must NOT show a "Playing on another device" / "Controlling your other device" state. Pre-fix: it did, because `isRemoteControlled` saw ownerDeviceID = SELF and returned true.
+
+**F2 (owner-continuity reclaim on relaunch):**
+- [ ] Same setup: iPhone was owner, force-quit, relaunch with internet. Watch console for `👑 [Sync] Reclaiming ownership from prior instance (zombie)`. The role in the app becomes owner within ~1 s (one Firestore transaction). After reclaim, tapping ⏯ from the mini bar controls playback locally, no takeover round trip.
+- [ ] Repeat on desktop: run `npm start` after the desktop was the last owner. Console should log `[sync] reclaiming ownership from prior instance (zombie)`; the app becomes owner immediately.
+- [ ] Negative case: iPhone was follower, desktop was owner, kill iPhone app, relaunch iPhone. Session doc still names DESKTOP as owner → NO reclaim on iPhone (correct; iPhone stays follower and mirrors desktop).
+
+**F3 (expired-seat auto-clear):**
+- [ ] iPhone owns playback. Kill iPhone app (force-quit) without ever launching iPhone again. On desktop (follower, still running), wait past 45 s (LEASE_TTL_MS). Watch console; the follower issues a fenced clear. `remote.ownerDeviceID` becomes empty; the switchHerePill's text now says the seat is unclaimed rather than "Other device offline". A tap on ▶ from any library row cleanly takes the session over — no need to Play Here first.
+- [ ] Race safety: run two desktops as followers of a dead iPhone owner. Only one clear should land (the txn re-checks conditions at commit); the other logs a caught-error no-op.
+- [ ] Skew safety: kill iPhone owner, immediately relaunch desktop **offline**. serverClock is unsynced. Follower must NOT clear the seat until the clock has samples — the `isSynced` guard prevents the clear from firing on wall-clock alone.

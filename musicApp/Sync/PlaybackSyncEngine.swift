@@ -41,9 +41,15 @@ final class PlaybackSyncEngine: ObservableObject {
 
     /// Another device currently owns the shared session — views become a live
     /// remote (mirror display + command-bus controls) while this is true.
+    /// A NON-empty ownerDeviceID that equals SELF is a zombie from a prior
+    /// crash/kill; SessionCoordinator reclaims it on the first fresh snapshot,
+    /// but until that resolves the UI must not treat SELF as "the remote"
+    /// (sync-audit-3.md F1).
     var isRemoteControlled: Bool {
-        coordinator.role == .follower &&
-        !(coordinator.remote?.ownerDeviceID.isEmpty ?? true)
+        guard coordinator.role == .follower,
+              let owner = coordinator.remote?.ownerDeviceID,
+              !owner.isEmpty else { return false }
+        return owner != SyncDevice.id
     }
 
     private var bag = Set<AnyCancellable>()
