@@ -188,8 +188,13 @@ final class SessionCoordinator: ObservableObject {
             }
         }
 
-        // Anti-echo: never react to our own writes.
-        if state.updatedBy != SyncDevice.id {
+        // Anti-echo: never react to our own writes. Also skip cached snapshots
+        // (sync-audit-3.md F5) — Firestore re-fires the last known doc while
+        // offline, and treating those as live would paint the mirror UI with
+        // possibly hours-old "playing on <device>" state. `remote` keeps the
+        // last online value so views that read it directly still see the last
+        // known session; only handleRemote (mirror/queue/ghosts) is gated.
+        if isOnline, state.updatedBy != SyncDevice.id {
             onRemoteState?(state)
         }
     }
@@ -298,8 +303,15 @@ final class SessionCoordinator: ObservableObject {
     // MARK: - Bluetooth handoff beacon
 
     /// Owner's headphones disconnected → advertise a 60 s handoff window.
-    /// Plain (non-transactional) write on purpose: this fires in the chaos of a
-    /// route change and must be fast; a stale beacon self-expires via atMs.
+    ///
+    /// Plain (non-transactional) write on purpose: this fires in the chaos of
+    /// a route change and must be fast; a stale beacon self-expires via atMs.
+    /// The client-side `role.isOwner` guard is best-effort — a demoted zombie
+    /// owner could still land the write (sync-audit-3.md F10). Impact is
+    /// bounded to a 60 s stale beacon that self-expires via handoffActive's
+    /// timestamp check; another handoff would overwrite it. Intentional
+    /// tradeoff: speed at the route-change instant beats absolute correctness
+    /// of a beacon field that already carries expiration semantics.
     func postHandoff() async {
         guard role.isOwner, let ref = sessionRef else { return }
         try? await ref.updateData([

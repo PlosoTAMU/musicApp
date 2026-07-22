@@ -287,3 +287,25 @@ tests 33/33 (5 new F2 + 5 new F3 predicate cases in syncAudit-connection.test.ts
 - [ ] Phone owns playback. On desktop (follower), rapidly click ⏭ twice within 200 ms. Only ONE track should advance on the phone. Pre-fix: both commands went through and skipped two tracks.
 - [ ] Same for ⏮. Rapid double-tap advances only once.
 - [ ] Regression: play/pause toggle still works at any speed (idempotent — never debounced). Seek still fires instantly.
+
+---
+
+## Audit-3 Phase 5 — Cosmetics (F5 + F10)
+
+**F5 — stale-cache mirror suppression:**
+- [ ] iPhone follower, desktop owner playing. Kill iPhone's network (Airplane Mode) for 10 seconds. The mini bar's mirror state should freeze at the last online value — NOT flicker or refresh with cached snapshots. Restore network → within a couple seconds the mirror updates to the current live state.
+- [ ] Cold-launch iPhone offline (Airplane Mode on before app opens). The Now Playing state should be empty rather than showing a hours-old cached session. Once online, the current live state populates within a second.
+- [ ] Confirm role/lease UI (Home Sync sheet dot) still updates correctly — those read `remote` directly, which continues to update even from cache; only the mirror is gated.
+
+**F10 — docstring-only:** no behavior change to verify. The `postHandoff` comment now documents why the non-fenced write is intentional.
+
+---
+
+## Audit-3 — Full-branch checkpoint
+
+Before merging `arpi/audit-3` into main:
+- [ ] All Phase 1–5 boxes above are checked on the user's actual devices.
+- [ ] `desktop/tests/*.test.ts` still 33/33 PASS (was 54/54 counting phaseA + phaseC).
+- [ ] Static gates green: iOS `xcodebuild build`; desktop `npx tsc --noEmit && npm run bundle`.
+- [ ] MainThreadWatchdog stall count during a 30 s remote-slider-drag session on the phone (Phase 1 acceptance): 0.
+- [ ] docs/arpi/sync-audit-3.md and NOTES.md decisions block reflect what actually shipped.

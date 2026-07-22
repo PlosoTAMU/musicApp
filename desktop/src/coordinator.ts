@@ -148,7 +148,10 @@ export class SessionCoordinator {
           }
         }
 
-        if (state.updatedBy !== DEVICE_ID) this.onRemote?.(state);
+        // Skip cached snapshots so onRemote doesn't paint the UI with hours-
+        // old state after a network hiccup (sync-audit-3.md F5). Same anti-
+        // echo check on updatedBy. `remote` keeps the last online value.
+        if (this.online && state.updatedBy !== DEVICE_ID) this.onRemote?.(state);
       }
       this.onChange?.();
     }, err => {
@@ -253,7 +256,11 @@ export class SessionCoordinator {
 
   /** Owner's audio output vanished → advertise a 60 s handoff window. Plain
    *  write on purpose — fires mid-route-change, must be fast; a stale beacon
-   *  self-expires via atMs. */
+   *  self-expires via atMs. Client-side role guard is best-effort; a demoted
+   *  zombie owner could still land the write (sync-audit-3.md F10). Impact
+   *  is bounded to a 60 s stale beacon; another handoff overwrites it.
+   *  Intentional: speed here beats absolute correctness on a field that
+   *  already carries expiration semantics. */
   async postHandoff() {
     const ref = this.ref;
     if (this.demo || this.role !== "owner" || !ref) return;
