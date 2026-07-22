@@ -91,6 +91,13 @@ final class SettingsSync {
         lastAppliedBass = clampedBass
         lastAppliedReverb = clampedReverb
 
+        // Suppress the didSet → saveCurrentTrackSettings hop while we assign
+        // (sync-audit-3.md F7): the remote values represent the OWNER's
+        // effective playback settings, not intent for the current track loaded
+        // here. Persisting them into whichever local track happens to be
+        // `currentTrack` corrupted that track's per-file memory.
+        player.isApplyingRemoteSettings = true
+        defer { player.isApplyingRemoteSettings = false }
         player.playbackSpeed = clampedSpeed
         player.bassBoost = clampedBass
         player.reverbAmount = clampedReverb

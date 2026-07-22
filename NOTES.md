@@ -34,6 +34,7 @@ audit findings (see `docs/arpi/desktop-parity-findings.md`), strict priority ord
 - 2026-07-14 A: logic tests now COMMITTED (desktop/tests/*.test.ts + tests/run.js, `npm run test:logic`) instead of throwaway scripts — esbuild-bundled, localStorage stubbed via banner.
 - 2026-07-22 AUDIT 3 (sync correctness): 12 findings, freeze root-caused to O(N×M) library resolution on MainActor. Plan + findings in `docs/arpi/sync-audit-3.md`. Wire contract untouched → desktop tests unchanged. Work on branch `arpi/audit-3`.
 - 2026-07-22 3-P1: `LibraryTrackResolver` is now a class with cached byId/byYt/byNameFolder/byName indexes, invalidated only on downloads change (removeDuplicates on id+name arrays). `LibraryReplicator` gets metaByYt + metaByNormName + localNames indexes and pumpDownloads is a while loop — the two O(N²) hot paths (per-snapshot linear scans, per-pump-step recursion) are now O(1) per step.
+- 2026-07-22 3-P2 (F7): `AudioPlayerManager.isApplyingRemoteSettings` gate — `saveCurrentTrackSettings` early-returns while set, `SettingsSync.applyRemote` wraps its three assignments with the flag. Remote values still take audible effect (didSet applyReverb/applyBass/applyPlaybackSpeed run) but no longer overwrite the local track's saved memory on disk.
 
 ## ASSUMPTIONS
 - [unconfirmed] Firestore doc contracts stay frozen; parity work must not change wire field names (they are the cross-platform contract — see SettingsSync.swift header).

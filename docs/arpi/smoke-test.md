@@ -235,3 +235,19 @@ Regressions to check:
 - [ ] Delete a track locally → follower's queue view drops it. (Confirms invalidation on id change.)
 - [ ] Play a queued track that only lives in cloud (not yet downloaded) → shows as a ghost row, no crash. (Confirms nil-resolve path still works.)
 
+
+---
+
+## Audit-3 Phase 2 — SettingsSync per-track corruption (F7)
+
+iOS only. Two devices, real secret:
+
+Setup: on the phone, save distinct per-track memory:
+  1. Play *Track α*; set speed 1.25×, bass +8, reverb 20% → let it save (~1 s).
+  2. Play *Track β*; set speed 0.85×, bass -4, reverb 0% → let it save.
+
+Check the fix:
+- [ ] With the phone as follower, on the desktop play a *third* track with speed 2.0×, bass +10, reverb 60%. The phone's live audio applies those effects immediately (this is the intended sync).
+- [ ] Now play *Track α* on the phone (become owner). It should come back at **speed 1.25×, bass +8, reverb 20%** — the values you saved for α. **Pre-fix regression:** it came back with the desktop's pushed 2.0× / +10 / 60% because SettingsSync's `player.playbackSpeed = X` fired `saveCurrentTrackSettings` on whichever track was loaded when the snapshot landed.
+- [ ] Repeat with *Track β* → returns at 0.85× / -4 / 0%.
+- [ ] While the phone is playing *α* (owner), verify that manually adjusting sliders on the phone still saves — sliders should persist across a track switch and back.
