@@ -6,7 +6,7 @@ import { ipcRenderer } from "electron";
 import { pathToFileURL } from "url";
 import * as fs from "fs";
 import * as path from "path";
-import { db, bootstrapAuth } from "./firebase";
+import { db, bootstrapAuth, signOutHome } from "./firebase";
 import { SessionCoordinator } from "./coordinator";
 import { SyncEngine } from "./engine";
 import { Replicator } from "./replicator";
@@ -232,12 +232,21 @@ function wire() {
   };
 
   // Forget home: clears the secret, back to setup.
+  //
+  // Also signs out and drops the replicator's shadow. Staying authenticated to
+  // the old account let a stale session keep writing, and the shadow (the
+  // 3-way-merge base of last-synced name/folder per yt) belongs to THAT home —
+  // carried into a different one it can read a never-seen track as
+  // "deleted on disk here" and tombstone it (sync-audit-4 M9). iOS's
+  // forgetHome does the equivalent.
   $("btn-forget").onclick = () => {
     localStorage.removeItem(SECRET_KEY);
     replicator.stop();
+    replicator.forgetShadow();
     playlistSync.stop();
     settingsSync.stop();
     coord.detach();
+    void signOutHome();
     renderNow();
   };
 

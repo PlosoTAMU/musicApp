@@ -73,6 +73,16 @@ export class Replicator {
   stop() {
     this.unsub?.(); this.unsub = undefined;
     this.meta.clear(); this.downQ = [];
+    this.uid = "";
+  }
+
+  /** Drop the 3-way-merge base. Only on "forget home": the shadow records what
+   *  each yt looked like the last time THIS home synced it, so carrying it into
+   *  a different account can make a track that simply hasn't downloaded yet
+   *  read as "deleted on disk here" and get tombstoned (sync-audit-4 M9). */
+  forgetShadow() {
+    this.shadow = {};
+    localStorage.removeItem(Replicator.SHADOW_KEY);
   }
 
   /** Call after a library rescan — mirrors anything the cloud lacks. */

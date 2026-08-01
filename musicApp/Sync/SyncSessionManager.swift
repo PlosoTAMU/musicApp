@@ -114,14 +114,52 @@ final class SyncSessionManager: ObservableObject {
         }
     }
 
+    /// Maps a Firebase auth failure to something a human can act on — twin of
+    /// desktop firebase.ts's `authError`. iOS used to funnel EVERY auth failure
+    /// into `SyncError.corrupt` ("could not connect"), so a typo'd secret and a
+    /// dead network read identically, and any transient sign-in error triggered
+    /// a pointless createUser attempt (sync-audit-4 M12).
+    ///
+    /// Firebase 10+ made AuthErrorCode a STRUCT, so `AuthErrorCode.<case>` is
+    /// an AuthErrorCode value with no `.rawValue`; the Int that lands in
+    /// NSError.code is the nested `Code` enum's rawValue.
+    private static func authError(_ e: Error) -> SyncError {
+        switch (e as NSError).code {
+        case AuthErrorCode.Code.operationNotAllowed.rawValue:
+            return .auth("Email/Password sign-in is disabled — enable it: Firebase console → Authentication → Sign-in method.")
+        case AuthErrorCode.Code.networkError.rawValue:
+            return .auth("Can't reach Firebase — check the internet connection.")
+        case AuthErrorCode.Code.emailAlreadyInUse.rawValue,
+             AuthErrorCode.Code.wrongPassword.rawValue:
+            return .auth("Secret mismatch — this home exists but the secret differs.")
+        default:
+            return .corrupt
+        }
+    }
+
+    /// Only these mean "no such account yet, create it". Anything else is a
+    /// real failure and must NOT provoke a createUser — twin of desktop's
+    /// `user-not-found` / `invalid-credential` check.
+    private static func isMissingAccount(_ e: Error) -> Bool {
+        let code = (e as NSError).code
+        return code == AuthErrorCode.Code.userNotFound.rawValue
+            || code == AuthErrorCode.Code.invalidCredential.rawValue
+    }
+
     func connect(secret: String) async throws {
         let creds = Self.deriveCreds(secret: secret)
-        do {
-            uid = try await Self.withTimeout(label: "Sign-in") {
+        func signIn() async throws -> String {
+            try await Self.withTimeout(label: "Sign-in") {
                 try await Auth.auth().signIn(withEmail: creds.email,
                                              password: creds.password).user.uid
             }
-        } catch {
+        }
+        do {
+            uid = try await signIn()
+        } catch let signInErr {
+            guard Self.isMissingAccount(signInErr) else {
+                throw Self.authError(signInErr)
+            }
             // First device ever creates the home account.
             do {
                 uid = try await Self.withTimeout(label: "Sign-in") {
@@ -132,24 +170,15 @@ final class SyncSessionManager: ObservableObject {
                 // Sub-second race with another device that just created the
                 // account first (sync-audit-3.md F6). Retry signIn once —
                 // the password is deterministic from the same secret.
-                //
-                // Firebase 10+ made AuthErrorCode a STRUCT, so
-                // `AuthErrorCode.emailAlreadyInUse` is an AuthErrorCode value
-                // with no `.rawValue`. The Int that lands in NSError.code is
-                // the nested `Code` enum's rawValue.
-                let code = (createErr as NSError).code
-                if code == AuthErrorCode.Code.emailAlreadyInUse.rawValue {
-                    try? await Task.sleep(nanoseconds: 500_000_000)
-                    do {
-                        uid = try await Self.withTimeout(label: "Sign-in") {
-                            try await Auth.auth().signIn(withEmail: creds.email,
-                                                         password: creds.password).user.uid
-                        }
-                    } catch {
-                        throw SyncError.corrupt
-                    }
-                } else {
-                    throw SyncError.corrupt  // surfaced as "could not connect"
+                guard (createErr as NSError).code
+                        == AuthErrorCode.Code.emailAlreadyInUse.rawValue else {
+                    throw Self.authError(createErr)
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                do {
+                    uid = try await signIn()
+                } catch {
+                    throw Self.authError(error)
                 }
             }
         }
@@ -242,10 +271,19 @@ final class SyncSessionManager: ObservableObject {
     }
 
     /// Forget the home secret; back to setup.
+    ///
+    /// Every sub-syncer is detached, not just the coordinator: the library,
+    /// playlist and settings listeners were left attached to the old uid, so a
+    /// "forgotten" home kept receiving this device's writes until relaunch
+    /// (sync-audit-4 M9).
     func forgetHome() {
         connectRetryTask?.cancel(); connectRetryTask = nil
         UserDefaults.standard.removeObject(forKey: Self.secretKey)
+        replicator?.deactivate()
+        playlistSync?.deactivate()
+        settingsSync?.deactivate()
         coordinator.detach()
+        uid = ""
         isConnected = false
         try? Auth.auth().signOut()
     }

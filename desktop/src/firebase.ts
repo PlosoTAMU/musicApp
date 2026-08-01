@@ -38,7 +38,7 @@ export const storage = getStorage(app);
 // (SyncSessionManager.deriveCreds) byte-for-byte.
 import { createHash } from "crypto";
 import {
-  signInWithEmailAndPassword, createUserWithEmailAndPassword,
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
 } from "firebase/auth";
 
 const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
@@ -61,6 +61,13 @@ function authError(e: unknown): Error {
     default:
       return e instanceof Error ? e : new Error(String(e));
   }
+}
+
+/** Drop the Firebase session on "forget home" — staying authenticated to the
+ *  old account lets a stale listener keep writing (twin of iOS forgetHome's
+ *  Auth.auth().signOut()). */
+export async function signOutHome(): Promise<void> {
+  await signOut(getAuth(app)).catch(() => {});
 }
 
 /** Sign in with the derived account; first device ever creates it. */

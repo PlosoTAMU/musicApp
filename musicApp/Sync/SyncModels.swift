@@ -14,6 +14,25 @@ enum SyncError: Error {
     /// "Play Here" refused: the session's track isn't in this device's library,
     /// so taking over would depose the owner and play silence.
     case trackNotHere(String)
+    /// Auth failed with a cause worth showing the user verbatim — twin of the
+    /// messages desktop firebase.ts's authError produces.
+    case auth(String)
+}
+
+extension SyncError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .auth(let message): return message
+        case .trackNotHere(let name): return "“\(name)” is not in this device's library"
+        case .timeout(let label): return "\(label) timed out — check firewall/VPN, then retry"
+        case .fenced: return "Another device took over playback"
+        case .noSession: return "Not connected to a home"
+        case .corrupt: return "Could not connect"
+        case .badCode: return "That code is invalid or expired"
+        case .codeCollision: return "Code collision — try again"
+        case .queueStale: return "Queue changed elsewhere while offline"
+        }
+    }
 }
 
 // MARK: - Device identity (stable per install)

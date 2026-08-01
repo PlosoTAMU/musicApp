@@ -41,7 +41,14 @@ struct HomeSyncSheet: View {
                             Task {
                                 defer { busy = false }
                                 do { try await manager.connect(secret: secret) }
-                                catch { self.error = "Could not connect — check the secret and try again" }
+                                catch {
+                                    // SyncError is LocalizedError, so an auth
+                                    // failure says WHY (wrong secret vs. no
+                                    // network vs. sign-in disabled) instead of
+                                    // one catch-all string (sync-audit-4 M12).
+                                    self.error = (error as? SyncError)?.errorDescription
+                                        ?? "Could not connect — check the secret and try again"
+                                }
                             }
                         }
                         .buttonStyle(PillButtonStyle())

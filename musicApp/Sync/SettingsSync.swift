@@ -56,6 +56,18 @@ final class SettingsSync {
         }
     }
 
+    /// Detach from the current home — otherwise `forgetHome` leaves this
+    /// listener applying a forgotten home's effects (sync-audit-4 M9).
+    /// lastApplied* is cleared so reconnecting re-pushes local values instead
+    /// of believing the new home already has them.
+    func deactivate() {
+        listener?.remove(); listener = nil
+        uid = ""
+        lastAppliedSpeed = nil
+        lastAppliedBass = nil
+        lastAppliedReverb = nil
+    }
+
     private var docRef: DocumentReference {
         db.collection("users").document(uid).collection("sync").document("settings")
     }

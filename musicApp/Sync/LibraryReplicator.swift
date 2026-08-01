@@ -29,6 +29,11 @@ final class LibraryReplicator {
     private var metaByNormName: [String: String] = [:] // normalized(name) → docId
                                                        // for upload-side dedupe.
     private var downQueue: [TrackMeta] = []
+    // Membership index over downQueue. The initial listener snapshot delivers
+    // every cloud doc as one batch, and the "already queued?" check ran a
+    // linear scan of a queue that grows with the batch — O(n²) on MainActor,
+    // the same launch-freeze shape F9 fixed elsewhere (sync-audit-4 M8).
+    private var downQueuedYT: Set<String> = []
     private var downloadingYT: Set<String> = []        // in-flight yt ids (≤1 at a time)
     private var downFails: [String: Int] = [:]         // yt id → attempts
     private var processedFailures: Set<UUID> = []
@@ -38,10 +43,30 @@ final class LibraryReplicator {
     private let applyMeta: (String, TrackMeta) -> Void
     private let applyDeletion: (String) -> Void
 
-    /// Fast path only; the authoritative dedupe is the doc-exists check server-side.
+    /// Fast path only; the authoritative dedupe is the doc-exists check
+    /// server-side.
+    ///
+    /// Scoped PER UID. It used to live under one global key, so after switching
+    /// to a different home every local track was still marked "uploaded" and
+    /// `enqueueMissing` filtered them all out — the new account received no
+    /// library docs at all, ever (sync-audit-4 M9). Desktop never had this: its
+    /// dedupe map is per-uid in memory and cleared by replicator.stop().
+    private static let legacyUploadedKey = "sync.uploaded.ids"
+    private var uploadedKey: String { "sync.uploaded.ids.\(uid)" }
     private var uploadedIDs: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: "sync.uploaded.ids") ?? []) }
-        set { UserDefaults.standard.set(Array(newValue), forKey: "sync.uploaded.ids") }
+        get {
+            let d = UserDefaults.standard
+            if let scoped = d.stringArray(forKey: uploadedKey) { return Set(scoped) }
+            // One-time adoption of the pre-scoping key for the FIRST home this
+            // install syncs with, so existing users don't re-mirror everything.
+            if let legacy = d.stringArray(forKey: Self.legacyUploadedKey) {
+                d.set(legacy, forKey: uploadedKey)
+                d.removeObject(forKey: Self.legacyUploadedKey)
+                return Set(legacy)
+            }
+            return []
+        }
+        set { UserDefaults.standard.set(Array(newValue), forKey: uploadedKey) }
     }
 
     init(db: Firestore,
@@ -97,6 +122,7 @@ final class LibraryReplicator {
         metaByYt.removeAll()
         metaByNormName.removeAll()
         downQueue.removeAll()
+        downQueuedYT.removeAll()
         downloadingYT.removeAll()
         downFails.removeAll()
         processedFailures.removeAll()
@@ -108,6 +134,23 @@ final class LibraryReplicator {
             }
         // Re-diff on activation so a backlog uploads without waiting for a change.
         pumpUploads()
+    }
+
+    /// Detach from the current home. Without this, `forgetHome` left the
+    /// library listener running against the OLD uid, so a device that had
+    /// "forgotten" a home kept mirroring into it (sync-audit-4 M9).
+    func deactivate() {
+        listener?.remove(); listener = nil
+        uid = ""
+        meta.removeAll()
+        metaByYt.removeAll()
+        metaByNormName.removeAll()
+        downQueue.removeAll()
+        downQueuedYT.removeAll()
+        downloadingYT.removeAll()
+        downFails.removeAll()
+        processedFailures.removeAll()
+        pendingUploads.removeAll()
     }
 
     // MARK: - Down: cloud → local
@@ -143,6 +186,7 @@ final class LibraryReplicator {
                 // Tombstone: never fetch it, and apply the deletion locally
                 // unless we authored it (echo).
                 downQueue.removeAll { $0.yt == yt }
+                downQueuedYT.remove(yt)
                 if m.metaBy != SyncDevice.id { applyDeletion(yt) }
                 continue
             }
@@ -152,9 +196,9 @@ final class LibraryReplicator {
                 // unless we authored the change. Idempotent: applyRemoteMeta
                 // no-ops when values already match.
                 if m.metaBy != SyncDevice.id { applyMeta(yt, m) }
-            } else if !downloadingYT.contains(yt),
-                      !downQueue.contains(where: { $0.yt == yt }) {
+            } else if !downloadingYT.contains(yt), !downQueuedYT.contains(yt) {
                 downQueue.append(m)
+                downQueuedYT.insert(yt)
             }
         }
         pumpDownloads()
@@ -177,6 +221,7 @@ final class LibraryReplicator {
         while downloadingYT.isEmpty, !downQueue.isEmpty {
             let m = downQueue.removeFirst()
             guard let yt = m.yt else { continue }
+            downQueuedYT.remove(yt)
             if metaForYt(yt)?.deleted == true { continue }
             if hasLocally(m) { continue }              // raced with a manual/other-source add
             downloadingYT.insert(yt)
@@ -195,6 +240,7 @@ final class LibraryReplicator {
             // Up to 3 attempts, then drop until the next snapshot (mirrors replicator.ts).
             if attempts < 3, let m = metaForYt(yt) {
                 downQueue.append(m)
+                downQueuedYT.insert(yt)
             }
         }
         pumpDownloads()
