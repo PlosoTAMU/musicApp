@@ -84,12 +84,31 @@ export const positionAt = (pb: PlaybackState, serverNowMs: number): number => {
 export const leaseExpired = (s: SessionState, serverNowMs: number): boolean =>
   serverNowMs > s.leaseMs + LEASE_TTL_MS;
 
-/** Nothing is playing anywhere in the session — no owner, or the owner
- *  published an empty playback (queue drained / stopped). Queue-adds while
- *  idle start playback instead of parking (twin of iOS addToQueue /
- *  queuePlaylist's currentTrack == nil branch). */
-export const sessionIdle = (s: SessionState | undefined): boolean =>
-  !s || !s.ownerDeviceID || !s.playback.track;
+/** A device other than us holds the seat AND is still heartbeating, so a
+ *  command sent now will actually be executed. Twin of
+ *  PlaybackSyncEngine.hasLiveRemoteOwner. Everything that hands work to the
+ *  owner — transport commands, "the owner will start this track" — must gate
+ *  on this, not on "is there an ownerDeviceID". */
+export const liveRemoteOwner = (
+  s: SessionState | undefined, serverNowMs: number,
+): boolean =>
+  !!s && !!s.ownerDeviceID && !sameId(s.ownerDeviceID, DEVICE_ID)
+  && !leaseExpired(s, serverNowMs);
+
+/** Nothing is playing anywhere in the session — no owner, the owner published
+ *  an empty playback (queue drained / stopped), or the owner is DEAD (lease
+ *  expired). Queue-adds while idle start playback instead of parking (twin of
+ *  iOS addToQueue / queuePlaylist's currentTrack == nil branch).
+ *
+ *  The lease term matters: without it, an owner that died mid-track left the
+ *  session permanently "busy", so adding a song to the queue on this device
+ *  parked it behind a track nobody would ever finish (sync-audit-4 B2). iOS's
+ *  sessionHasRemotePlayback already required a LIVE owner; this is the twin. */
+export const sessionIdle = (
+  s: SessionState | undefined, serverNowMs: number,
+): boolean =>
+  !s || !s.ownerDeviceID || !s.playback.track
+  || (!sameId(s.ownerDeviceID, DEVICE_ID) && leaseExpired(s, serverNowMs));
 
 // Queue ops are CLIENT-LOCAL intents (rebased against the live queue inside a
 // transaction, never serialized) — extending this union does not touch the

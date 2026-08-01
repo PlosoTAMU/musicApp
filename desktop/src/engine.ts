@@ -6,8 +6,8 @@ import { QueueSync, rebase } from "./queueSync";
 import { CommandBus, Command } from "./commandBus";
 import { LocalPlayer, LocalTrack, scanLibrary, resolve, toRef } from "./player";
 import {
-  PlaybackState, SessionState, TrackRef, DEVICE_ID, LEASE_TTL_MS, positionAt,
-  sameId, sessionIdle,
+  PlaybackState, SessionState, TrackRef, DEVICE_ID, positionAt,
+  sameId, sessionIdle, liveRemoteOwner,
 } from "./protocol";
 import { serverClock } from "./serverClock";
 
@@ -131,11 +131,11 @@ export class SyncEngine {
 
   // ── Controls: one call site, both roles (command-bus bridge) ───────────
 
-  play()  { this.route({ t: "play" }); }
-  pause() { this.route({ t: "pause" }); }
-  next()  { this.route({ t: "next" }); }
-  prev()  { this.route({ t: "prev" }); }
-  seekMs(ms: number) { this.route({ t: "seek", ms: Math.round(ms) }); }
+  play()  { return this.route({ t: "play" }); }
+  pause() { return this.route({ t: "pause" }); }
+  next()  { return this.route({ t: "next" }); }
+  prev()  { return this.route({ t: "prev" }); }
+  seekMs(ms: number) { return this.route({ t: "seek", ms: Math.round(ms) }); }
 
   /** Non-idempotent commands (next/prev) get a short client-side rate-limit
    *  so a rapid double-click on a follower doesn't skip TWO tracks
@@ -143,14 +143,29 @@ export class SyncEngine {
   private lastSkipAt = 0;
   private static readonly SKIP_DEBOUNCE_MS = 300;
 
-  private route(cmd: Command) {
-    if (this.coord.role === "owner") { this.applyLocal(cmd); return; }
+  /** Fired when a follower's transport command was dropped because no live
+   *  owner would ever execute it — the UI turns this into a "Play Here"
+   *  prompt instead of leaving the button looking broken. */
+  onDeadOwnerCommand?: () => void;
+
+  /** Returns false when the command was dropped. Twin of
+   *  PlaybackSyncEngine.route. */
+  private route(cmd: Command): boolean {
+    if (this.coord.role === "owner") { this.applyLocal(cmd); return true; }
+    // Only the owner drains the commands collection. With no live owner the
+    // docs pile up unread and the button silently does nothing, forever
+    // (sync-audit-4 B2). Drop it and tell the UI to offer "Play Here".
+    if (!this.coord.demo && !this.hasLiveRemoteOwner()) {
+      this.onDeadOwnerCommand?.();
+      return false;
+    }
     if (cmd.t === "next" || cmd.t === "prev") {
       const now = Date.now();
-      if (now - this.lastSkipAt < SyncEngine.SKIP_DEBOUNCE_MS) return;
+      if (now - this.lastSkipAt < SyncEngine.SKIP_DEBOUNCE_MS) return false;
       this.lastSkipAt = now;
     }
     this.commands.send(cmd);
+    return true;
   }
 
   private applyLocal(cmd: Command) {
@@ -264,10 +279,14 @@ export class SyncEngine {
    *  actually execute. Gate for remote-mode routing; a dead owner falls back
    *  to "play here" (takeover), since its commands would go nowhere. */
   hasLiveRemoteOwner(): boolean {
-    const s = this.coord.remote;
-    return !this.coord.demo && this.coord.role !== "owner" &&
-      !!s && !!s.ownerDeviceID && !sameId(s.ownerDeviceID, DEVICE_ID) &&
-      serverClock.nowMs <= s.leaseMs + LEASE_TTL_MS;
+    return !this.coord.demo && this.coord.role !== "owner"
+      && liveRemoteOwner(this.coord.remote, serverClock.nowMs);
+  }
+
+  /** Nothing is playing anywhere the session can reach — no owner, no track,
+   *  or a dead owner. Queue-adds here start playback instead of parking. */
+  private idle(): boolean {
+    return sessionIdle(this.coord.remote, serverClock.nowMs);
   }
 
   /** Click a track while another device is playing → that device plays it;
@@ -302,7 +321,7 @@ export class SyncEngine {
     if (!ts.length) return;
     this.autoDisableLoop();
     let rest = ts;
-    if (sessionIdle(this.coord.remote)) {
+    if (this.idle()) {
       await this.playLocal(ts[0]);
       rest = ts.slice(1);
     }
@@ -354,7 +373,7 @@ export class SyncEngine {
    *  playing immediately instead of parking the track. */
   queueLocal(t: LocalTrack) {
     this.autoDisableLoop();
-    if (sessionIdle(this.coord.remote)) { void this.playLocal(t); return; }
+    if (this.idle()) { void this.playLocal(t); return; }
     if (this.coord.demo) { this.demoQueue(q => [...q, toRef(t)]); return; }
     const remoteQ = this.coord.remote?.queue ?? [];
     const afterId = remoteQ.length ? remoteQ[remoteQ.length - 1].id : null;

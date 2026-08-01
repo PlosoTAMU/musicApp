@@ -132,8 +132,13 @@ final class SyncSessionManager: ObservableObject {
                 // Sub-second race with another device that just created the
                 // account first (sync-audit-3.md F6). Retry signIn once —
                 // the password is deterministic from the same secret.
+                //
+                // Firebase 10+ made AuthErrorCode a STRUCT, so
+                // `AuthErrorCode.emailAlreadyInUse` is an AuthErrorCode value
+                // with no `.rawValue`. The Int that lands in NSError.code is
+                // the nested `Code` enum's rawValue.
                 let code = (createErr as NSError).code
-                if code == AuthErrorCode.emailAlreadyInUse.rawValue {
+                if code == AuthErrorCode.Code.emailAlreadyInUse.rawValue {
                     try? await Task.sleep(nanoseconds: 500_000_000)
                     do {
                         uid = try await Self.withTimeout(label: "Sign-in") {

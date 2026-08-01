@@ -65,6 +65,14 @@ final class PlaybackSyncEngine: ObservableObject {
         return true
     }
 
+    /// Remote display mode is on, but the owner's lease has lapsed — it is not
+    /// draining commands, so the transport here is inert until someone takes
+    /// over. Twin of desktop ui.ts's `#owner-dead` chip / dead-owner banner.
+    /// SessionCoordinator's F3 clear usually retires this within one snapshot;
+    /// the affordance covers the window (and the offline case, where F3 is
+    /// deliberately skipped).
+    var remoteOwnerIsDead: Bool { isRemoteControlled && !hasLiveRemoteOwner }
+
     /// Remote-mode play routing (wired into AudioPlayerManager.playRouter):
     /// while another device owns playback, a local tap becomes a `playTrack`
     /// command over there — this device stays silent. Returns true when routed.
@@ -187,6 +195,11 @@ final class PlaybackSyncEngine: ObservableObject {
         if !owner.isEmpty, owner != SyncDevice.id, owner != syncedOwner {
             syncedOwner = owner
             commands.send(.requestStatus)
+        }
+
+        // A live owner is answering again — retire the dead-owner prompt.
+        if lastCommandHitDeadOwner, hasLiveRemoteOwner {
+            lastCommandHitDeadOwner = false
         }
 
         // Queue application is loop-sensitive: replaying our own write echo
@@ -488,22 +501,40 @@ final class PlaybackSyncEngine: ObservableObject {
     private var lastSkipAt: Date?
     private static let skipDebounce: TimeInterval = 0.3
 
-    private func route(_ cmd: SyncCommand) {
+    /// Set when a follower's transport command was dropped because no live
+    /// owner would ever execute it. Views surface a "Play Here" prompt instead
+    /// of leaving the button looking broken (sync-audit-4 B2). Cleared as soon
+    /// as a live owner reappears.
+    @Published private(set) var lastCommandHitDeadOwner = false
+
+    /// Returns false when the command was dropped. Twin of desktop
+    /// SyncEngine.route.
+    @discardableResult
+    private func route(_ cmd: SyncCommand) -> Bool {
         if coordinator.role.isOwner {
             applyCommand(cmd)
-            return
+            return true
+        }
+        // Only the owner drains the commands collection. With no live owner the
+        // docs pile up unread and every tap silently does nothing, forever —
+        // and patchMirror is already skipped for an expired lease, so the UI
+        // doesn't even twitch. Drop it and let the UI offer "Play Here".
+        guard hasLiveRemoteOwner else {
+            lastCommandHitDeadOwner = true
+            return false
         }
         switch cmd {
         case .next, .previous:
             let now = Date()
             if let last = lastSkipAt, now.timeIntervalSince(last) < Self.skipDebounce {
-                return
+                return false
             }
             lastSkipAt = now
         default: break
         }
         commands.send(cmd)
         patchMirror(cmd)
+        return true
     }
 
     /// Optimistic follower echo — twin of desktop ui.ts toggleCmd/seekCmd.

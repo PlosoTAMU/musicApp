@@ -71,35 +71,32 @@ final class CommandBus {
 
     /// Owner-side. Applies fresh commands in server order, deletes every doc
     /// (applied or stale) so the collection never grows.
+    ///
+    /// Commands authored BEFORE this reign began were aimed at the previous
+    /// owner ("pause the old song"), and executing them against a fresh reign
+    /// pauses/seeks playback the sender never meant to touch — so they are
+    /// drained without applying. The cutoff is a timestamp, not "the whole
+    /// first batch": a follower that sends `playTrack` in the same instant we
+    /// take over is addressing US, and blanket-purging the initial batch
+    /// silently ate it (sync-audit-4 L22). Twin of commandBus.ts.
     func startListening(handler: @escaping (SyncCommand) -> Void) {
         stopListening()
         guard let ref = sessionRef() else { return }
-        // The initial batch is drained WITHOUT applying: those commands were
-        // aimed at the previous owner ("pause the old song"), and executing
-        // them against a fresh reign pauses/seeks playback the sender never
-        // meant to touch. The new owner publishes its state anyway.
-        var isInitialBatch = true
+        let reignStartMs = Double(ServerClock.shared.nowMs)
         listener = ref.collection("commands").order(by: "at")
             .addSnapshotListener { snap, _ in
                 guard let snap else { return }
-                defer { isInitialBatch = false }
-                if isInitialBatch {
-                    for change in snap.documentChanges where change.type == .added {
-                        change.document.reference.delete()
-                    }
-                    return
-                }
                 for change in snap.documentChanges where change.type == .added {
                     let doc = change.document
                     // serverTimestamp is nil until acked; treat pending as fresh.
-                    let ageMs: Double
+                    let nowMs = Double(ServerClock.shared.nowMs)
+                    let atMs: Double
                     if let ts = doc.get("at") as? Timestamp {
-                        let serverMs = Double(ts.seconds) * 1000 + Double(ts.nanoseconds) / 1_000_000
-                        ageMs = Double(ServerClock.shared.nowMs) - serverMs
+                        atMs = Double(ts.seconds) * 1000 + Double(ts.nanoseconds) / 1_000_000
                     } else {
-                        ageMs = 0
+                        atMs = nowMs
                     }
-                    if ageMs < Self.staleMs,
+                    if nowMs - atMs < Self.staleMs, atMs >= reignStartMs,
                        doc.get("by") as? String != SyncDevice.id,
                        let cmd = SyncCommand(dict: doc.data()) {
                         handler(cmd)

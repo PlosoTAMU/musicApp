@@ -390,6 +390,10 @@ function wire() {
 
   coord.onChange = renderAll;
   engine.onChange = renderAll;
+  // The owner's lease lapsed, so nothing would ever execute that command.
+  // Say so instead of leaving the button looking broken (sync-audit-4 B2).
+  engine.onDeadOwnerCommand = () =>
+    showHint("Your other device stopped responding — use Play Here");
   setInterval(renderNow, 500);
 }
 
@@ -450,8 +454,8 @@ const ownerAlive = () =>
 function toggleCmd() {
   const pb = coord.remote?.playback;
   const playing = !!pb?.playing;
-  playing ? engine.pause() : engine.play();
-  if (!pb || coord.role === "owner" || !ownerAlive()) return;
+  const sent = playing ? engine.pause() : engine.play();
+  if (!sent || !pb || coord.role === "owner" || !ownerAlive()) return;
   pb.pos = Math.round(currentPosMs()); // re-anchor at the shown position
   pb.anchor = serverClock.nowMs;
   pb.playing = !playing;
@@ -459,9 +463,9 @@ function toggleCmd() {
 }
 
 function seekCmd(ms: number) {
-  engine.seekMs(ms);
+  const sent = engine.seekMs(ms);
   const pb = coord.remote?.playback;
-  if (!pb || coord.role === "owner" || !ownerAlive()) return;
+  if (!sent || !pb || coord.role === "owner" || !ownerAlive()) return;
   pb.pos = Math.round(ms);
   pb.anchor = serverClock.nowMs;
   renderNow();
@@ -1006,10 +1010,15 @@ function renderNow() {
   // blocking cover we show a status banner + Play Here to take over — the
   // desktop is a true remote of the phone, like iOS is of the desktop.
   const remoteActive = coord.role !== "owner" && !idle;
+  const deadOwner = remoteActive && !!s && leaseExpired(s, serverClock.nowMs);
   $("remote-banner").hidden = !remoteActive;
-  $("remote-banner-text").textContent = remoteActive
-    ? `Controlling your other device${pb?.track ? ` — ${pb.track.name}` : ""}`
-    : "";
+  // A dead owner drains no commands, so the rail transport is inert — say so
+  // and point at Play Here rather than letting the buttons look broken
+  // (sync-audit-4 B2).
+  $("remote-banner-text").textContent = !remoteActive ? ""
+    : deadOwner
+      ? `Your other device stopped responding${pb?.track ? ` — ${pb.track.name}` : ""} · Play Here to continue`
+      : `Controlling your other device${pb?.track ? ` — ${pb.track.name}` : ""}`;
   ($("btn-playhere") as HTMLButtonElement).disabled = busy || !coord.online;
 
   const titleText = pb?.track?.name ?? (idle ? "Pick a song →" : "Nothing playing");

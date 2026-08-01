@@ -1012,9 +1012,9 @@ struct NowPlayingView: View {
         .padding(.top, 6)
     }
 
-    private var ownerReachable: Bool {
-        !(syncManager.coordinator.remote?.leaseExpired ?? false)
-    }
+    /// The owning device stopped heartbeating: it drains no commands, so the
+    /// transport here is inert until someone takes over (sync-audit-4 B2).
+    private var ownerReachable: Bool { !engine.remoteOwnerIsDead }
     /// Remote track exists but can't resolve locally — switching would claim
     /// the session and play silence, so the pill disables instead.
     private var mirrorTrackIsGhost: Bool {
@@ -1025,6 +1025,8 @@ struct NowPlayingView: View {
     private var switchHerePill: some View {
         VStack(spacing: 8) {
             Text(mirrorTrackIsGhost ? "Not in this device's library yet"
+                 : engine.lastCommandHitDeadOwner
+                    ? "Other device isn't responding — continue here"
                  : ownerReachable ? "Playing on another device"
                  : "Other device offline")
                 .font(Theme.caption(12))

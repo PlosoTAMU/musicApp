@@ -54,6 +54,7 @@ export class SessionCoordinator {
   private listenRetryTimer?: ReturnType<typeof setTimeout>;
   private listenRetryDelay = 2000;
   private staleChecked = false;
+  private staleReleaseInFlight = false;
 
   constructor(readonly db: Firestore) {}
 
@@ -100,15 +101,21 @@ export class SessionCoordinator {
     this.role = "none"; this.myEpoch = 0; this.remote = undefined; this.uid = "";
     this.demo = false;
     this.staleChecked = false;
+    this.staleReleaseInFlight = false;
     this.onChange?.();
   }
 
   /** Clear ownership a dead previous run of THIS device left behind. Fenced on
    *  the observed epoch — any concurrent takeover (ours or another device's)
-   *  bumps it and this becomes a no-op. */
+   *  bumps it and this becomes a no-op.
+   *
+   *  FENCED means the world moved on, so there is nothing left to release and
+   *  the latch closes. Any other error is transient (offline, contention):
+   *  leave the latch open so the next fresh snapshot retries. Twin of
+   *  SessionCoordinator.swift's releaseStaleOwnership. */
   private async releaseStaleOwnership(epoch: number) {
     const ref = this.ref;
-    if (!ref) return;
+    if (!ref) { this.staleReleaseInFlight = false; return; }
     try {
       await runTransaction(this.db, async txn => {
         const snap = await txn.get(ref);
@@ -119,8 +126,14 @@ export class SessionCoordinator {
           ownerDeviceID: "", "playback.playing": false, updatedBy: DEVICE_ID,
         });
       });
+      this.staleChecked = true;
       console.log("[sync] released stale self-ownership (crashed previous run)");
-    } catch { /* superseded or offline — nothing to do */ }
+    } catch (e) {
+      if (e === FENCED) this.staleChecked = true;   // superseded — nothing to do
+      else console.log("[sync] stale-ownership release failed, will retry", e);
+    } finally {
+      this.staleReleaseInFlight = false;
+    }
   }
 
   /** (Re)subscribes the session listener. On a terminal listen error (the SDK
@@ -151,10 +164,19 @@ export class SessionCoordinator {
         // calls engine.becomeCommandTarget(), so the app would own the session
         // while listening to no commands, and it publishes nothing, leaving the
         // phantom `playing: true` alive on every other device.
-        if (!snap.metadata.fromCache && !this.staleChecked) {
-          this.staleChecked = true;
-          if (sameId(state.ownerDeviceID, DEVICE_ID) && this.role !== "owner")
+        //
+        // The latch is set only when the release TRANSACTION SUCCEEDS (or when
+        // there was nothing to release). Latching before the write meant one
+        // transient failure wedged the app in a fake "remote controlled by
+        // itself" mode for the rest of the process (sync-audit-4 B1).
+        if (!snap.metadata.fromCache && !this.staleChecked
+            && !this.staleReleaseInFlight) {
+          if (sameId(state.ownerDeviceID, DEVICE_ID) && this.role !== "owner") {
+            this.staleReleaseInFlight = true;
             void this.releaseStaleOwnership(state.epoch);
+          } else {
+            this.staleChecked = true;   // nothing stale to release
+          }
         }
 
         // F3 (sync-audit-3.md) — a DIFFERENT device owns the seat but hasn't

@@ -88,6 +88,7 @@ final class SessionCoordinator: ObservableObject {
         role = .none
         remote = nil
         checkedStaleSelfOwnership = false
+        staleReleaseInFlight = false
     }
 
     // MARK: - Snapshot listener (deposed detection + anti-echo + connectivity)
@@ -164,11 +165,21 @@ final class SessionCoordinator: ObservableObject {
         // phantom `playing: true` with a dead anchor survives on every other
         // device, and the engine's own reconcileLocalPlayback already claims the
         // session the moment local audio really plays.
-        if !snap.metadata.isFromCache, !checkedStaleSelfOwnership {
-            checkedStaleSelfOwnership = true
+        //
+        // The latch is set only when the release TRANSACTION SUCCEEDS (or when
+        // there was nothing to release). Latching before the write meant one
+        // transient failure — offline blip, contention — wedged the device in a
+        // fake "remote controlled by itself" mode for the rest of the process
+        // (sync-audit-4 B1). `staleReleaseInFlight` keeps the retry from firing
+        // a second transaction while the first is still open.
+        if !snap.metadata.isFromCache, !checkedStaleSelfOwnership,
+           !staleReleaseInFlight {
             if state.ownerDeviceID == SyncDevice.id, !role.isOwner {
+                staleReleaseInFlight = true
                 let epoch = state.epoch
                 Task { await self.releaseStaleOwnership(epoch: epoch) }
+            } else {
+                checkedStaleSelfOwnership = true   // nothing stale to release
             }
         }
 
@@ -205,11 +216,21 @@ final class SessionCoordinator: ObservableObject {
     // MARK: - Stale self-ownership release
 
     private var checkedStaleSelfOwnership = false
+    private var staleReleaseInFlight = false
 
     /// Fenced on the observed epoch: if anything (another device, or our own
     /// takeover racing this task) bumped the epoch meanwhile, this aborts.
+    ///
+    /// `SyncError.fenced` means the world moved on — someone else owns the seat
+    /// now, so there is nothing left to release and the latch closes. Any other
+    /// error is transient (offline, contention): leave the latch open so the
+    /// next fresh snapshot retries.
     private func releaseStaleOwnership(epoch: Int) async {
-        guard !role.isOwner, let ref = sessionRef else { return }
+        defer { staleReleaseInFlight = false }
+        guard !role.isOwner, let ref = sessionRef else {
+            checkedStaleSelfOwnership = true
+            return
+        }
         let dev = SyncDevice.id
         do {
             try await db.txn { txn in
@@ -224,9 +245,14 @@ final class SessionCoordinator: ObservableObject {
                     "updatedBy": dev,
                 ], forDocument: ref)
             }
+            checkedStaleSelfOwnership = true
             print("👑→👤 [Sync] Released stale self-ownership (crashed previous run)")
+        } catch is SyncError {
+            // Superseded: someone took over between the snapshot and the txn.
+            checkedStaleSelfOwnership = true
         } catch {
-            // Someone took over meanwhile, or offline — either way nothing to do.
+            // Transient (offline / contention) — retry on the next fresh snapshot.
+            print("👑→👤 [Sync] Stale-ownership release failed, will retry: \(error)")
         }
     }
 

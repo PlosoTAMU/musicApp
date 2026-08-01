@@ -37,24 +37,28 @@ export class CommandBus {
   }
 
   /** Owner-side. Applies fresh commands in server order; deletes every doc.
-   *  The INITIAL batch is drained without applying — those commands were aimed
-   *  at the previous owner, and replaying them against a fresh reign would
-   *  pause/seek playback the sender never meant to touch. */
+   *
+   *  Commands authored BEFORE this reign began were aimed at the previous
+   *  owner — replaying them against a fresh reign would pause/seek playback
+   *  the sender never meant to touch — so they are drained without applying.
+   *  The cutoff is a timestamp, not "the whole first batch": a follower that
+   *  sends `playTrack` in the same instant we take over is addressing US, and
+   *  blanket-purging the initial batch silently ate it (sync-audit-4 L22).
+   *  Commands still pending a server stamp are treated as fresh, matching the
+   *  steady-state path. Twin of CommandBus.swift. */
   start(handler: (cmd: Command) => void) {
     this.stop();
     const ref = this.ref();
     if (!ref) return;
-    let initialBatch = true;
+    const reignStartMs = serverClock.nowMs;
     this.unsub = onSnapshot(query(collection(ref, "commands"), orderBy("at")), snap => {
-      const purgeOnly = initialBatch;
-      initialBatch = false;
       for (const change of snap.docChanges()) {
         if (change.type !== "added") continue;
-        if (purgeOnly) { void deleteDoc(change.doc.ref); continue; }
         const d = change.doc.data();
         const at = d.at as Timestamp | null;                 // null until server-acked
-        const ageMs = at ? serverClock.nowMs - at.toMillis() : 0;
-        if (ageMs < STALE_MS && d.by !== DEVICE_ID) handler(d as Command);
+        const atMs = at ? at.toMillis() : serverClock.nowMs;
+        const fresh = serverClock.nowMs - atMs < STALE_MS && atMs >= reignStartMs;
+        if (fresh && d.by !== DEVICE_ID) handler(d as Command);
         void deleteDoc(change.doc.ref);
       }
     });

@@ -6,7 +6,7 @@
 // separate GUI check on device.
 import { rebase } from "../src/queueSync";
 import {
-  SessionState, TrackRef, sessionIdle, positionAt, leaseExpired,
+  SessionState, TrackRef, sessionIdle, positionAt, leaseExpired, liveRemoteOwner,
   handoffActive, DEVICE_ID, LEASE_TTL_MS, HANDOFF_WINDOW_MS,
 } from "../src/protocol";
 
@@ -31,33 +31,47 @@ const session = (opts: Partial<SessionState> = {}): SessionState => ({
 // Connection-order semantics — the states a device sees at attach() time
 // ─────────────────────────────────────────────────────────────────────────
 
+// A fixed "now" so lease terms are explicit rather than wall-clock dependent.
+const NOW = 1_000_000;
+
 // Scenario A: cold start, singleton doc doesn't exist yet.
 // attach() lazy-writes IDLE_SESSION. sessionIdle must be true.
-eq("cold start doc is idle", sessionIdle(session()), true);
+eq("cold start doc is idle", sessionIdle(session(), NOW), true);
 
 // Scenario B: another device is already the owner and playing something.
 // The joining device becomes follower and mirrors the state — NOT idle.
 const remoteOwnerPlaying = session({
-  ownerDeviceID: "OTHER", leaseMs: 1_000_000,
-  playback: { track: ref("X"), playing: true, pos: 0, anchor: 1_000_000, rate: 1000, dur: 180000, rev: 5 },
+  ownerDeviceID: "OTHER", leaseMs: NOW - 1_000,
+  playback: { track: ref("X"), playing: true, pos: 0, anchor: NOW, rate: 1000, dur: 180000, rev: 5 },
 });
-eq("owner+track playing → not idle", sessionIdle(remoteOwnerPlaying), false);
+eq("owner+track playing → not idle", sessionIdle(remoteOwnerPlaying, NOW), false);
 
 // Scenario C: another device WAS the owner but drained the queue and stopped.
 // playback.track is nil → sessionIdle so a queue-add starts playback.
-const remoteOwnerDrained = session({ ownerDeviceID: "OTHER", leaseMs: 1_000_000 });
-eq("owner but no track → idle (queue-add starts)", sessionIdle(remoteOwnerDrained), true);
+const remoteOwnerDrained = session({ ownerDeviceID: "OTHER", leaseMs: NOW - 1_000 });
+eq("owner but no track → idle (queue-add starts)", sessionIdle(remoteOwnerDrained, NOW), true);
 
 // Scenario D: previous session left ownerDeviceID = SELF but this session
-// just started (relaunch after crash). remote reports SELF as owner but
-// role is follower until first play. sessionIdle uses ownerDeviceID only;
-// SELF-ownership without a track behaves like idle. This is the "zombie
-// owner" case — the invariant here confirms queue-add will start local
-// playback normally, but the isRemoteControlled UI in ContentView.swift:44
-// STILL treats non-empty ownerDeviceID as "remote-controlled" without
-// checking if it's SELF. Recorded as F1 in the audit findings.
-const zombieSelfOwner = session({ ownerDeviceID: DEVICE_ID, leaseMs: 1_000 });
-eq("zombie SELF-owner without track → idle", sessionIdle(zombieSelfOwner), true);
+// just started (relaunch after crash). remote reports SELF as owner but role
+// is follower until the release lands. sessionIdle keys off ownerDeviceID +
+// track, so SELF-ownership without a track behaves like idle and a queue-add
+// starts local playback normally. The UI half of this — isRemoteControlled
+// treating SELF as "the remote" — is fixed separately (F1 / sync-audit-4 B1).
+const zombieSelfOwner = session({ ownerDeviceID: DEVICE_ID, leaseMs: NOW - 1_000 });
+eq("zombie SELF-owner without track → idle", sessionIdle(zombieSelfOwner, NOW), true);
+
+// Scenario E (sync-audit-4 B2): the owner died mid-track. Nothing drains the
+// command bus, so the session must read idle — otherwise a queue-add here
+// parks behind a track nobody will ever finish.
+const deadOwnerMidTrack = session({
+  ownerDeviceID: "OTHER", leaseMs: NOW - LEASE_TTL_MS - 1,
+  playback: { track: ref("X"), playing: true, pos: 0, anchor: NOW, rate: 1000, dur: 180000, rev: 5 },
+});
+eq("dead owner mid-track → idle", sessionIdle(deadOwnerMidTrack, NOW), true);
+eq("dead owner mid-track → no live remote owner",
+  liveRemoteOwner(deadOwnerMidTrack, NOW), false);
+eq("live owner mid-track → live remote owner",
+  liveRemoteOwner(remoteOwnerPlaying, NOW), true);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Lease expiry — followers should be able to reason about staleness
