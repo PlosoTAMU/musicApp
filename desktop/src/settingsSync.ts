@@ -12,6 +12,14 @@ export interface SettingsDoc {
   speed: number;     // playback rate multiplier
   bassDb: number;     // raw dB, same units both apps
   reverbPct: number;  // 0-100 — desktop's internal fx.reverb is a 0-1 fraction
+  // Effects master switch (iOS effectsBypass / desktop fx.bypass). Without it
+  // a device with effects OFF still published its stored slider values, and a
+  // device with effects ON applied them audibly — and they contradicted
+  // PlaybackState.rate, which IS bypass-adjusted (sync-audit-4 M10).
+  // OPTIONAL on the wire: absent means "an old client wrote this", and the
+  // safe reading of a doc from a client that had no concept of bypass is
+  // "not bypassed", which is exactly how those values were being applied.
+  bypass?: boolean;
 }
 
 export class SettingsSync {
@@ -30,7 +38,10 @@ export class SettingsSync {
       if (!d || d.updatedBy === DEVICE_ID) return;
       if (typeof d.speed !== "number" || typeof d.bassDb !== "number"
           || typeof d.reverbPct !== "number") return;
-      this.onRemote?.({ speed: d.speed, bassDb: d.bassDb, reverbPct: d.reverbPct });
+      this.onRemote?.({
+        speed: d.speed, bassDb: d.bassDb, reverbPct: d.reverbPct,
+        bypass: typeof d.bypass === "boolean" ? d.bypass : false,
+      });
     });
   }
 

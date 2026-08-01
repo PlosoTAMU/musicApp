@@ -344,7 +344,29 @@ enum QueueOp {
     /// the head and every later advance's CAS misses (sync-audit-4 B5). Same
     /// all-or-nothing CAS discipline as consumeHead.
     case consumeHeadRun(expected: [UUID])
+    case removeMany([UUID])                 // multi-select delete, rebased per id
+    case append([TrackRef])                 // bulk enqueue at the tail
+    case injectFront(refs: [TrackRef], removeIDs: [UUID])
     case replaceAll([TrackRef])             // LWW for bulk local edits
+}
+
+/// A local queue mutation described as INTENT rather than as a resulting array.
+///
+/// Every iOS queue change used to reach the cloud the same way: mutate
+/// `player.queue`, wait 300 ms, publish the whole array as `replaceAll`. That
+/// is Last-Writer-Wins, so a desktop insert landing inside the debounce window
+/// was silently erased — while desktop had used rebasable intent ops all along
+/// (sync-audit-4 M11). AudioPlayerManager reports these through
+/// `onQueueIntent`; PlaybackSyncEngine turns them into QueueOps.
+///
+/// Anything not covered here still falls back to the debounced `replaceAll`,
+/// which stays correct — it is genuinely the right op for a bulk overwrite.
+enum QueueIntent {
+    case append([Track])                        // addToQueue / queuePlaylist
+    case injectFront([Track], removing: [UUID]) // injectAtFrontOfQueue
+    case remove([UUID])                         // swipe-delete / playFromQueue
+    case move(UUID, afterID: UUID?)             // drag reorder (nil = to front)
+    case clear                                  // Clear All
 }
 
 // MARK: - Firestore transaction sugar (async/throwing)

@@ -188,6 +188,51 @@ eq("consumeHeadRun: id comparison is case-insensitive (sameId)",
              [ref("G1"), ref("A"), ref("B")])),
   ["B"]);
 
+// ── Intent ops iOS now emits too (sync-audit-4 M11) ───────────────────────
+// The point of every one of these: two devices editing the queue in the same
+// window BOTH land, because the op is rebased against the live queue inside
+// the transaction. iOS used to publish `replaceAll` for all of them, so
+// whichever wrote last erased the other's edit.
+
+// A desktop insert that landed first survives an iOS append.
+eq("append rebases over a concurrent insert",
+  ids(rebase({ kind: "append", refs: [ref("NEW")] },
+             [ref("A"), ref("CONCURRENT"), ref("B")])),
+  ["A", "CONCURRENT", "B", "NEW"]);
+eq("append of nothing → no-op", rebase({ kind: "append", refs: [] }, [ref("A")]), null);
+
+eq("removeMany drops every listed id, leaves the rest",
+  ids(rebase({ kind: "removeMany", ids: ["A", "C"] },
+             [ref("A"), ref("B"), ref("C"), ref("D")])),
+  ["B", "D"]);
+eq("removeMany: a track already deleted elsewhere is not an error",
+  ids(rebase({ kind: "removeMany", ids: ["A", "GONE"] }, [ref("A"), ref("B")])),
+  ["B"]);
+eq("removeMany: nothing matched → no-op (don't bump queueVersion)",
+  rebase({ kind: "removeMany", ids: ["GONE"] }, [ref("A"), ref("B")]), null);
+eq("removeMany: case-insensitive ids",
+  ids(rebase({ kind: "removeMany", ids: ["a"] }, [ref("A"), ref("B")])), ["B"]);
+
+eq("injectFront pulls the set out and re-plants it at the head",
+  ids(rebase({ kind: "injectFront", refs: [ref("X")], removeIds: ["X", "Y"] },
+             [ref("A"), ref("X"), ref("B"), ref("Y")])),
+  ["X", "A", "B"]);
+eq("injectFront keeps a concurrent insert that isn't in the set",
+  ids(rebase({ kind: "injectFront", refs: [ref("X")], removeIds: ["X"] },
+             [ref("CONCURRENT"), ref("X")])),
+  ["X", "CONCURRENT"]);
+
+// move anchors by trackID, so it survives the remote holding entries this
+// device can't see — the reason iOS reports (movedID, afterID) not indices.
+eq("move to the front (afterId null)",
+  ids(rebase({ kind: "move", id: "C", afterId: null },
+             [ref("A"), ref("B"), ref("C")])),
+  ["C", "A", "B"]);
+eq("move after an anchor that a follower shifted still lands correctly",
+  ids(rebase({ kind: "move", id: "A", afterId: "B" },
+             [ref("A"), ref("NEW"), ref("B"), ref("C")])),
+  ["NEW", "B", "A", "C"]);
+
 // ─────────────────────────────────────────────────────────────────────────
 // Ownership handover — playback state preservation across takeover
 // ─────────────────────────────────────────────────────────────────────────

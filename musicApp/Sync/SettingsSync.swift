@@ -14,6 +14,12 @@ import FirebaseFirestore
 /// wired 0-100% on the wire; desktop's internal `fx.reverb` is a 0-1
 /// fraction, converted at its own sync boundary.
 ///
+/// `bypass` (iOS effectsBypass / desktop fx.bypass) is part of the doc — it is
+/// OPTIONAL on the wire, and absent means "written by a pre-M10 client", read
+/// as false. Without it a bypassed device published slider values it wasn't
+/// hearing and a non-bypassed device applied them audibly, contradicting
+/// PlaybackState.rate, which IS bypass-adjusted (sync-audit-4 M10).
+///
 /// iOS persists these per-track (`AudioPlayerManager.TrackSettings`), so
 /// switching tracks changes the published values as a side effect — that's
 /// intentional here: it syncs "whichever effective settings are currently
@@ -34,15 +40,21 @@ final class SettingsSync {
     private var lastAppliedSpeed: Double?
     private var lastAppliedBass: Double?
     private var lastAppliedReverb: Double?
+    private var lastAppliedBypass: Bool?
 
     init(db: Firestore, player: AudioPlayerManager) {
         self.db = db
         self.player = player
 
-        Publishers.CombineLatest3(player.$playbackSpeed, player.$bassBoost, player.$reverbAmount)
+        // effectsBypass rides along (sync-audit-4 M10): publishing the sliders
+        // without the master switch meant a bypassed device pushed values it
+        // wasn't hearing and the other device played them — and they
+        // contradicted PlaybackState.rate, which IS bypass-adjusted.
+        Publishers.CombineLatest4(player.$playbackSpeed, player.$bassBoost,
+                                  player.$reverbAmount, player.$effectsBypass)
             .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
-            .sink { [weak self] speed, bass, reverb in
-                self?.push(speed: speed, bass: bass, reverb: reverb)
+            .sink { [weak self] speed, bass, reverb, bypass in
+                self?.push(speed: speed, bass: bass, reverb: reverb, bypass: bypass)
             }
             .store(in: &bag)
     }
@@ -66,23 +78,26 @@ final class SettingsSync {
         lastAppliedSpeed = nil
         lastAppliedBass = nil
         lastAppliedReverb = nil
+        lastAppliedBypass = nil
     }
 
     private var docRef: DocumentReference {
         db.collection("users").document(uid).collection("sync").document("settings")
     }
 
-    private func push(speed: Double, bass: Double, reverb: Double) {
+    private func push(speed: Double, bass: Double, reverb: Double, bypass: Bool) {
         guard !uid.isEmpty else { return }
-        if speed == lastAppliedSpeed && bass == lastAppliedBass && reverb == lastAppliedReverb { return }
+        if speed == lastAppliedSpeed, bass == lastAppliedBass,
+           reverb == lastAppliedReverb, bypass == lastAppliedBypass { return }
 
         // Update lastApplied* to track "last state we believe Firestore already has"
         lastAppliedSpeed = speed
         lastAppliedBass = bass
         lastAppliedReverb = reverb
+        lastAppliedBypass = bypass
 
         let doc: [String: Any] = [
-            "speed": speed, "bassDb": bass, "reverbPct": reverb,
+            "speed": speed, "bassDb": bass, "reverbPct": reverb, "bypass": bypass,
             "updatedBy": SyncDevice.id, "at": ServerClock.shared.nowMs,
         ]
         Task { try? await docRef.setData(doc) }
@@ -98,10 +113,14 @@ final class SettingsSync {
         let clampedSpeed = min(max(speed, 0.5), 2.0)
         let clampedBass = min(max(bass, -10), 20)
         let clampedReverb = min(max(reverb, 0), 100)
+        // Absent = written by a pre-M10 client, which had no concept of the
+        // switch and whose values were being applied as if active.
+        let bypass = d["bypass"] as? Bool ?? false
 
         lastAppliedSpeed = clampedSpeed
         lastAppliedBass = clampedBass
         lastAppliedReverb = clampedReverb
+        lastAppliedBypass = bypass
 
         // Suppress the didSet → saveCurrentTrackSettings hop while we assign
         // (sync-audit-3.md F7): the remote values represent the OWNER's
@@ -113,5 +132,6 @@ final class SettingsSync {
         player.playbackSpeed = clampedSpeed
         player.bassBoost = clampedBass
         player.reverbAmount = clampedReverb
+        player.effectsBypass = bypass
     }
 }

@@ -676,6 +676,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
     /// "nothing playing → auto-start" branches so queue/playlist adds append
     /// to the shared queue instead of starting audio on this device.
     var sessionHasRemotePlayback: (() -> Bool)?
+    /// Reports each queue mutation as INTENT so the sync engine can publish a
+    /// rebasable op instead of an LWW overwrite of the whole array
+    /// (sync-audit-4 M11). Always called AFTER `queue` has been mutated, on the
+    /// main queue, so the engine can snapshot the post-state.
+    var onQueueIntent: ((QueueIntent) -> Void)?
 
     /// - Parameters:
     ///   - startOffset: seconds (relative to crop start) to begin playback at.
@@ -1609,25 +1614,27 @@ class AudioPlayerManager: NSObject, ObservableObject {
     func addToQueue(_ track: Track) {
         DispatchQueue.main.async {
             self.queue.append(track)
-        
+
             // ✅ AUTO-DISABLE: Disable loop when adding to queue
             if self.isLoopEnabled {
                 self.isLoopEnabled = false
                 print("🔁 [AudioPlayer] Loop disabled - song added to queue")
             }
-            
+
             // Auto-start only when nothing plays ANYWHERE — with a live remote
             // owner the append lands in the shared queue over there instead.
-            if self.currentTrack == nil, !(self.sessionHasRemotePlayback?() ?? false) {
-                // Only exit playlist mode if nothing is playing
-                if !self.isPlaylistMode {
-                    let firstTrack = self.queue.removeFirst()
-                    self.play(firstTrack)
-                } else {
-                    // In playlist mode with no current track, play from queue
-                    let firstTrack = self.queue.removeFirst()
-                    self.play(firstTrack)
-                }
+            let autoStart = self.currentTrack == nil
+                && !(self.sessionHasRemotePlayback?() ?? false)
+            if autoStart {
+                // Same in both branches; playlist mode only changes what the
+                // caller expects afterwards.
+                let firstTrack = self.queue.removeFirst()
+                self.play(firstTrack)
+            } else {
+                // Only report the append when the track actually STAYS queued.
+                // Announcing it and then popping it right back would publish an
+                // append the very next write has to undo (sync-audit-4 M11).
+                self.onQueueIntent?(.append([track]))
             }
         }
     }
@@ -1651,10 +1658,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 let first = orderedTracks[0]
                 let rest = Array(orderedTracks.dropFirst())
                 self.queue.append(contentsOf: rest)
+                self.onQueueIntent?(.append(rest))
                 self.play(first)
                 print("📋 [AudioPlayer] Queued \(orderedTracks.count) tracks (started first, shuffle: \(shuffle))")
             } else {
                 self.queue.append(contentsOf: orderedTracks)
+                self.onQueueIntent?(.append(orderedTracks))
                 print("📋 [AudioPlayer] Queued \(orderedTracks.count) tracks (shuffle: \(shuffle))")
             }
         }
@@ -1682,6 +1691,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
             let first = tracks[0]
             let rest = Array(tracks.dropFirst())
             self.queue.insert(contentsOf: rest, at: 0)
+            // One intent for the whole gesture: pull these out of wherever
+            // they sat, then plant the remainder at the head.
+            self.onQueueIntent?(.injectFront(rest, removing: Array(trackIDs)))
             self.play(first)
             
             print("⚡ [AudioPlayer] Injected \(tracks.count) tracks at front of queue (playing now)")
@@ -1690,13 +1702,24 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     func removeFromQueue(at offsets: IndexSet) {
         DispatchQueue.main.async {
+            let removed = offsets.compactMap { self.queue.indices.contains($0) ? self.queue[$0].id : nil }
             self.queue.remove(atOffsets: offsets)
+            self.onQueueIntent?(.remove(removed))
         }
     }
     
     func moveInQueue(from source: IndexSet, to destination: Int) {
         DispatchQueue.main.async {
+            // Anchor by trackID, never by index: the remote queue may hold
+            // entries this device can't resolve, so positions don't line up.
+            // A multi-row drag falls back to the debounced replaceAll.
+            let movedID = source.count == 1 ? self.queue[source.first!].id : nil
             self.queue.move(fromOffsets: source, toOffset: destination)
+            if let movedID,
+               let newIndex = self.queue.firstIndex(where: { $0.id == movedID }) {
+                let afterID = newIndex > 0 ? self.queue[newIndex - 1].id : nil
+                self.onQueueIntent?(.move(movedID, afterID: afterID))
+            }
         }
     }
     
@@ -1704,6 +1727,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             // Clear only upcoming queue (NOT previous queue - keep history)
             self.queue.removeAll()
+            self.onQueueIntent?(.clear)
             
             // Exit playlist mode
             self.isPlaylistMode = false
@@ -1726,6 +1750,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         if let index = queue.firstIndex(where: { $0.id == track.id }) {
             queue.remove(at: index)
+            onQueueIntent?(.remove([track.id]))
         }
         
         isPlaylistMode = false

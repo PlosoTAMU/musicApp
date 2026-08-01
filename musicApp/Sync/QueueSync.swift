@@ -117,6 +117,23 @@ final class QueueSync {
             else { return nil }
             return Array(queue.dropFirst(expected.count))
 
+        case .removeMany(let ids):
+            // Rebased per id: ones already gone elsewhere simply don't match,
+            // so a concurrent removal of the same track isn't an error.
+            let drop = Set(ids)
+            let q = queue.filter { !drop.contains($0.id) }
+            return q.count == queue.count ? nil : q
+
+        case .append(let refs):
+            // Bulk enqueue — twin of queuePlaylist's queue.append(contentsOf:).
+            return refs.isEmpty ? nil : queue + refs
+
+        case .injectFront(let refs, let removeIDs):
+            // Twin of injectAtFrontOfQueue: pull the set out of wherever it
+            // sits, then plant the not-now-playing remainder at the head.
+            let drop = Set(removeIDs)
+            return refs + queue.filter { !drop.contains($0.id) }
+
         case .replaceAll(let q):
             return q
         }

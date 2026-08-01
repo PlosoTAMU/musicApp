@@ -126,7 +126,9 @@ export type QueueOp =
   | { kind: "consumeHeadRun"; expected: string[] }
   | { kind: "replaceAll"; queue: TrackRef[] }
   | { kind: "append"; refs: TrackRef[] }
-  | { kind: "injectFront"; refs: TrackRef[]; removeIds: string[] };
+  | { kind: "injectFront"; refs: TrackRef[]; removeIds: string[] }
+  // Multi-select delete, rebased per id — twin of iOS removeFromQueue(at:).
+  | { kind: "removeMany"; ids: string[] };
 
 export const sameId = (a: string, b: string) =>
   a.toLowerCase() === b.toLowerCase();

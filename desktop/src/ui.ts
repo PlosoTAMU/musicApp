@@ -295,6 +295,7 @@ function wire() {
     // Effective rate changed → owner must re-anchor followers (publish() is a
     // no-op for other roles), same as iOS republishing on $effectsBypass.
     applyFx(true);
+    pushSettingsDebounced();   // bypass is part of the settings doc (M10)
     renderNow();
   };
   $("rail-lyrics").onclick = () => ($("btn-lyrics") as HTMLButtonElement).click();
@@ -346,7 +347,9 @@ function wire() {
     fx.speed = Math.min(Math.max(s.speed, 0.5), 2.0);
     fx.bass = Math.min(Math.max(s.bassDb, -10), 20); // iOS range — clamp fix [#14]
     fx.reverb = Math.min(Math.max(s.reverbPct, 0), 100) / 100;
+    fx.bypass = s.bypass ?? false;   // absent = pre-M10 writer, treat as active
     initFxSliders(); // updates slider DOM values + calls applyFx()
+    renderNow();     // the rail fx button reflects bypass
   };
 
   // Downloads
@@ -494,8 +497,10 @@ function showHint(text: string) {
 
 const FX_KEY = "fx.v1";
 // bypass mirrors iOS effectsBypass: mutes the applied effects without touching
-// the stored slider values. Local-only on both platforms (not in the settings
-// doc); volume is not an effect and stays live while bypassed.
+// the stored slider values. It IS part of the settings doc now (sync-audit-4
+// M10) — publishing sliders without it meant a bypassed device pushed values
+// it wasn't hearing and a non-bypassed device played them. Volume is not an
+// effect and stays live while bypassed, and stays local.
 const fx = ((): { volume: number; speed: number; pitch: number; bass: number;
                   reverb: number; bypass: boolean } => {
   // Fresh installs ship with effects BYPASSED, matching iOS effectsBypass=true
@@ -509,7 +514,10 @@ let settingsPushTimer: ReturnType<typeof setTimeout> | null = null;
 function pushSettingsDebounced() {
   if (settingsPushTimer) clearTimeout(settingsPushTimer);
   settingsPushTimer = setTimeout(() => {
-    settingsSync.push({ speed: fx.speed, bassDb: fx.bass, reverbPct: fx.reverb * 100 });
+    settingsSync.push({
+      speed: fx.speed, bassDb: fx.bass, reverbPct: fx.reverb * 100,
+      bypass: fx.bypass,
+    });
   }, 300);
 }
 

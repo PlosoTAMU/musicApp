@@ -93,6 +93,13 @@ export function rebase(op: QueueOp, queue: TrackRef[]): TrackRef[] | null {
     case "append":
       // Bulk enqueue — twin of queuePlaylist's queue.append(contentsOf:).
       return op.refs.length ? [...queue, ...op.refs] : null;
+    case "removeMany": {
+      // Rebased per id: ones already gone elsewhere simply don't match, so a
+      // concurrent removal of the same track isn't an error.
+      const drop = new Set(op.ids.map(id => id.toLowerCase()));
+      const q = queue.filter(t => !drop.has(t.id.toLowerCase()));
+      return q.length === queue.length ? null : q;
+    }
     case "injectFront": {
       // Twin of injectAtFrontOfQueue: pull the set out of wherever it sits,
       // then plant the not-now-playing remainder at the head.

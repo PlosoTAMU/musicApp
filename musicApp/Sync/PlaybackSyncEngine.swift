@@ -106,7 +106,9 @@ final class PlaybackSyncEngine: ObservableObject {
     /// that state and, when the observer fires, skip publishing only if the
     /// observed queue matches exactly. Any delta = the user also edited during
     /// the debounce window; publish it (sync-audit-3.md F11 — the prior flag
-    /// silently ate that user intent).
+    /// silently ate that user intent). The same slot absorbs the queue-intent
+    /// path (sync-audit-4 M11): whenever a rebasable op has already been sent
+    /// for a mutation, the observer must not also LWW-overwrite the result.
     private var expectedQueueAfterConsume: [UUID]?
 
     private var anchorTimer: Timer?
@@ -127,6 +129,7 @@ final class PlaybackSyncEngine: ObservableObject {
         )
         wireCoordinator()
         wirePlayerObservation()
+        wireQueueIntents()
         wireTimers()
     }
 
@@ -322,6 +325,52 @@ final class PlaybackSyncEngine: ObservableObject {
             .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
             .sink { [weak self] q in self?.handleLocalQueueChange(q) }
             .store(in: &bag)
+    }
+
+    // MARK: - Queue intents (rebasable ops instead of LWW overwrites)
+
+    /// Every iOS queue change used to reach the cloud as `replaceAll` — the
+    /// whole array, Last-Writer-Wins — so a desktop insert that landed inside
+    /// the 300 ms debounce window was silently erased, while desktop had used
+    /// rebasable intent ops all along (sync-audit-4 M11).
+    ///
+    /// AudioPlayerManager now reports what the user actually did; this turns it
+    /// into the matching QueueOp, which the transaction rebases against the
+    /// live queue by trackID. The debounced observer stays as the fallback for
+    /// anything not described here (multi-row drags, direct queue assignment).
+    private func wireQueueIntents() {
+        player.onQueueIntent = { [weak self] intent in
+            self?.publishQueueIntent(intent)
+        }
+    }
+
+    private func publishQueueIntent(_ intent: QueueIntent) {
+        guard coordinator.role != .none else { return }
+
+        let op: QueueOp?
+        switch intent {
+        case .append(let tracks):
+            op = tracks.isEmpty ? nil : .append(tracks.map(TrackRef.init))
+        case .injectFront(let tracks, let removing):
+            op = .injectFront(refs: tracks.map(TrackRef.init), removeIDs: removing)
+        case .remove(let ids):
+            op = ids.isEmpty ? nil : .removeMany(ids)
+        case .move(let id, let afterID):
+            op = .move(id, afterID: afterID)
+        case .clear:
+            // Genuinely a bulk overwrite — replaceAll is the right op, and
+            // "clear" is unambiguous intent, not a stale snapshot.
+            op = .replaceAll([])
+        }
+        guard let op else { return }
+
+        // Suppress the debounced observer for exactly this result: it would
+        // otherwise follow up with an LWW replaceAll and undo the merge the
+        // rebase just achieved. Any OTHER queue shape means the user edited
+        // again during the window, and that publishes normally.
+        expectedQueueAfterConsume = player.queue.map(\.id)
+        let basis = coordinator.remote?.queueVersion ?? 0
+        Task { await queueSync.apply(op, basisVersion: basis) }
     }
 
     private func handleLocalTrackChange(_ newTrack: Track?) {
