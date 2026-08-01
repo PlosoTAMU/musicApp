@@ -1718,7 +1718,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
             // Anchor by trackID, never by index: the remote queue may hold
             // entries this device can't resolve, so positions don't line up.
             // A multi-row drag falls back to the debounced replaceAll.
-            let movedID = source.count == 1 ? self.queue[source.first!].id : nil
+            let movedID: UUID? = {
+                guard source.count == 1, let i = source.first,
+                      self.queue.indices.contains(i) else { return nil }
+                return self.queue[i].id
+            }()
             self.queue.move(fromOffsets: source, toOffset: destination)
             if let movedID,
                let newIndex = self.queue.firstIndex(where: { $0.id == movedID }) {
