@@ -190,7 +190,7 @@ final class SyncSessionManager: ObservableObject {
     func attachPlaylists(manager: PlaylistManager,
                          download: @escaping (UUID) -> Download?) {
         playlistSync = PlaylistSync(db: coordinator.db, manager: manager,
-                                    download: download)
+                                    resolver: resolver, download: download)
         if !uid.isEmpty { playlistSync?.activate(uid: uid) }
     }
 
@@ -213,10 +213,19 @@ final class SyncSessionManager: ObservableObject {
         // (sync-audit-3.md F8). removeDuplicates on the id-set skips no-op fires
         // (progress ticks etc.); rename/crop still fire because their ids-set is
         // unchanged but the byName index needs a rebuild.
+        //
+        // The same signal re-resolves playlist entries: a cloud track that was
+        // a ghost until its download finished must appear in the playlist now,
+        // not whenever the cloud doc next happens to change (sync-audit-4 B3).
+        // refreshResolution updates the cloud mirror and the local list in one
+        // pass, so the playlist observer sees no delta and nothing re-uploads.
         downloads
             .removeDuplicates { $0.map(\.id) == $1.map(\.id)
                              && $0.map(\.name) == $1.map(\.name) }
-            .sink { [weak self] _ in self?.resolver.invalidate() }
+            .sink { [weak self] _ in
+                self?.resolver.invalidate()
+                self?.playlistSync?.refreshResolution()
+            }
             .store(in: &forwarding)
     }
 

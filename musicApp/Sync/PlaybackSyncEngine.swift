@@ -374,21 +374,41 @@ final class PlaybackSyncEngine: ObservableObject {
 
     /// Re-inserts ghost refs at their remote positions (anchored by predecessor id)
     /// so a local edit doesn't silently drop tracks we merely can't play.
+    ///
+    /// Executable spec + cases: `desktop/tests/syncAudit-ghostmerge.test.ts`.
+    /// Twin of PlaylistSync.mergedTracks — keep the three in step.
+    ///
+    /// `placed` is load-bearing: a RUN of consecutive ghosts sharing one anchor
+    /// must keep remote order. Inserting each at `anchor + 1` pushes the
+    /// previous one right and reverses the run — so two unplayable tracks
+    /// sitting next to each other in the shared queue swapped places on every
+    /// local queue edit (sync-audit-4 B7). Each sibling is offset past the ones
+    /// already placed for that anchor; `base` is recomputed every iteration
+    /// because inserts for earlier anchors shift the anchor's index.
     private func mergeGhosts(local: [TrackRef], ghosts: [TrackRef],
                              remoteOrder: [TrackRef]) -> [TrackRef] {
         guard !ghosts.isEmpty else { return local }
         var out = local
-        for ghost in ghosts {
-            guard let remoteIdx = remoteOrder.firstIndex(where: { $0.id == ghost.id }) else {
-                out.append(ghost); continue
-            }
-            // Anchor: nearest preceding remote entry that still exists locally.
-            let predecessor = remoteOrder[..<remoteIdx].last(where: { r in out.contains(where: { $0.id == r.id }) })
-            if let pred = predecessor, let i = out.firstIndex(where: { $0.id == pred.id }) {
-                out.insert(ghost, at: i + 1)
-            } else {
-                out.insert(ghost, at: 0)
-            }
+        let frontKey = UUID()   // sentinel: ghosts with no surviving predecessor
+        var placed: [UUID: Int] = [:]
+
+        // Remote order, not `ghosts` order, so sibling runs stay stable.
+        let ghostIDs = Set(ghosts.map(\.id))
+        for (idx, ghost) in remoteOrder.enumerated() where ghostIDs.contains(ghost.id) {
+            let anchor = remoteOrder[..<idx]
+                .last { r in out.contains { $0.id == r.id } }
+            let key = anchor?.id ?? frontKey
+            let offset = placed[key] ?? 0
+            let base = anchor.flatMap { a in
+                out.firstIndex { $0.id == a.id }.map { $0 + 1 }
+            } ?? 0
+            out.insert(ghost, at: base + offset)
+            placed[key] = offset + 1
+        }
+        // A ghost the remote list no longer carries (raced deletion) — keep it
+        // rather than dropping a track we simply can't see.
+        for ghost in ghosts where !remoteOrder.contains(where: { $0.id == ghost.id }) {
+            out.append(ghost)
         }
         return out
     }
