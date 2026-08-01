@@ -118,6 +118,12 @@ export type QueueOp =
   | { kind: "remove"; id: string }
   | { kind: "move"; id: string; afterId: string | null }
   | { kind: "consumeHead"; expected: string }
+  // consumeHead over a RUN: the track the owner just started, preceded by any
+  // leading entries it couldn't resolve. Those are invisible to the local
+  // player, so without consuming them the ghost stays pinned at the head and
+  // every later advance's CAS misses (sync-audit-4 B5). Same CAS discipline —
+  // all-or-nothing against the live head.
+  | { kind: "consumeHeadRun"; expected: string[] }
   | { kind: "replaceAll"; queue: TrackRef[] }
   | { kind: "append"; refs: TrackRef[] }
   | { kind: "injectFront"; refs: TrackRef[]; removeIds: string[] };

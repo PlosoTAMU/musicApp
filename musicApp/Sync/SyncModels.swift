@@ -11,6 +11,9 @@ enum SyncError: Error {
     case codeCollision
     case queueStale    // offline queue replay lost to a newer edit
     case timeout(String)   // a connect-stage call hung — twin of desktop's withTimeout
+    /// "Play Here" refused: the session's track isn't in this device's library,
+    /// so taking over would depose the owner and play silence.
+    case trackNotHere(String)
 }
 
 // MARK: - Device identity (stable per install)
@@ -125,6 +128,7 @@ final class LibraryTrackResolver: TrackResolving {
     private var byYt: [String: Track] = [:]
     private var byNameFolder: [String: Track] = [:]
     private var byName: [String: Track] = [:]
+    private var byNormName: [String: Track] = [:]
     private var built = false
 
     init(library: @escaping () -> [Track]) {
@@ -133,13 +137,27 @@ final class LibraryTrackResolver: TrackResolving {
 
     func invalidate() { built = false }
 
+    /// Windows-illegal characters are replaced with "_" when desktop writes a
+    /// file, and it compares case-insensitively. Matching through the same lens
+    /// is the last rung of the chain, so a track whose title contains
+    /// ? : / \ * " < > | still resolves here instead of showing up as a ghost
+    /// (sync-audit-4 M7). Verbatim twin of desktop/src/player.ts's `norm`.
+    static func normalizeName(_ s: String) -> String {
+        let illegal = Set("<>:\"/\\|?*")
+        var out = ""
+        out.reserveCapacity(s.count)
+        for ch in s { out.append(illegal.contains(ch) ? "_" : ch) }
+        return out.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
     private func rebuildIfNeeded() {
         guard !built else { return }
         let lib = source()
-        byId = [:]; byYt = [:]; byNameFolder = [:]; byName = [:]
+        byId = [:]; byYt = [:]; byNameFolder = [:]; byName = [:]; byNormName = [:]
         byId.reserveCapacity(lib.count)
         byNameFolder.reserveCapacity(lib.count)
         byName.reserveCapacity(lib.count)
+        byNormName.reserveCapacity(lib.count)
         for t in lib {
             byId[t.id] = t
             // Prefer the injected ytIDProvider — the pipeline renames files to
@@ -149,16 +167,27 @@ final class LibraryTrackResolver: TrackResolving {
             }
             byNameFolder["\(t.name)|\(t.folderName)"] = t
             byName[t.name] = t
+            // First writer wins, so an exact-name hit is never shadowed by a
+            // normalized collision later in the library.
+            let norm = Self.normalizeName(t.name)
+            if byNormName[norm] == nil { byNormName[norm] = t }
         }
         built = true
     }
 
+    /// id → yt → (name, folder) → name → normalized name. Twin of
+    /// desktop/src/player.ts's `resolve`, rung for rung.
+    ///
+    /// The (name, folder) rung rarely fires cross-platform on purpose: iOS
+    /// reports "YouTube Downloads" while desktop reports the parent directory,
+    /// so it only matches same-platform refs. yt is the real cross-device key.
     func resolve(_ ref: TrackRef) -> Track? {
         rebuildIfNeeded()
         if let t = byId[ref.id] { return t }
         if let yt = ref.ytID, let t = byYt[yt] { return t }
         if let t = byNameFolder["\(ref.name)|\(ref.folder)"] { return t }
-        return byName[ref.name]
+        if let t = byName[ref.name] { return t }
+        return byNormName[Self.normalizeName(ref.name)]
     }
 }
 
@@ -290,6 +319,12 @@ enum QueueOp {
     case remove(UUID)
     case move(UUID, afterID: UUID?)
     case consumeHead(expected: UUID)        // CAS: owner's next() must not eat a concurrent insert
+    /// consumeHead over a RUN: the track the owner just started, preceded by
+    /// any leading entries it couldn't resolve. Those are filtered out of the
+    /// local player queue, so without consuming them the ghost stays pinned at
+    /// the head and every later advance's CAS misses (sync-audit-4 B5). Same
+    /// all-or-nothing CAS discipline as consumeHead.
+    case consumeHeadRun(expected: [UUID])
     case replaceAll([TrackRef])             // LWW for bulk local edits
 }
 

@@ -73,7 +73,8 @@ struct ContentView: View {
 
                 QueueView(
                     audioPlayer: audioPlayer,
-                    downloadManager: downloadManager
+                    downloadManager: downloadManager,
+                    syncManager: syncManager
                 )
                 .tabItem {
                     Label("Queue", systemImage: "list.number")

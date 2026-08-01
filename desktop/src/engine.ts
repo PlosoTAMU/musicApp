@@ -226,17 +226,32 @@ export class SyncEngine {
     }
     const remoteQ = this.coord.remote?.queue ?? [];
     const basis = this.coord.remote?.queueVersion ?? 0;
+    // Walk from the head: leading entries this device can't resolve are
+    // consumed along with the first playable one, in a SINGLE all-or-nothing
+    // CAS rather than N independent pops (a follower's insert mid-run used to
+    // land between two of them). Twin of PlaybackSyncEngine.consumedHeadRun.
+    const run: string[] = [];
     for (const head of remoteQ) {
+      run.push(head.id);
       const local = resolve(head, this.library);
-      if (this.coord.demo) this.demoQueue(q => q.filter(r => r.id !== head.id));
-      else void this.queueSync.apply({ kind: "consumeHead", expected: head.id }, basis);
-      if (local) {
-        this.pushHistory(this.player.current);   // remember what we're leaving
-        this.applyCrop(local);
-        this.player.play(local);
-        this.publish();
-        return;
+      if (!local) continue;                      // ghost — skipped locally too
+      if (this.coord.demo) {
+        const drop = new Set(run.map(id => id.toLowerCase()));
+        this.demoQueue(q => q.filter(r => !drop.has(r.id.toLowerCase())));
+      } else {
+        void this.queueSync.apply({ kind: "consumeHeadRun", expected: run }, basis);
       }
+      this.pushHistory(this.player.current);     // remember what we're leaving
+      this.applyCrop(local);
+      this.player.play(local);
+      this.publish();
+      return;
+    }
+    // Nothing playable left. Drain any all-ghost remainder so the queue doesn't
+    // read as "N songs up next" that can never play here.
+    if (run.length) {
+      if (this.coord.demo) this.demoQueue(() => []);
+      else void this.queueSync.apply({ kind: "consumeHeadRun", expected: run }, basis);
     }
     // Queue drained — playback stops, nothing wraps (live iOS: playlists ride
     // the shared queue, so a "playlist" simply drains like any queued songs).

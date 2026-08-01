@@ -109,6 +109,14 @@ final class QueueSync {
             guard queue.first?.id == expected else { return nil }
             return Array(queue.dropFirst())
 
+        case .consumeHeadRun(let expected):
+            // All-or-nothing CAS over the whole run: a follower that inserted
+            // anywhere inside it wins, exactly like single consumeHead.
+            guard !expected.isEmpty, queue.count >= expected.count,
+                  zip(queue, expected).allSatisfy({ $0.0.id == $0.1 })
+            else { return nil }
+            return Array(queue.dropFirst(expected.count))
+
         case .replaceAll(let q):
             return q
         }

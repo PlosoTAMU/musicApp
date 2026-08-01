@@ -80,6 +80,14 @@ export function rebase(op: QueueOp, queue: TrackRef[]): TrackRef[] | null {
     case "consumeHead":
       // CAS: only pop if the head is what the owner actually played.
       return queue[0] && sameId(queue[0].id, op.expected) ? queue.slice(1) : null;
+    case "consumeHeadRun": {
+      // All-or-nothing CAS over the whole run: a follower that inserted
+      // anywhere inside it wins, exactly like single consumeHead.
+      const ids = op.expected;
+      if (!ids.length || queue.length < ids.length) return null;
+      if (!ids.every((id, i) => sameId(queue[i].id, id))) return null;
+      return queue.slice(ids.length);
+    }
     case "replaceAll":
       return op.queue;
     case "append":

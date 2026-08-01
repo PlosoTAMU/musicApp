@@ -154,6 +154,40 @@ eq("move on vanished id → no-op",
   rebase({ kind: "move", id: "GONE", afterId: null }, [ref("A"), ref("B")]),
   null);
 
+// consumeHeadRun (sync-audit-4 B5): the owner advanced past leading entries it
+// couldn't resolve. Same CAS discipline as consumeHead, over the whole run —
+// without it a single unplayable head made every later advance's CAS miss and
+// the queue could never drain past it.
+eq("consumeHeadRun: exact run at the head → pop all of it",
+  ids(rebase({ kind: "consumeHeadRun", expected: ["G1", "G2", "A"] },
+             [ref("G1"), ref("G2"), ref("A"), ref("B")])),
+  ["B"]);
+eq("consumeHeadRun: single-element run behaves like consumeHead",
+  ids(rebase({ kind: "consumeHeadRun", expected: ["A"] }, [ref("A"), ref("B")])),
+  ["B"]);
+eq("consumeHeadRun: a follower inserted INSIDE the run → all-or-nothing no-op",
+  rebase({ kind: "consumeHeadRun", expected: ["G1", "G2", "A"] },
+         [ref("G1"), ref("NEW"), ref("G2"), ref("A")]),
+  null);
+eq("consumeHeadRun: a follower inserted BEFORE the run → no-op",
+  rebase({ kind: "consumeHeadRun", expected: ["G1", "A"] },
+         [ref("NEW"), ref("G1"), ref("A")]),
+  null);
+eq("consumeHeadRun: queue shorter than the run → no-op",
+  rebase({ kind: "consumeHeadRun", expected: ["G1", "G2", "A"] },
+         [ref("G1"), ref("G2")]),
+  null);
+eq("consumeHeadRun: empty run → no-op",
+  rebase({ kind: "consumeHeadRun", expected: [] }, [ref("A")]), null);
+eq("consumeHeadRun: draining an all-ghost tail empties the queue",
+  ids(rebase({ kind: "consumeHeadRun", expected: ["G1", "G2"] },
+             [ref("G1"), ref("G2")])),
+  []);
+eq("consumeHeadRun: id comparison is case-insensitive (sameId)",
+  ids(rebase({ kind: "consumeHeadRun", expected: ["g1", "a"] },
+             [ref("G1"), ref("A"), ref("B")])),
+  ["B"]);
+
 // ─────────────────────────────────────────────────────────────────────────
 // Ownership handover — playback state preservation across takeover
 // ─────────────────────────────────────────────────────────────────────────

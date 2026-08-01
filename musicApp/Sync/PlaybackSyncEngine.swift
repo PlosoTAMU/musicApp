@@ -330,8 +330,7 @@ final class PlaybackSyncEngine: ObservableObject {
         guard coordinator.role.isOwner else { return }
         // next() consumed the queue head → CAS pop instead of bulk overwrite,
         // so a follower's concurrent insert survives.
-        if let remoteHead = coordinator.remote?.queue.first,
-           let newTrack, resolver.resolve(remoteHead)?.id == newTrack.id {
+        if let newTrack, let run = consumedHeadRun(endingAt: newTrack) {
             // player.queue was already mutated (head removed) by
             // AudioPlayerManager.next(). If the debounced observer sees this
             // exact same set of ids later, it's the natural consume-echo and
@@ -339,9 +338,37 @@ final class PlaybackSyncEngine: ObservableObject {
             // edited during the debounce window — publish that intent.
             expectedQueueAfterConsume = player.queue.map(\.id)
             let basis = coordinator.remote?.queueVersion ?? 0
-            Task { await queueSync.apply(.consumeHead(expected: remoteHead.id), basisVersion: basis) }
+            Task { await queueSync.apply(.consumeHeadRun(expected: run), basisVersion: basis) }
         }
         publishTrigger.send()
+    }
+
+    /// The shared-queue entries this advance consumed: every leading entry this
+    /// device can't resolve (handleRemote filters them out of `player.queue`,
+    /// so `next()` never saw them) followed by the track that actually started.
+    ///
+    /// nil when the first resolvable entry ISN'T the new track — then the track
+    /// change wasn't a queue advance at all (a library tap, say) and the shared
+    /// queue must not be touched.
+    ///
+    /// Before this, the CAS compared only against `queue.first`, so a single
+    /// unplayable track at the head made every advance's CAS miss forever and
+    /// mergeGhosts re-pinned it at index 0 on the next publish — the queue could
+    /// never drain past it (sync-audit-4 B5). Twin of desktop trackEnded's walk
+    /// over `coord.remote.queue`.
+    private func consumedHeadRun(endingAt newTrack: Track) -> [UUID]? {
+        guard let remoteQ = coordinator.remote?.queue else { return nil }
+        var run: [UUID] = []
+        for ref in remoteQ {
+            guard let t = resolver.resolve(ref) else {
+                run.append(ref.id)          // ghost — invisible to the player
+                continue
+            }
+            guard t.id == newTrack.id else { return nil }
+            run.append(ref.id)
+            return run
+        }
+        return nil                          // queue is all ghosts — not an advance
     }
 
     private func handleLocalQueueChange(_ queue: [Track]) {
@@ -488,7 +515,17 @@ final class PlaybackSyncEngine: ObservableObject {
     /// `forcePlay` is the Bluetooth-handoff path: the old owner paused the
     /// moment its headphones dropped, so the session reads "paused" — but the
     /// user's intent is continuation, not a paused handover.
+    ///
+    /// Refuses BEFORE the epoch bump if the session's track can't resolve here.
+    /// The takeover deposes the real owner, so going ahead and then failing to
+    /// resolve stopped the music on every device and published `track: nil` —
+    /// reachable from RouteHandoffMonitor, which calls this with no UI guard
+    /// when headphones hop to a phone that lacks the song (sync-audit-4 B4).
+    /// Twin of desktop engine.ts's takeOverHere pre-check.
     func takeOverHere(forcePlay: Bool = false) async throws {
+        if let ref = coordinator.remote?.playback.track, resolver.resolve(ref) == nil {
+            throw SyncError.trackNotHere(ref.name)
+        }
         let pre = try await coordinator.takeOver()
         let pb = pre.playback
         let posMs = pb.positionMs(atServerMs: ServerClock.shared.nowMs)

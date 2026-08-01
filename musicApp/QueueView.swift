@@ -10,6 +10,9 @@ struct QueueView: View {
     // to those specific Combine publishers instead of the whole-object signal.
     let audioPlayer: AudioPlayerManager
     @ObservedObject var downloadManager: DownloadManager
+    /// Only for the shared-queue ghost list — same non-observed treatment as
+    /// `audioPlayer` above; the one publisher this view needs is mirrored below.
+    let syncManager: SyncSessionManager
 
     @State private var currentTrack: Track?
     @State private var isPlaying = false
@@ -18,6 +21,11 @@ struct QueueView: View {
     @State private var previousQueue: [Track] = []
     @State private var currentPlaylist: [Track] = []
     @State private var currentIndex: Int = 0
+    /// Entries in the SHARED queue that don't resolve to a file on this device.
+    /// The engine has always published these; nothing rendered them, so those
+    /// tracks silently vanished from Up Next here while every other device
+    /// showed them (sync-audit-4 M13). Desktop draws a "not here yet" row.
+    @State private var ghostQueue: [TrackRef] = []
 
     // Local mirrors of AudioPlayerManager's identically-named computed
     // properties, verbatim, so this view's rendering doesn't depend on an
@@ -251,6 +259,22 @@ struct QueueView: View {
                                     }
                                 }
                             }
+
+                            // Shared-queue entries with no local file. Listed
+                            // rather than dropped so the queue here matches what
+                            // the other devices show (sync-audit-4 M13); the
+                            // replicator pulls them in the background, and each
+                            // moves into Up Next as its download lands.
+                            if !ghostQueue.isEmpty {
+                                Section(header: SectionEyebrow("Not On This Device Yet")) {
+                                    ForEach(ghostQueue, id: \.id) { ref in
+                                        GhostQueueRow(ref: ref)
+                                            .listRowInsets(EdgeInsets(top: 4, leading: 14, bottom: 4, trailing: 14))
+                                            .listRowBackground(Color.clear)
+                                            .listRowSeparator(.hidden)
+                                    }
+                                }
+                            }
                         }
                         .listStyle(.plain)
                         .scrollContentBackground(.hidden)
@@ -291,6 +315,7 @@ struct QueueView: View {
             currentPlaylist = audioPlayer.currentPlaylist
             currentIndex = audioPlayer.currentIndex
         }
+        .onReceive(syncManager.engine.$ghostQueue) { ghostQueue = $0 }
         .onReceive(audioPlayer.$currentTrack) { currentTrack = $0 }
         .onReceive(audioPlayer.$isPlaying) { isPlaying = $0 }
         .onReceive(audioPlayer.$isPlaylistMode) { isPlaylistMode = $0 }
@@ -301,6 +326,42 @@ struct QueueView: View {
     }
 }
 
+
+/// A shared-queue entry with no file on this device. Read-only on purpose:
+/// there's nothing to play, and removing it here would delete it from every
+/// other device's queue too. Twin of desktop's `.ghost` row + "not here yet"
+/// chip (ui.ts renderQueue).
+struct GhostQueueRow: View {
+    let ref: TrackRef
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Theme.bone.opacity(0.06))
+                .frame(width: 46, height: 46)
+                .overlay(
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(Theme.boneFaint)
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ref.name)
+                    .font(Theme.body(15, weight: .medium))
+                    .foregroundColor(Theme.boneDim)
+                    .lineLimit(1)
+
+                Text("Not on this device yet")
+                    .font(Theme.caption(11))
+                    .foregroundColor(Theme.boneFaint)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+        .opacity(0.7)
+    }
+}
 
 struct QueueTrackRow: View {
     let track: Track
