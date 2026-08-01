@@ -158,6 +158,12 @@ final class SessionCoordinator: ObservableObject {
         // forever. Release once, on the first server-confirmed snapshot only
         // (a cache frame could be stale, and a takeover we start later must
         // never be undone — the txn is fenced on the epoch we saw here).
+        //
+        // NOTE (merge of arpi/audit-3): audit-3's F2 proposed *reclaiming* the
+        // seat here instead. Release wins — a reclaim publishes nothing, so the
+        // phantom `playing: true` with a dead anchor survives on every other
+        // device, and the engine's own reconcileLocalPlayback already claims the
+        // session the moment local audio really plays.
         if !snap.metadata.isFromCache, !checkedStaleSelfOwnership {
             checkedStaleSelfOwnership = true
             if state.ownerDeviceID == SyncDevice.id, !role.isOwner {
@@ -166,7 +172,34 @@ final class SessionCoordinator: ObservableObject {
             }
         }
 
-        onSessionState?(state, state.updatedBy == SyncDevice.id)
+        // F3 (sync-audit-3.md) — a DIFFERENT device owns the seat but hasn't
+        // heartbeated in > leaseTTLMs. Fenced-CAS ownerDeviceID back to "" so
+        // the session reads idle again and whoever plays next takes it cleanly.
+        // Runs on every online snapshot, not just the first: an owner can die
+        // at any point in the session. Skipped until the ServerClock has real
+        // samples — wall-clock skew alone must not nuke a live owner's seat.
+        // Races between followers are safe: the txn re-checks the expected
+        // owner AND expired-lease at commit, so only the first wins.
+        if isOnline, role != .owner,
+           !state.ownerDeviceID.isEmpty,
+           state.ownerDeviceID != SyncDevice.id,
+           ServerClock.shared.isSynced,
+           state.leaseExpired {
+            let expectedOwner = state.ownerDeviceID
+            Task { [weak self] in await self?.clearExpiredOwnership(from: expectedOwner) }
+        }
+
+        // Skip cached snapshots (sync-audit-3.md F5) — Firestore re-fires the
+        // last known doc while offline, and treating those as live paints the
+        // mirror UI with possibly hours-old "playing on <device>" state.
+        // `remote` above keeps the last online value, so views reading it
+        // directly still see the last known session; only the engine's
+        // mirror/queue/ghost apply path is gated. Echoes still pass through
+        // (with isEcho set): after a relaunch the first frame is usually our
+        // own last write, and it must still populate the mirror.
+        if isOnline {
+            onSessionState?(state, state.updatedBy == SyncDevice.id)
+        }
     }
 
     // MARK: - Stale self-ownership release
@@ -194,6 +227,30 @@ final class SessionCoordinator: ObservableObject {
             print("👑→👤 [Sync] Released stale self-ownership (crashed previous run)")
         } catch {
             // Someone took over meanwhile, or offline — either way nothing to do.
+        }
+    }
+
+    /// Fenced-CAS clear of a stale owner. No-op unless the doc still names the
+    /// expected dead owner and its lease is still expired at commit time.
+    private func clearExpiredOwnership(from expectedOwner: String) async {
+        guard let ref = sessionRef else { return }
+        let dev = SyncDevice.id
+        let now = ServerClock.shared.nowMs
+        do {
+            try await db.txn { txn in
+                let snap = try txn.getDocument(ref)
+                guard let cur = SessionState(snap: snap),
+                      cur.ownerDeviceID == expectedOwner,
+                      cur.leaseExpired else { return }
+                txn.updateData([
+                    "ownerDeviceID": "",
+                    "leaseMs": now,
+                    "updatedBy": dev,
+                ], forDocument: ref)
+            }
+        } catch {
+            // Best-effort: another follower may have cleared it first, or the
+            // owner heartbeated between our snapshot and the txn.
         }
     }
 
@@ -277,8 +334,15 @@ final class SessionCoordinator: ObservableObject {
     // MARK: - Bluetooth handoff beacon
 
     /// Owner's headphones disconnected → advertise a 60 s handoff window.
-    /// Plain (non-transactional) write on purpose: this fires in the chaos of a
-    /// route change and must be fast; a stale beacon self-expires via atMs.
+    ///
+    /// Plain (non-transactional) write on purpose: this fires in the chaos of
+    /// a route change and must be fast; a stale beacon self-expires via atMs.
+    /// The client-side `role.isOwner` guard is best-effort — a demoted zombie
+    /// owner could still land the write (sync-audit-3.md F10). Impact is
+    /// bounded to a 60 s stale beacon that self-expires via handoffActive's
+    /// timestamp check; another handoff would overwrite it. Intentional
+    /// tradeoff: speed at the route-change instant beats absolute correctness
+    /// of a beacon field that already carries expiration semantics.
     func postHandoff() async {
         guard role.isOwner, let ref = sessionRef else { return }
         try? await ref.updateData([

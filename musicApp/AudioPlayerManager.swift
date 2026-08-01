@@ -91,6 +91,14 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // ✅ NEW: Store settings per track
     private var trackSettings: [UUID: TrackSettings] = [:]
     private let trackSettingsFileURL: URL
+
+    /// SettingsSync sets this while applying a remote settings snapshot so the
+    /// remote values don't overwrite the current track's saved per-track memory
+    /// (sync-audit-3.md F7). The remote values still take effect (didSet runs
+    /// applyReverb / applyBass / applyPlaybackSpeed for immediate audio), but
+    /// `saveCurrentTrackSettings` early-returns while this is set, so switching
+    /// tracks later still recalls the LOCAL saved values, not the pushed ones.
+    var isApplyingRemoteSettings = false
     
     // FIXED: Dedicated high-priority audio thread
     private let audioQueue = DispatchQueue(
@@ -259,6 +267,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     // ✅ NEW: Save settings for current track
     private func saveCurrentTrackSettings() {
+        // Skip while SettingsSync is applying a remote snapshot — otherwise
+        // whichever track is currently loaded here gets its saved memory
+        // overwritten by another device's track's values (sync-audit-3.md F7).
+        guard !isApplyingRemoteSettings else { return }
         guard let trackID = currentTrack?.id else { return }
         
         // Update in-memory dictionary immediately

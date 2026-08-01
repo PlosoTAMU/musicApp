@@ -212,3 +212,100 @@ Single device (offline preview + a few playlists):
 - [ ] **Playlist card durations**: every playlist card (and the open header) shows "**count · m:ss**" (was count only). The duration fills in shortly after the cards appear and updates when you add/remove tracks.
 - [ ] **rail-addpl tooltip**: hover the ▤+ button in the Now Playing rail → it reads "**Add current track to a playlist**" (was "…to open playlist").
 - [ ] **Effects-bypass default**: on a **fresh install** (clear app data / new machine), effects start **bypassed** (rail fx button slashed), matching iOS. Existing installs keep whatever you last set.
+
+
+---
+
+## Audit-3 Phase 1 — MainActor freeze fix (F8 + F9)
+
+iOS only. Static gate: on-device Xcode build. Logic gate: desktop tests still 54/54 PASS (wire contract unchanged). Verify with the app:
+
+DEBUG build recommended (enables MainThreadWatchdog).
+
+Single device — first-launch on populated library:
+- [ ] Launch iOS app with a home secret already used elsewhere (so cloud library has ≥100 docs). Watch the console: MainThreadWatchdog stall lines (⚠️ [MainThreadWatchdog] Main thread stalled for …ms) should NOT scroll during the initial sync. Pre-fix: dozens per second during the first snapshot burst.
+- [ ] With a queue of ≥20 tracks and a library of ≥200 downloads, tap play on the phone. Console lag lines should stay quiet; UI should not stall on the tap.
+
+Two devices (real secret) — sync burst:
+- [ ] Play on desktop; on the phone (follower) drag the desktop speed/bass/reverb sliders rapidly for 5 s. Phone UI should stay responsive throughout — mini bar, tab bar, and gestures. Pre-fix: the phone would visibly stall or freeze while the sliders moved.
+- [ ] Add 20 songs to the shared queue on desktop in quick succession. Phone's queue view should update smoothly; no watchdog stalls.
+
+Regressions to check:
+- [ ] Rename a track locally → the row updates on both ends. (Confirms the resolver invalidation fires on rename, not just on add/delete.)
+- [ ] Delete a track locally → follower's queue view drops it. (Confirms invalidation on id change.)
+- [ ] Play a queued track that only lives in cloud (not yet downloaded) → shows as a ghost row, no crash. (Confirms nil-resolve path still works.)
+
+
+---
+
+## Audit-3 Phase 2 — SettingsSync per-track corruption (F7)
+
+iOS only. Two devices, real secret:
+
+Setup: on the phone, save distinct per-track memory:
+  1. Play *Track α*; set speed 1.25×, bass +8, reverb 20% → let it save (~1 s).
+  2. Play *Track β*; set speed 0.85×, bass -4, reverb 0% → let it save.
+
+Check the fix:
+- [ ] With the phone as follower, on the desktop play a *third* track with speed 2.0×, bass +10, reverb 60%. The phone's live audio applies those effects immediately (this is the intended sync).
+- [ ] Now play *Track α* on the phone (become owner). It should come back at **speed 1.25×, bass +8, reverb 20%** — the values you saved for α. **Pre-fix regression:** it came back with the desktop's pushed 2.0× / +10 / 60% because SettingsSync's `player.playbackSpeed = X` fired `saveCurrentTrackSettings` on whichever track was loaded when the snapshot landed.
+- [ ] Repeat with *Track β* → returns at 0.85× / -4 / 0%.
+- [ ] While the phone is playing *α* (owner), verify that manually adjusting sliders on the phone still saves — sliders should persist across a track switch and back.
+
+---
+
+## Audit-3 Phase 3 — Zombie owner + expired-seat reclaim (F1 + F2 + F3)
+
+iOS + desktop (both ends implement this symmetrically). Static gate:
+tests 33/33 (5 new F2 + 5 new F3 predicate cases in syncAudit-connection.test.ts).
+
+**F1 (iOS isRemoteControlled self-check):**
+- [ ] iPhone was the owner, force-quit (drag app up in switcher). Relaunch. Before any tap, the mini bar and Now Playing view must NOT show a "Playing on another device" / "Controlling your other device" state. Pre-fix: it did, because `isRemoteControlled` saw ownerDeviceID = SELF and returned true.
+
+**F2 (owner-continuity reclaim on relaunch):**
+- [ ] Same setup: iPhone was owner, force-quit, relaunch with internet. Watch console for `👑 [Sync] Reclaiming ownership from prior instance (zombie)`. The role in the app becomes owner within ~1 s (one Firestore transaction). After reclaim, tapping ⏯ from the mini bar controls playback locally, no takeover round trip.
+- [ ] Repeat on desktop: run `npm start` after the desktop was the last owner. Console should log `[sync] reclaiming ownership from prior instance (zombie)`; the app becomes owner immediately.
+- [ ] Negative case: iPhone was follower, desktop was owner, kill iPhone app, relaunch iPhone. Session doc still names DESKTOP as owner → NO reclaim on iPhone (correct; iPhone stays follower and mirrors desktop).
+
+**F3 (expired-seat auto-clear):**
+- [ ] iPhone owns playback. Kill iPhone app (force-quit) without ever launching iPhone again. On desktop (follower, still running), wait past 45 s (LEASE_TTL_MS). Watch console; the follower issues a fenced clear. `remote.ownerDeviceID` becomes empty; the switchHerePill's text now says the seat is unclaimed rather than "Other device offline". A tap on ▶ from any library row cleanly takes the session over — no need to Play Here first.
+- [ ] Race safety: run two desktops as followers of a dead iPhone owner. Only one clear should land (the txn re-checks conditions at commit); the other logs a caught-error no-op.
+- [ ] Skew safety: kill iPhone owner, immediately relaunch desktop **offline**. serverClock is unsynced. Follower must NOT clear the seat until the clock has samples — the `isSynced` guard prevents the clear from firing on wall-clock alone.
+
+---
+
+## Audit-3 Phase 4 — Race polish (F6 + F11 + F12)
+
+**F6 — first-launch signIn race:**
+- [ ] Clear all app data on iPhone AND on desktop for the same account (or use a brand-new secret). Launch BOTH apps at the same time and enter the same secret. Both should end up connected — even the one that lost the createUser race. Pre-fix: one side got "Could not connect — check the secret and try again". Post-fix: both sides succeed after a 500 ms retry.
+
+**F11 — user queue edit during rapid track advance:**
+- [ ] Queue 5 songs on the phone as owner. Start playback. As the first track ends and advances to the second (~300 ms window), immediately drag a queue row to reorder. The reorder must land — check the queue on desktop mirror to confirm the new order was published. Pre-fix: rapid track-advance + edit would silently drop the reorder (the `suppressConsumePublish` flag ate it).
+- [ ] Regression: pure natural advance (no user edit) should NOT double-publish. Watch the console — a single consumeHead publish, no follow-up replaceAll for the same state.
+
+**F12 — follower skip debounce:**
+- [ ] Phone owns playback. On desktop (follower), rapidly click ⏭ twice within 200 ms. Only ONE track should advance on the phone. Pre-fix: both commands went through and skipped two tracks.
+- [ ] Same for ⏮. Rapid double-tap advances only once.
+- [ ] Regression: play/pause toggle still works at any speed (idempotent — never debounced). Seek still fires instantly.
+
+---
+
+## Audit-3 Phase 5 — Cosmetics (F5 + F10)
+
+**F5 — stale-cache mirror suppression:**
+- [ ] iPhone follower, desktop owner playing. Kill iPhone's network (Airplane Mode) for 10 seconds. The mini bar's mirror state should freeze at the last online value — NOT flicker or refresh with cached snapshots. Restore network → within a couple seconds the mirror updates to the current live state.
+- [ ] Cold-launch iPhone offline (Airplane Mode on before app opens). The Now Playing state should be empty rather than showing a hours-old cached session. Once online, the current live state populates within a second.
+- [ ] Confirm role/lease UI (Home Sync sheet dot) still updates correctly — those read `remote` directly, which continues to update even from cache; only the mirror is gated.
+
+**F10 — docstring-only:** no behavior change to verify. The `postHandoff` comment now documents why the non-fenced write is intentional.
+
+---
+
+## Audit-3 — Full-branch checkpoint
+
+Before merging `arpi/audit-3` into main:
+- [ ] All Phase 1–5 boxes above are checked on the user's actual devices.
+- [ ] `desktop/tests/*.test.ts` still 33/33 PASS (was 54/54 counting phaseA + phaseC).
+- [ ] Static gates green: iOS `xcodebuild build`; desktop `npx tsc --noEmit && npm run bundle`.
+- [ ] MainThreadWatchdog stall count during a 30 s remote-slider-drag session on the phone (Phase 1 acceptance): 0.
+- [ ] docs/arpi/sync-audit-3.md and NOTES.md decisions block reflect what actually shipped.

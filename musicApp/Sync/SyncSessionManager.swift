@@ -24,6 +24,7 @@ final class SyncSessionManager: ObservableObject {
     let coordinator: SessionCoordinator
 
     private let player: AudioPlayerManager
+    private let resolver: LibraryTrackResolver
     private var uid: String = ""
     private(set) var replicator: LibraryReplicator?
     private(set) var playlistSync: PlaylistSync?
@@ -37,10 +38,12 @@ final class SyncSessionManager: ObservableObject {
         if FirebaseApp.app() == nil { FirebaseApp.configure() }
         self.player = player
         self.coordinator = SessionCoordinator(db: Firestore.firestore())
+        let resolver = LibraryTrackResolver(library: library)
+        self.resolver = resolver
         self.engine = PlaybackSyncEngine(
             player: player,
             coordinator: coordinator,
-            resolver: LibraryTrackResolver(library: library)
+            resolver: resolver
         )
         // Bluetooth handoff: headphone route changes drive pause/beacon/takeover.
         self.routeMonitor = RouteHandoffMonitor(
@@ -125,8 +128,24 @@ final class SyncSessionManager: ObservableObject {
                     try await Auth.auth().createUser(withEmail: creds.email,
                                                      password: creds.password).user.uid
                 }
-            } catch {
-                throw SyncError.corrupt  // surfaced as "could not connect"
+            } catch let createErr {
+                // Sub-second race with another device that just created the
+                // account first (sync-audit-3.md F6). Retry signIn once —
+                // the password is deterministic from the same secret.
+                let code = (createErr as NSError).code
+                if code == AuthErrorCode.emailAlreadyInUse.rawValue {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    do {
+                        uid = try await Self.withTimeout(label: "Sign-in") {
+                            try await Auth.auth().signIn(withEmail: creds.email,
+                                                         password: creds.password).user.uid
+                        }
+                    } catch {
+                        throw SyncError.corrupt
+                    }
+                } else {
+                    throw SyncError.corrupt  // surfaced as "could not connect"
+                }
             }
         }
         let coordinator = self.coordinator
@@ -184,6 +203,16 @@ final class SyncSessionManager: ObservableObject {
                                        findDuplicate: findDuplicate, startDownload: startDownload,
                                        applyMeta: applyMeta, applyDeletion: applyDeletion)
         if !uid.isEmpty { replicator?.activate(uid: uid) }
+        // Invalidate the resolver's keyed index whenever the library changes so
+        // handleRemote's O(N) queue resolution stays cache-hit under sync bursts
+        // (sync-audit-3.md F8). removeDuplicates on the id-set skips no-op fires
+        // (progress ticks etc.); rename/crop still fire because their ids-set is
+        // unchanged but the byName index needs a rebuild.
+        downloads
+            .removeDuplicates { $0.map(\.id) == $1.map(\.id)
+                             && $0.map(\.name) == $1.map(\.name) }
+            .sink { [weak self] _ in self?.resolver.invalidate() }
+            .store(in: &forwarding)
     }
 
     /// Wire two-way effects-settings sync:

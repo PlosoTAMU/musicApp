@@ -137,9 +137,20 @@ export class SyncEngine {
   prev()  { this.route({ t: "prev" }); }
   seekMs(ms: number) { this.route({ t: "seek", ms: Math.round(ms) }); }
 
+  /** Non-idempotent commands (next/prev) get a short client-side rate-limit
+   *  so a rapid double-click on a follower doesn't skip TWO tracks
+   *  (sync-audit-3.md F12). Idempotent commands (play/pause/seek) unchanged. */
+  private lastSkipAt = 0;
+  private static readonly SKIP_DEBOUNCE_MS = 300;
+
   private route(cmd: Command) {
-    if (this.coord.role === "owner") this.applyLocal(cmd);
-    else this.commands.send(cmd);
+    if (this.coord.role === "owner") { this.applyLocal(cmd); return; }
+    if (cmd.t === "next" || cmd.t === "prev") {
+      const now = Date.now();
+      if (now - this.lastSkipAt < SyncEngine.SKIP_DEBOUNCE_MS) return;
+      this.lastSkipAt = now;
+    }
+    this.commands.send(cmd);
   }
 
   private applyLocal(cmd: Command) {

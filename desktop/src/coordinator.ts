@@ -11,7 +11,7 @@ import {
   runTransaction, updateDoc, deleteField, Unsubscribe,
 } from "firebase/firestore";
 import {
-  SessionState, PlaybackState, DEVICE_ID, FENCED, sameId,
+  SessionState, PlaybackState, DEVICE_ID, FENCED, sameId, leaseExpired,
 } from "./protocol";
 import { serverClock } from "./serverClock";
 
@@ -145,12 +145,39 @@ export class SessionCoordinator {
         // as a follower — a previous process died mid-reign. Release once, on
         // the first server-confirmed snapshot (fenced on the epoch seen here,
         // so a takeover we start meanwhile can never be undone).
+        //
+        // NOTE (merge of arpi/audit-3): audit-3's F2 proposed *reclaiming* the
+        // seat here. Release wins — a reclaim from inside the coordinator never
+        // calls engine.becomeCommandTarget(), so the app would own the session
+        // while listening to no commands, and it publishes nothing, leaving the
+        // phantom `playing: true` alive on every other device.
         if (!snap.metadata.fromCache && !this.staleChecked) {
           this.staleChecked = true;
           if (sameId(state.ownerDeviceID, DEVICE_ID) && this.role !== "owner")
             void this.releaseStaleOwnership(state.epoch);
         }
-        this.onRemote?.(state, state.updatedBy === DEVICE_ID);
+
+        // F3 (sync-audit-3.md) — a DIFFERENT device owns the seat but hasn't
+        // heartbeated in > LEASE_TTL_MS. Fenced-CAS ownerDeviceID back to ""
+        // so the next play() on any device takes it cleanly. Every online
+        // snapshot, not just the first: an owner can die mid-session. Skipped
+        // until the ServerClock has real samples — wall-clock skew alone must
+        // not nuke a live owner's seat. Twin of SessionCoordinator.swift.
+        if (this.online && this.role !== "owner"
+            && state.ownerDeviceID
+            && !sameId(state.ownerDeviceID, DEVICE_ID)
+            && serverClock.isSynced
+            && leaseExpired(state, serverClock.nowMs)) {
+          void this.clearExpiredOwnership(ref, state.ownerDeviceID);
+        }
+
+        // Skip cached snapshots so onRemote doesn't paint the UI with hours-
+        // old state after a network hiccup (sync-audit-3.md F5). `remote` above
+        // keeps the last online value, so consumers reading it directly still
+        // see the last known session. Echoes still pass through (isEcho set) —
+        // after a relaunch the first frame is usually our own last write and it
+        // must still populate the mirror.
+        if (this.online) this.onRemote?.(state, state.updatedBy === DEVICE_ID);
       }
       this.onChange?.();
     }, err => {
@@ -224,6 +251,26 @@ export class SessionCoordinator {
     if (this.outbox) void this.publishPlayback(this.outbox);
   }
 
+  /** F3 fenced-CAS clear of a stale owner. No-op unless the doc still names
+   *  the expected dead owner AND its lease is still expired at commit time —
+   *  so races between followers all trying to clear the seat resolve safely:
+   *  the first wins, the rest see updated state and no-op. */
+  private async clearExpiredOwnership(ref: DocumentReference, expectedOwner: string) {
+    try {
+      await runTransaction(this.db, async txn => {
+        const snap = await txn.get(ref);
+        const cur = snap.data() as SessionState | undefined;
+        if (!cur || cur.ownerDeviceID !== expectedOwner
+            || !leaseExpired(cur, serverClock.nowMs)) return;
+        txn.update(ref, {
+          ownerDeviceID: "",
+          leaseMs: serverClock.nowMs,
+          updatedBy: DEVICE_ID,
+        });
+      });
+    } catch { /* best-effort */ }
+  }
+
   private scheduleRetry() {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     const d = this.retryDelay;
@@ -235,7 +282,11 @@ export class SessionCoordinator {
 
   /** Owner's audio output vanished → advertise a 60 s handoff window. Plain
    *  write on purpose — fires mid-route-change, must be fast; a stale beacon
-   *  self-expires via atMs. */
+   *  self-expires via atMs. Client-side role guard is best-effort; a demoted
+   *  zombie owner could still land the write (sync-audit-3.md F10). Impact
+   *  is bounded to a 60 s stale beacon; another handoff overwrites it.
+   *  Intentional: speed here beats absolute correctness on a field that
+   *  already carries expiration semantics. */
   async postHandoff() {
     const ref = this.ref;
     if (this.demo || this.role !== "owner" || !ref) return;
