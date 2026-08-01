@@ -309,3 +309,81 @@ Before merging `arpi/audit-3` into main:
 - [ ] Static gates green: iOS `xcodebuild build`; desktop `npx tsc --noEmit && npm run bundle`.
 - [ ] MainThreadWatchdog stall count during a 30 s remote-slider-drag session on the phone (Phase 1 acceptance): 0.
 - [ ] docs/arpi/sync-audit-3.md and NOTES.md decisions block reflect what actually shipped.
+
+---
+
+# Sync audit 4 (2026-08-01) — cross-platform consistency
+
+Two devices, one home secret, both with a mostly-shared library. Findings and
+rationale: `docs/arpi/sync-audit-4.md`.
+
+## Blockers
+
+**B1 — zombie self-owner (relaunch after a crash):**
+- [ ] Phone owns playback. Force-quit the app mid-song (swipe up from the app switcher — do NOT pause first). Relaunch.
+- [ ] Within a second or two the phone must show the session as **idle**, not "playing on another device". Pre-fix it treated ITSELF as the remote: the transport went dead and Now Playing showed a mirror of its own stale state.
+- [ ] Desktop must stop showing the phone as a live owner too (the release sets `playing: false`).
+- [ ] Repeat with the phone in Airplane Mode at relaunch, then turn the network back on: the release must land on the first fresh snapshot instead of never (the latch only closes on a committed write now).
+- [ ] Same test on desktop: kill the Electron process mid-song, relaunch.
+
+**B2 — dead owner (owner disappears mid-track):**
+- [ ] Phone owns playback mid-song. Put the phone in Airplane Mode and leave it >45 s (the lease TTL).
+- [ ] On desktop, the banner must change to "Your other device stopped responding … Play Here to continue", and the `owner offline` chip appears.
+- [ ] Press ⏯/⏭/⏮ on desktop: nothing should be written into the void — you get the hint "Your other device stopped responding — use Play Here". Pre-fix these silently did nothing forever.
+- [ ] Add a song to the queue on desktop: it must **start playing there** rather than parking behind the dead owner's track.
+- [ ] "Play Here" takes over cleanly and playback continues.
+- [ ] Reverse the roles (desktop owner, phone watching): the phone's Now Playing pill reads "Other device isn't responding — continue here".
+- [ ] Within ~a snapshot of the lease lapsing, the seat should auto-clear (F3) and the session read idle on both devices.
+
+**B3 — playlists across platforms (the big one):**
+- [ ] On DESKTOP, create a playlist and add 3 songs the phone also has.
+- [ ] On the phone, open Playlists: the playlist must appear **with its 3 songs playable**, not an empty list with a "3 songs" count.
+- [ ] Play it on the phone. Then add a 4th song **on the phone** and check desktop: all 4 present, the original 3 still resolvable there (names intact, artwork intact). Pre-fix this wiped their names and yt ids permanently.
+- [ ] Now the reverse: create a playlist on the PHONE with 3 songs, confirm it opens with all 3 on desktop.
+- [ ] Ghost preservation: put a song in a desktop playlist that the phone does NOT have. On the phone, reorder/add/remove other tracks. On desktop that missing song must still be there, in its original position, with its name.
+- [ ] Then download that song on the phone — it must appear in the playlist there without needing any cloud edit (refreshResolution).
+
+**B4 — Bluetooth handoff to a device missing the track:**
+- [ ] Desktop owns playback of a song the phone does NOT have. Connect headphones to the phone within the 60 s handoff window.
+- [ ] Desktop must keep playing. Pre-fix the phone took the seat, played silence, and stopped the music everywhere.
+- [ ] Repeat with a song the phone DOES have: handoff should continue playback on the phone at the right position.
+
+**B5 — ghost at the head of the queue:**
+- [ ] On desktop, queue 3 songs where the FIRST is one the phone doesn't have.
+- [ ] Phone owns playback. Let the track end (or press ⏭).
+- [ ] The phone must play song 2 and the shared queue must drop songs 1 and 2 together — check the queue on desktop. Pre-fix the missing song stayed pinned at the head and every later skip failed to consume anything.
+- [ ] Keep skipping to the end: the queue drains completely.
+
+**B6 — effects memory not corrupted by the other device:**
+- [ ] On the phone, play track A and set speed 1.5× / bass +6. Switch to track B (defaults). Switch back to A: 1.5×/+6 restored.
+- [ ] Now on DESKTOP change speed to 0.75×. The phone should follow audibly.
+- [ ] On the phone switch to track B and back to A: A must still be **1.5×/+6**, not 0.75×. Pre-fix the remote value was written into A's saved memory.
+
+**B7 — adjacent missing tracks keep their order:**
+- [ ] Shared queue with two consecutive songs the phone lacks, between songs it has.
+- [ ] On the phone, reorder the queue. On desktop the two missing songs must stay in their original relative order. Pre-fix they swapped on every edit.
+
+## Medium
+
+- [ ] **M7** Queue a song whose title contains `?` or `:` from desktop. It must resolve on the phone (appear in Up Next as playable), not land in "Not On This Device Yet".
+- [ ] **M8** Fresh install, sign into a home with a large cloud library (100+ tracks). The app must stay responsive during the first sync — no beachball/stall on launch. MainThreadWatchdog stall count: 0.
+- [ ] **M9** Connect the phone to home A, let the library mirror. "Forget Home", connect to a *different* secret (home B). Home B must receive the phone's whole library. Pre-fix it received nothing, ever. Also confirm home A stops receiving writes immediately (not just after relaunch).
+- [ ] **M9 desktop** "Forget home" on desktop, then connect to a different secret: no tracks should get spuriously tombstoned.
+- [ ] **M10** Bypass effects on the phone (fx off), set speed 1.5×. Desktop must ALSO read bypassed and play at normal speed — not 1.5×. Toggle bypass on either device; the other follows.
+- [ ] **M11** Both devices on the queue screen. Within the same second, add a song on the phone and add a different song on desktop. **Both** must survive. Pre-fix whichever wrote last erased the other. Repeat for delete-vs-add and reorder-vs-add.
+- [ ] **M12** Enter a wrong secret on the phone for an existing home: the error must say "Secret mismatch — this home exists but the secret differs", not "could not connect". With Wi-Fi off it must say it can't reach Firebase.
+- [ ] **M13** Queue a song from desktop the phone lacks: the phone's Queue tab shows it under "Not On This Device Yet", and it moves up into Up Next once the download lands.
+
+## Low / parity
+
+- [ ] **L18** Block Firestore (firewall/VPN) and connect on desktop: connect must FAIL with a clear message rather than silently succeeding with a bad clock (which would make every follower's progress bar wrong).
+- [ ] **L22** Phone follower sends "play this song" at the exact moment desktop takes over: the command should execute on desktop rather than being silently dropped.
+- [ ] **L23** Enable loop on the phone, pause, then press ⏭: the track restarts **and resumes**, matching desktop.
+
+## Regression sweep (must still hold)
+
+- [ ] Connect → Now Playing populates immediately (the echo-passthrough fix).
+- [ ] Handover "Play Here" continues at the correct position, both directions.
+- [ ] Queue drag-reorder, swipe-delete, Clear All all replicate.
+- [ ] Downloads mirror both ways; rename/crop/delete propagate.
+- [ ] Lyrics, crop editor, per-track fx unaffected.

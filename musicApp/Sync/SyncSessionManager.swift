@@ -124,13 +124,21 @@ final class SyncSessionManager: ObservableObject {
     /// an AuthErrorCode value with no `.rawValue`; the Int that lands in
     /// NSError.code is the nested `Code` enum's rawValue.
     private static func authError(_ e: Error) -> SyncError {
+        // Our own errors are already precise — a withTimeout failure must keep
+        // saying "timed out", not get flattened into "could not connect".
+        if let sync = e as? SyncError { return sync }
         switch (e as NSError).code {
         case AuthErrorCode.Code.operationNotAllowed.rawValue:
             return .auth("Email/Password sign-in is disabled — enable it: Firebase console → Authentication → Sign-in method.")
         case AuthErrorCode.Code.networkError.rawValue:
             return .auth("Can't reach Firebase — check the internet connection.")
         case AuthErrorCode.Code.emailAlreadyInUse.rawValue,
-             AuthErrorCode.Code.wrongPassword.rawValue:
+             AuthErrorCode.Code.wrongPassword.rawValue,
+             // With email-enumeration protection on, a wrong password comes
+             // back as invalidCredential. Reaching here means we already know
+             // the account EXISTS (createUser said emailAlreadyInUse), so the
+             // only remaining explanation is a different secret.
+             AuthErrorCode.Code.invalidCredential.rawValue:
             return .auth("Secret mismatch — this home exists but the secret differs.")
         default:
             return .corrupt
@@ -139,8 +147,10 @@ final class SyncSessionManager: ObservableObject {
 
     /// Only these mean "no such account yet, create it". Anything else is a
     /// real failure and must NOT provoke a createUser — twin of desktop's
-    /// `user-not-found` / `invalid-credential` check.
+    /// `user-not-found` / `invalid-credential` check. Our own SyncErrors
+    /// (notably a timeout) never qualify.
     private static func isMissingAccount(_ e: Error) -> Bool {
+        if e is SyncError { return false }
         let code = (e as NSError).code
         return code == AuthErrorCode.Code.userNotFound.rawValue
             || code == AuthErrorCode.Code.invalidCredential.rawValue
