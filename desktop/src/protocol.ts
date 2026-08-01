@@ -69,7 +69,7 @@ export const HANDOFF_WINDOW_MS = 60_000;
 /** True when another device's headphones dropped recently enough that an
  *  audio-output gain HERE should auto-continue playback. */
 export const handoffActive = (s: SessionState, nowMs: number): boolean =>
-  !!s.handoff && s.handoff.by !== DEVICE_ID &&
+  !!s.handoff && !sameId(s.handoff.by, DEVICE_ID) &&
   nowMs - s.handoff.atMs < HANDOFF_WINDOW_MS;
 
 /** Same extrapolation as PlaybackState.positionMs(atServerMs:) in Swift.

@@ -1552,7 +1552,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
     
     func next() {
         if isLoopEnabled {
+            // Restart the current track rather than consuming the queue. Resume
+            // too: pressing "next" is an explicit ask for the music to keep
+            // going, and seeking a PAUSED player just left it paused at 0:00
+            // while desktop's trackEnded resumed (sync-audit-4 L23).
             seek(to: 0)
+            if !isPlaying { resume() }
             return
         }
         

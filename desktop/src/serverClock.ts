@@ -33,15 +33,28 @@ class ServerClock {
 
   /** 3 sequential samples so the very first median has spread to reject; a
    *  failed sample retries once after a short backoff, then moves on — a
-   *  partial prime beats blocking connect. */
+   *  partial prime beats blocking connect.
+   *
+   *  THROWS if not a single sample landed. Silently continuing left offsetMs
+   *  at 0, so this device published anchors against its raw wall clock and
+   *  every follower extrapolated by the full skew — and serverClock.isSynced
+   *  stayed false, disabling the expired-seat clear. Twin of
+   *  ServerClock.swift's prime, which has always thrown (sync-audit-4 L18). */
   async prime(db: Firestore, uid: string) {
     if (this.isSynced) return;
+    let lastError: unknown;
     for (let i = 0; i < 3; i++) {
       try { await this.sample(db, uid); }
-      catch {
+      catch (e) {
+        lastError = e;
         await new Promise(r => setTimeout(r, 400));
-        try { await this.sample(db, uid); } catch { /* keep what landed */ }
+        try { await this.sample(db, uid); } catch (e2) { lastError = e2; }
       }
+    }
+    if (!this.isSynced) {
+      throw new Error(
+        "Couldn't reach the time server — playback positions would drift. "
+        + `Check the connection, then retry. (${String(lastError)})`);
     }
   }
 }

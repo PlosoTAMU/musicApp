@@ -85,9 +85,13 @@ export class SessionCoordinator {
 
     this.listen(ref);
 
+    // 5 min, matching SessionCoordinator.swift's clockTimer. Each tick is a
+    // forced Firestore write + server read on every connected device; device
+    // clocks don't drift anywhere near the ~750 ms the engine tolerates on a
+    // 60 s cycle, so the extra 4× of traffic bought nothing (sync-audit-4 L17).
     this.clockTimer = setInterval(() => {
       if (this.uid) serverClock.sample(this.db, this.uid).catch(() => {});
-    }, 60_000);
+    }, 300_000);
     this.onChange?.();
   }
 
@@ -256,7 +260,8 @@ export class SessionCoordinator {
       await runTransaction(this.db, async txn => {
         const snap = await txn.get(ref);
         const cur = snap.data() as SessionState | undefined;
-        if (!cur || cur.epoch !== epoch || cur.ownerDeviceID !== DEVICE_ID) throw FENCED;
+        if (!cur || cur.epoch !== epoch || !sameId(cur.ownerDeviceID, DEVICE_ID))
+          throw FENCED;
         txn.update(ref, {
           playback: { ...state, rev: cur.playback.rev + 1 },
           updatedBy: DEVICE_ID,
@@ -340,7 +345,8 @@ export class SessionCoordinator {
       await runTransaction(this.db, async txn => {
         const snap = await txn.get(ref);
         const cur = snap.data() as SessionState | undefined;
-        if (!cur || cur.epoch !== epoch || cur.ownerDeviceID !== DEVICE_ID) throw FENCED;
+        if (!cur || cur.epoch !== epoch || !sameId(cur.ownerDeviceID, DEVICE_ID))
+          throw FENCED;
         txn.update(ref, { leaseMs: now });
       });
     } catch (e) {

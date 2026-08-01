@@ -81,7 +81,7 @@ export class SyncEngine {
       this.player.pause();
       this.commands.stop();
     };
-    coord.onRemote = s => this.handleRemote(s);
+    coord.onRemote = (s, isEcho) => this.handleRemote(s, isEcho);
 
     // Anchor refresh — bounds follower extrapolation drift to ≤30 s.
     setInterval(() => {
@@ -107,12 +107,20 @@ export class SyncEngine {
 
   // ── Remote → local ──────────────────────────────────────────────────────
 
-  private handleRemote(s: SessionState) {
-    this.ghostQueue = s.queue.filter(r => !resolve(r, this.library));
-    this.player.queue = s.queue
-      .map(r => resolve(r, this.library))
-      .filter((t): t is LocalTrack => !!t);
+  private handleRemote(s: SessionState, isEcho: boolean) {
+    // Display + join-resync run on EVERY snapshot, echoes included — after a
+    // relaunch the first frame is usually our own last write. Queue projection
+    // skips echoes so the contract matches PlaybackSyncEngine.handleRemote
+    // exactly (sync-audit-4 L20); benign here today because desktop's
+    // player.queue is display-only (trackEnded reads coord.remote.queue), but
+    // the two ends must not quietly disagree about what an echo means.
     this.maybeRequestStatus(s);
+    if (!isEcho) {
+      this.ghostQueue = s.queue.filter(r => !resolve(r, this.library));
+      this.player.queue = s.queue
+        .map(r => resolve(r, this.library))
+        .filter((t): t is LocalTrack => !!t);
+    }
     this.onChange?.();
   }
 
