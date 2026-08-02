@@ -10,7 +10,7 @@ import { db, bootstrapAuth, signOutHome } from "./firebase";
 import { SessionCoordinator } from "./coordinator";
 import { SyncEngine } from "./engine";
 import { Replicator } from "./replicator";
-import { leaseExpired, sameId, handoffActive, TrackRef } from "./protocol";
+import { leaseExpired, liveRemoteOwner, ownerSuspectDead, sameId, handoffActive, TrackRef } from "./protocol";
 import { serverClock } from "./serverClock";
 import { LocalTrack, norm, resolve } from "./player";
 import { LyricsStore, LyricLine, parseLRC, activeIndex } from "./lyrics";
@@ -408,10 +408,11 @@ function wire() {
 
   coord.onChange = renderAll;
   engine.onChange = renderAll;
-  // The owner's lease lapsed, so nothing would ever execute that command.
-  // Say so instead of leaving the button looking broken (sync-audit-4 B2).
+  // Auto-takeover had nothing to claim (no cached track) or the cached track
+  // failed to resolve locally — say so instead of leaving the button looking
+  // broken (sync-audit-4 B2).
   engine.onDeadOwnerCommand = () =>
-    showHint("Your other device stopped responding — use Play Here");
+    showHint("Nothing to resume here — pick a song to start");
   setInterval(renderNow, 500);
 }
 
@@ -1051,22 +1052,27 @@ function renderNow() {
   const s = coord.remote;
   const pb = s?.playback;
   const idle = !s?.ownerDeviceID;
-  $("owner-dead").hidden = !(coord.role !== "owner" && !idle && s && leaseExpired(s, serverClock.nowMs));
 
   // Full remote: while another device owns playback, the rail transport stays
-  // LIVE (prev/next/toggle/seek route through the command bus). Instead of a
-  // blocking cover we show a status banner + Play Here to take over — the
-  // desktop is a true remote of the phone, like iOS is of the desktop.
-  const remoteActive = coord.role !== "owner" && !idle;
-  const deadOwner = remoteActive && !!s && leaseExpired(s, serverClock.nowMs);
-  $("remote-banner").hidden = !remoteActive;
-  // A dead owner drains no commands, so the rail transport is inert — say so
-  // and point at Play Here rather than letting the buttons look broken
-  // (sync-audit-4 B2).
-  $("remote-banner-text").textContent = !remoteActive ? ""
-    : deadOwner
-      ? `Your other device stopped responding${pb?.track ? ` — ${pb.track.name}` : ""} · Play Here to continue`
-      : `Controlling your other device${pb?.track ? ` — ${pb.track.name}` : ""}`;
+  // LIVE (prev/next/toggle/seek route through the command bus, auto-taking-
+  // over if the owner turns out to be dead — see engine.ts's autoTakeOver).
+  // Play Here is a persistent escape hatch: visible any time this device
+  // isn't the owner, not just when something's already gone wrong — a dead
+  // end here means a permanently broken transport (2026-08 UX pass).
+  const notOwner = coord.role !== "owner";
+  const liveOwner = notOwner && !!s
+    && liveRemoteOwner(s, serverClock.nowMs) && !ownerSuspectDead(s, serverClock.nowMs);
+  // "Suspect" fires well before the hard LEASE_TTL_MS expiry that gates
+  // actual command routing — this only changes what the UI SAYS, not
+  // whether a takeover is safe yet.
+  $("owner-dead").hidden = !(notOwner && !idle && !liveOwner);
+  $("remote-banner").hidden = !notOwner;
+  $("remote-banner-text").textContent = !notOwner ? ""
+    : liveOwner
+      ? `Controlling your other device${pb?.track ? ` — ${pb.track.name}` : ""}`
+      : pb?.track
+        ? `Your other device stopped responding — ${pb.track.name} · Play Here to continue`
+        : `Nothing playing yet · Play Here to start`;
   ($("btn-playhere") as HTMLButtonElement).disabled = busy || !coord.online;
 
   const titleText = pb?.track?.name ?? (idle ? "Pick a song →" : "Nothing playing");

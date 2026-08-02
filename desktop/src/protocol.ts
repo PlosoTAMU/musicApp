@@ -88,6 +88,19 @@ export const positionAt = (pb: PlaybackState, serverNowMs: number): number => {
 export const leaseExpired = (s: SessionState, serverNowMs: number): boolean =>
   serverNowMs > s.leaseMs + LEASE_TTL_MS;
 
+// > the 20s lease-renewal cadence (renewLease in coordinator.ts) + margin,
+// well under LEASE_TTL_MS — a fresh owner should never renew this late.
+export const SUSPECT_DEAD_MS = 25_000;
+
+/** Softer, client-only-display signal that a remote owner has probably died —
+ *  fires well before the hard LEASE_TTL_MS expiry that still gates the actual
+ *  server-side ownership clear (F3) and command routing (hasLiveRemoteOwner).
+ *  Never used for fencing or to justify auto-taking-over playback — only to
+ *  warn the UI sooner instead of leaving transport controls looking broken
+ *  for up to 45s with zero feedback. */
+export const ownerSuspectDead = (s: SessionState, serverNowMs: number): boolean =>
+  serverNowMs > s.leaseMs + SUSPECT_DEAD_MS;
+
 /** A device other than us holds the seat AND is still heartbeating, so a
  *  command sent now will actually be executed. Twin of
  *  PlaybackSyncEngine.hasLiveRemoteOwner. Everything that hands work to the

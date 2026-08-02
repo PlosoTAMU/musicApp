@@ -152,9 +152,9 @@ export class SyncEngine {
   private lastSkipAt = 0;
   private static readonly SKIP_DEBOUNCE_MS = 300;
 
-  /** Fired when a follower's transport command was dropped because no live
-   *  owner would ever execute it — the UI turns this into a "Play Here"
-   *  prompt instead of leaving the button looking broken. */
+  /** Fired when a follower's transport command couldn't be turned into an
+   *  auto-takeover — nothing cached to resume, or the cached track failed to
+   *  resolve locally. The UI surfaces this as a hint to pick a song. */
   onDeadOwnerCommand?: () => void;
 
   /** Returns false when the command was dropped. Twin of
@@ -162,11 +162,12 @@ export class SyncEngine {
   private route(cmd: Command): boolean {
     if (this.coord.role === "owner") { this.applyLocal(cmd); return true; }
     // Only the owner drains the commands collection. With no live owner the
-    // docs pile up unread and the button silently does nothing, forever
-    // (sync-audit-4 B2). Drop it and tell the UI to offer "Play Here".
+    // docs would pile up unread and the button would silently do nothing,
+    // forever (sync-audit-4 B2) — claim the seat and replay the intent here
+    // instead, same as a manual "Play Here" (2026-08 UX pass).
     if (!this.coord.demo && !this.hasLiveRemoteOwner()) {
-      this.onDeadOwnerCommand?.();
-      return false;
+      void this.autoTakeOver(cmd);
+      return true;
     }
     if (cmd.t === "next" || cmd.t === "prev") {
       const now = Date.now();
@@ -175,6 +176,21 @@ export class SyncEngine {
     }
     this.commands.send(cmd);
     return true;
+  }
+
+  /** No live owner ⇒ claim the seat and replay the intent locally instead of
+   *  dropping it — twin of the manual "Play Here" flow (takeOverHere), just
+   *  triggered implicitly by any transport press. No cached track means
+   *  there is nothing to claim — surface the hint and let the user pick a
+   *  song instead of taking over an empty session. */
+  private async autoTakeOver(cmd: Command) {
+    if (!this.coord.remote?.playback.track) { this.onDeadOwnerCommand?.(); return; }
+    try {
+      await this.takeOverHere(cmd.t === "play");
+      if (cmd.t !== "play") this.applyLocal(cmd);
+    } catch {
+      this.onDeadOwnerCommand?.();
+    }
   }
 
   private applyLocal(cmd: Command) {

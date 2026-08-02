@@ -8,6 +8,7 @@ import { rebase } from "../src/queueSync";
 import {
   SessionState, TrackRef, sessionIdle, positionAt, leaseExpired, liveRemoteOwner,
   handoffActive, DEVICE_ID, LEASE_TTL_MS, HANDOFF_WINDOW_MS,
+  ownerSuspectDead, SUSPECT_DEAD_MS,
 } from "../src/protocol";
 
 let n = 0;
@@ -328,5 +329,24 @@ eq("F3: SELF-owned doc while follower (zombie) → release handles it, not F3",
 eq("F3: runs on every online snapshot, not just the first — an owner can die mid-session",
   shouldClearExpired(session({ ownerDeviceID: "OTHER", leaseMs: 100_000 }),
                      "follower", 100_000 + LEASE_TTL_MS * 10), true);
+
+// ─────────────────────────────────────────────────────────────────────────
+// ownerSuspectDead — fast client-side "probably dead" signal (2026-08 UX
+// pass), strictly earlier than leaseExpired and never used for fencing.
+// ─────────────────────────────────────────────────────────────────────────
+
+eq("suspectDead: fresh lease → not suspect",
+  ownerSuspectDead(session({ ownerDeviceID: "OTHER", leaseMs: 100_000 }), 100_000 + 1_000), false);
+eq("suspectDead: just under the threshold → not yet",
+  ownerSuspectDead(session({ ownerDeviceID: "OTHER", leaseMs: 100_000 }),
+    100_000 + SUSPECT_DEAD_MS - 1), false);
+eq("suspectDead: past the threshold → suspect",
+  ownerSuspectDead(session({ ownerDeviceID: "OTHER", leaseMs: 100_000 }),
+    100_000 + SUSPECT_DEAD_MS + 1), true);
+eq("suspectDead fires strictly before the hard lease expiry",
+  ownerSuspectDead(session({ ownerDeviceID: "OTHER", leaseMs: 100_000 }),
+    100_000 + LEASE_TTL_MS - 1)
+  && !leaseExpired(session({ ownerDeviceID: "OTHER", leaseMs: 100_000 }), 100_000 + LEASE_TTL_MS - 1),
+  true);
 
 console.log(`syncAudit-connection: ${n}/${n} PASS`);
