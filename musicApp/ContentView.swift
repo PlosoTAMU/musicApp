@@ -722,6 +722,11 @@ struct NowPlayingView: View {
     private var displayIsPlaying: Bool {
         isRemoteControlled ? (engine.mirror?.isPlaying ?? false) : audioPlayer.isPlaying
     }
+    /// Loop lives on whichever device holds the audio, so as a remote we show
+    /// the owner's published flag — our own isLoopEnabled drives nothing here.
+    private var displayIsLooping: Bool {
+        isRemoteControlled ? (engine.mirror?.loop ?? false) : audioPlayer.isLoopEnabled
+    }
     private var displayDuration: Double {
         isRemoteControlled ? Double(engine.mirror?.durationMs ?? 0) / 1000.0
                            : audioPlayer.duration
@@ -961,18 +966,20 @@ struct NowPlayingView: View {
 
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                    audioPlayer.isLoopEnabled.toggle()
+                    // In remote mode the owner holds the audio, so send intent
+                    // rather than flipping a local flag nothing here reads.
+                    if isRemoteControlled { engine.setLoop(!displayIsLooping) }
+                    else { audioPlayer.isLoopEnabled.toggle() }
                 }
             } label: {
                 Image(systemName: "repeat")
-                    .rotationEffect(.degrees(audioPlayer.isLoopEnabled ? 360 : 0))
+                    .rotationEffect(.degrees(displayIsLooping ? 360 : 0))
             }
             .buttonStyle(CircleControlButtonStyle(
                 diameter: 40,
-                tint: audioPlayer.isLoopEnabled ? Theme.ink : Theme.bone,
-                filled: audioPlayer.isLoopEnabled
+                tint: displayIsLooping ? Theme.ink : Theme.bone,
+                filled: displayIsLooping
             ))
-            .disabled(isRemoteControlled)
             
             Button {
                 audioPlayer.effectsBypass.toggle()

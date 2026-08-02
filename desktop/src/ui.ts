@@ -287,7 +287,12 @@ function wire() {
 
   // Rail action row (twin of the iOS Now Playing top bar).
   $("rail-loop").onclick = () => {
-    engine.player.loop = !engine.player.loop;
+    const on = !isLooping();
+    const sent = engine.setLoop(on);
+    // Follower: patch the mirror so the button responds now; the owner's
+    // publish overwrites it a round-trip later (same deal as toggleCmd).
+    const pb = coord.remote?.playback;
+    if (sent && pb && !localAudio() && ownerAlive()) pb.loop = on;
     renderNow();
   };
   $("rail-fx").onclick = () => {
@@ -463,11 +468,30 @@ const ownerAlive = () =>
   !!coord.remote && !!coord.remote.ownerDeviceID &&
   !leaseExpired(coord.remote, serverClock.nowMs);
 
+/** Where the audio actually lives. When it's HERE the local element is the
+ *  truth; the mirror only catches up a publish + snapshot round-trip later. */
+const localAudio = () => coord.demo || coord.role === "owner";
+
+/** Authoritative "is sound coming out right now". Asking the mirror this while
+ *  we own the audio returns the PRE-toggle answer for the whole round-trip, so
+ *  a second press within that window recomputes the same command and the button
+ *  looks dead until the mirror lands. */
+const isPlaying = () =>
+  localAudio() ? engine.player.playing : !!coord.remote?.playback?.playing;
+
+/** Loop lives on whichever device holds the audio, so as a remote we show the
+ *  owner's published flag — our own player.loop drives nothing here. */
+const isLooping = () =>
+  localAudio() ? engine.player.loop : !!coord.remote?.playback?.loop;
+
 function toggleCmd() {
   const pb = coord.remote?.playback;
-  const playing = !!pb?.playing;
+  const playing = isPlaying();
   const sent = playing ? engine.pause() : engine.play();
-  if (!sent || !pb || coord.role === "owner" || !ownerAlive()) return;
+  // Owning the audio means the element already flipped — repaint off local
+  // state now instead of waiting out the 500 ms tick.
+  if (localAudio()) { renderNow(); return; }
+  if (!sent || !pb || !ownerAlive()) return;
   pb.pos = Math.round(currentPosMs()); // re-anchor at the shown position
   pb.anchor = serverClock.nowMs;
   pb.playing = !playing;
@@ -990,9 +1014,7 @@ function renderPosition() {
 function positionLoop() {
   requestAnimationFrame(positionLoop);
   if (coord.role === "none") return;
-  const playing = coord.role === "owner"
-    ? engine.player.playing : !!coord.remote?.playback.playing;
-  if (playing) renderPosition();
+  if (isPlaying()) renderPosition();
 }
 
 function renderNow() {
@@ -1052,8 +1074,8 @@ function renderNow() {
   const badgeYt = pb?.track ? (resolve(pb.track, engine.library)?.yt ?? pb.track.yt) : undefined;
   const cw = badgeYt ? replicator.cropFor(badgeYt) : {};
   $("crop-badge").hidden = cw.startMs == null && cw.endMs == null;
-  $("eq").hidden = !pb?.playing;
-  $("btn-toggle").innerHTML = pb?.playing ? ICON_PAUSE : ICON_PLAY;
+  $("eq").hidden = !isPlaying();
+  $("btn-toggle").innerHTML = isPlaying() ? ICON_PAUSE : ICON_PLAY;
 
   // Hero art — YouTube thumb keyed by the track's yt id; cache the last id so
   // the 500 ms tick doesn't restart the image fetch.
@@ -1076,7 +1098,7 @@ function renderNow() {
 
   // Rail action toggles — filled treatment matches the iOS top bar (fx button
   // is lit while effects are ACTIVE; bypassed adds a slash + says so) [U9].
-  $("rail-loop").classList.toggle("on", engine.player.loop);
+  $("rail-loop").classList.toggle("on", isLooping());
   const fxBtn = $("rail-fx");
   fxBtn.classList.toggle("on", !fx.bypass);
   fxBtn.classList.toggle("slash", fx.bypass);

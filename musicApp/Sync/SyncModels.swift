@@ -220,6 +220,10 @@ struct PlaybackState: Equatable {
     var rateX1000: Int       // effective playback rate ×1000 (affects extrapolation)
     var durationMs: Int      // cropped track length — follower progress denominator
     var rev: Int             // monotonic per-epoch; (epoch, rev) totally orders writes
+    // Repeat-current-track, owned by whoever holds the audio. Published so a
+    // remote's loop button shows the owner's real state instead of its own dead
+    // local flag. Docs written before this field simply read false.
+    var loop: Bool
 
     static let empty = PlaybackState(track: nil, isPlaying: false, positionMs: 0,
                                      anchorMs: 0, rateX1000: 1000, durationMs: 0, rev: 0)
@@ -237,16 +241,16 @@ struct PlaybackState: Equatable {
     var dict: [String: Any] {
         var d: [String: Any] = ["playing": isPlaying, "pos": positionMs,
                                 "anchor": anchorMs, "rate": rateX1000,
-                                "dur": durationMs, "rev": rev]
+                                "dur": durationMs, "rev": rev, "loop": loop]
         if let track { d["track"] = track.dict }
         return d
     }
 
     init(track: TrackRef?, isPlaying: Bool, positionMs: Int, anchorMs: Int,
-         rateX1000: Int, durationMs: Int, rev: Int) {
+         rateX1000: Int, durationMs: Int, rev: Int, loop: Bool = false) {
         self.track = track; self.isPlaying = isPlaying; self.positionMs = positionMs
         self.anchorMs = anchorMs; self.rateX1000 = rateX1000
-        self.durationMs = durationMs; self.rev = rev
+        self.durationMs = durationMs; self.rev = rev; self.loop = loop
     }
 
     init?(dict: [String: Any]?) {
@@ -258,7 +262,8 @@ struct PlaybackState: Equatable {
               let rev = d["rev"] as? Int else { return nil }
         self.init(track: (d["track"] as? [String: Any]).flatMap(TrackRef.init(dict:)),
                   isPlaying: playing, positionMs: pos, anchorMs: anchor,
-                  rateX1000: rate, durationMs: d["dur"] as? Int ?? 0, rev: rev)
+                  rateX1000: rate, durationMs: d["dur"] as? Int ?? 0, rev: rev,
+                  loop: d["loop"] as? Bool ?? false)
     }
 }
 

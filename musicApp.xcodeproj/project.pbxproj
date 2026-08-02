@@ -7,8 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		DE32EC0C4986530AF2E7AEDD /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 1F16DD0E7E68AAB04FA82480 /* FirebaseAuth */; };
-		E0807A34F2B291EE21FDB65C /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 340D1342B8676642B7971C19 /* FirebaseCore */; };
 		1D641DD55844D67BEAC1DD8E /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = C7D1F4E74AAADD8674916D47 /* FirebaseFirestore */; };
 		BF1938442F2079030067A7A8 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BFB82D972F203CDD005AC5A2 /* Python.xcframework */; };
 		BF1938452F2079030067A7A8 /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BFB82D972F203CDD005AC5A2 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -33,6 +31,8 @@
 		BF5781D02F1EB4D70056E8CB /* yt_dlp in Resources */ = {isa = PBXBuildFile; fileRef = BF5781CF2F1EB4D20056E8CB /* yt_dlp */; };
 		BF59D9DC2F2EAC6500491E96 /* cacert.pem in Resources */ = {isa = PBXBuildFile; fileRef = BF59D9DB2F2EAC6500491E96 /* cacert.pem */; };
 		BF97F9D72FF5E82300C721F6 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = BF97F9D62FF5E82300C721F6 /* GoogleService-Info.plist */; };
+		DE32EC0C4986530AF2E7AEDD /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 1F16DD0E7E68AAB04FA82480 /* FirebaseAuth */; };
+		E0807A34F2B291EE21FDB65C /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 340D1342B8676642B7971C19 /* FirebaseCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */

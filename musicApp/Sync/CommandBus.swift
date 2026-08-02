@@ -18,6 +18,10 @@ enum SyncCommand {
     /// re-publish its authoritative playback (fresh anchor). Not a transport
     /// mutation — the owner answers with a publish, nothing plays.
     case requestStatus
+    /// Repeat-current-track toggle. The flag only means anything on the device
+    /// holding the audio, so a remote sends its intent rather than flipping a
+    /// local field nothing reads.
+    case setLoop(Bool)
 
     var dict: [String: Any] {
         var d: [String: Any] = ["by": SyncDevice.id, "at": FieldValue.serverTimestamp()]
@@ -29,6 +33,7 @@ enum SyncCommand {
         case .seek(let ms): d["t"] = "seek"; d["ms"] = ms
         case .playTrack(let ref): d["t"] = "playTrack"; d["ref"] = ref.dict
         case .requestStatus: d["t"] = "status"
+        case .setLoop(let on): d["t"] = "loop"; d["on"] = on
         }
         return d
     }
@@ -45,6 +50,7 @@ enum SyncCommand {
                   let ref = TrackRef(dict: raw) else { return nil }
             self = .playTrack(ref)
         case "status": self = .requestStatus
+        case "loop": guard let on = dict["on"] as? Bool else { return nil }; self = .setLoop(on)
         default: return nil
         }
     }

@@ -16,6 +16,10 @@ export interface PlaybackState {
   rate: number;      // effective rate ×1000
   dur: number;       // cropped track length ms
   rev: number;       // per-epoch monotonic
+  // Repeat-current-track, owned by whoever holds the audio. Published so a
+  // remote's loop button shows the owner's real state instead of its own dead
+  // local flag. Optional: sessions written before this field simply read false.
+  loop?: boolean;
 }
 
 // Shared-secret model: the secret derives one Firebase account, so every

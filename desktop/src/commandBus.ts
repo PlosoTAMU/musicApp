@@ -14,6 +14,10 @@ export type Command =
   // Remote-mode "tap a song": ask the OWNER to play this track over there.
   // Twin of SyncCommand.playTrack.
   | { t: "playTrack"; ref: TrackRef }
+  // Repeat-current-track toggle. The flag only means anything on the device
+  // holding the audio, so a remote sends its intent rather than flipping a
+  // local field nothing reads. Twin of SyncCommand.setLoop.
+  | { t: "loop"; on: boolean }
   // Resync ping: a device that just joined asks the current owner to
   // re-publish its authoritative playback (fresh anchor). Not a transport
   // mutation — the owner answers with a publish, nothing plays. Twin of

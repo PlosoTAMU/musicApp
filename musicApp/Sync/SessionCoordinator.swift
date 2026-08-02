@@ -191,7 +191,7 @@ final class SessionCoordinator: ObservableObject {
         // samples — wall-clock skew alone must not nuke a live owner's seat.
         // Races between followers are safe: the txn re-checks the expected
         // owner AND expired-lease at commit, so only the first wins.
-        if isOnline, role != .owner,
+        if isOnline, !role.isOwner,
            !state.ownerDeviceID.isEmpty,
            state.ownerDeviceID != SyncDevice.id,
            ServerClock.shared.isSynced,

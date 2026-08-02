@@ -240,6 +240,7 @@ final class PlaybackSyncEngine: ObservableObject {
             // publish below re-asserts our truth and corrects the sender's
             // optimistic mirror.
             if let track = resolver.resolve(ref) { player.play(track) }
+        case .setLoop(let on): player.isLoopEnabled = on
         case .requestStatus: break   // handled above
         }
         // Direct publish removes the observer's 200 ms debounce from the remote
@@ -507,7 +508,8 @@ final class PlaybackSyncEngine: ObservableObject {
             anchorMs: ServerClock.shared.nowMs,
             rateX1000: Int(player.effectivePlaybackSpeed * 1000),
             durationMs: Int(player.duration * 1000),
-            rev: 0   // assigned inside the fenced transaction
+            rev: 0,  // assigned inside the fenced transaction
+            loop: player.isLoopEnabled
         )
     }
 
@@ -599,6 +601,7 @@ final class PlaybackSyncEngine: ObservableObject {
     func requestNext()      { route(.next) }
     func requestPrevious()  { route(.previous) }
     func requestSeek(ms: Int) { route(.seek(ms: ms)) }
+    func setLoop(_ on: Bool) { route(.setLoop(on)) }
 
     /// Non-idempotent commands (next/prev) get a short client-side rate-limit
     /// so a rapid double-tap on the follower doesn't skip TWO tracks
@@ -665,6 +668,8 @@ final class PlaybackSyncEngine: ObservableObject {
         case .seek(let ms):
             pb.positionMs = ms
             pb.anchorMs = now
+        case .setLoop(let on):
+            pb.loop = on
         case .next, .previous, .playTrack:
             return  // target track unknown until the owner's snapshot arrives
         case .requestStatus:

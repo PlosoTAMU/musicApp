@@ -120,25 +120,24 @@ final class SyncSessionManager: ObservableObject {
     /// dead network read identically, and any transient sign-in error triggered
     /// a pointless createUser attempt (sync-audit-4 M12).
     ///
-    /// Firebase 10+ made AuthErrorCode a STRUCT, so `AuthErrorCode.<case>` is
-    /// an AuthErrorCode value with no `.rawValue`; the Int that lands in
-    /// NSError.code is the nested `Code` enum's rawValue.
+    /// AuthErrorCode is an Int-backed enum, so `AuthErrorCode.<case>.rawValue`
+    /// is the Int that lands in NSError.code.
     private static func authError(_ e: Error) -> SyncError {
         // Our own errors are already precise — a withTimeout failure must keep
         // saying "timed out", not get flattened into "could not connect".
         if let sync = e as? SyncError { return sync }
         switch (e as NSError).code {
-        case AuthErrorCode.Code.operationNotAllowed.rawValue:
+        case AuthErrorCode.operationNotAllowed.rawValue:
             return .auth("Email/Password sign-in is disabled — enable it: Firebase console → Authentication → Sign-in method.")
-        case AuthErrorCode.Code.networkError.rawValue:
+        case AuthErrorCode.networkError.rawValue:
             return .auth("Can't reach Firebase — check the internet connection.")
-        case AuthErrorCode.Code.emailAlreadyInUse.rawValue,
-             AuthErrorCode.Code.wrongPassword.rawValue,
+        case AuthErrorCode.emailAlreadyInUse.rawValue,
+             AuthErrorCode.wrongPassword.rawValue,
              // With email-enumeration protection on, a wrong password comes
              // back as invalidCredential. Reaching here means we already know
              // the account EXISTS (createUser said emailAlreadyInUse), so the
              // only remaining explanation is a different secret.
-             AuthErrorCode.Code.invalidCredential.rawValue:
+             AuthErrorCode.invalidCredential.rawValue:
             return .auth("Secret mismatch — this home exists but the secret differs.")
         default:
             return .corrupt
@@ -152,8 +151,8 @@ final class SyncSessionManager: ObservableObject {
     private static func isMissingAccount(_ e: Error) -> Bool {
         if e is SyncError { return false }
         let code = (e as NSError).code
-        return code == AuthErrorCode.Code.userNotFound.rawValue
-            || code == AuthErrorCode.Code.invalidCredential.rawValue
+        return code == AuthErrorCode.userNotFound.rawValue
+            || code == AuthErrorCode.invalidCredential.rawValue
     }
 
     func connect(secret: String) async throws {
@@ -181,7 +180,7 @@ final class SyncSessionManager: ObservableObject {
                 // account first (sync-audit-3.md F6). Retry signIn once —
                 // the password is deterministic from the same secret.
                 guard (createErr as NSError).code
-                        == AuthErrorCode.Code.emailAlreadyInUse.rawValue else {
+                        == AuthErrorCode.emailAlreadyInUse.rawValue else {
                     throw Self.authError(createErr)
                 }
                 try? await Task.sleep(nanoseconds: 500_000_000)

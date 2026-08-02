@@ -144,6 +144,7 @@ export class SyncEngine {
   next()  { return this.route({ t: "next" }); }
   prev()  { return this.route({ t: "prev" }); }
   seekMs(ms: number) { return this.route({ t: "seek", ms: Math.round(ms) }); }
+  setLoop(on: boolean) { return this.route({ t: "loop", on }); }
 
   /** Non-idempotent commands (next/prev) get a short client-side rate-limit
    *  so a rapid double-click on a follower doesn't skip TWO tracks
@@ -185,6 +186,9 @@ export class SyncEngine {
       case "next": this.trackEnded(); break;
       case "prev": this.goPrevious(); break;
       case "seek": this.player.seekMs(cmd.ms); break;
+      // Not a transport mutation — publish() below carries the new flag back
+      // so the sender's button settles on our state.
+      case "loop": this.player.loop = cmd.on; this.onChange?.(); break;
       case "playTrack": {
         // Remote device tapped a song — play it HERE (we own the audio).
         // Unresolvable ⇒ play nothing; the publish below re-asserts our
@@ -287,6 +291,7 @@ export class SyncEngine {
       rate: this.player.rateX1000,
       dur: Math.round(this.player.durMs),
       rev: 0,
+      loop: this.player.loop,
     };
     if (cur) pb.track = toRef(cur);
     return pb;
