@@ -173,7 +173,11 @@
        transform/box-shadow are driven per-frame by the beat engine so the
        thumbnail pulses with the beat (twin of the iOS PulsingThumbnailView) —
        no CSS transition on them or the throb would smear. */
-    #art-wrap { position: relative; width: fit-content; margin: 10px 0 2px; }
+    /* Margin, not just centering: bar tips reach maxBarLen (64px, see
+       ART_MAX_BAR in ui.ts) past the art's edge, so top/bottom need real
+       clearance from the rail-top row and track-name or the lines run into
+       them. */
+    #art-wrap { position: relative; width: fit-content; margin: 76px auto 82px; }
     #art {
       width: 208px; height: 208px; border-radius: 22px; overflow: hidden;
       background: var(--smoke-raised); border: 1px solid var(--seam);
