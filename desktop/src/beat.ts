@@ -171,17 +171,48 @@ const smoothstep = (a: number, b: number, x: number): number => {
 // ── Analyser feeder ─────────────────────────────────────────────────────────
 
 const DISPLAY_BINS = 48;
+const EDGE_BINS = 100; // 4 sides × 25 bars — matches iOS EdgeVisualizerView
+
+/** Log-spaced band edges (bin indices into an analyser's frequency array)
+ *  covering [loHz, hiHz]. Returns bandCount+1 edges. Pure — no analyser needed. */
+export function computeBandEdges(
+  sampleRate: number, fftSize: number, nyquistBins: number,
+  bandCount: number, loHz: number, hiHz: number,
+): number[] {
+  const binHz = sampleRate / fftSize;
+  const lo = Math.log(loHz), hi = Math.log(hiHz);
+  return Array.from({ length: bandCount + 1 }, (_, i) => {
+    const hz = Math.exp(lo + ((hi - lo) * i) / bandCount);
+    return Math.max(1, Math.min(nyquistBins - 1, Math.round(hz / binHz)));
+  });
+}
+
+/** Per-band peak (0-1, unsmoothed) from a `getByteFrequencyData` snapshot. Pure. */
+export function peakPerBand(freq: Uint8Array, bandEdges: number[], bandCount: number): Float32Array {
+  const out = new Float32Array(bandCount);
+  for (let b = 0; b < bandCount; b++) {
+    let peak = 0;
+    for (let i = bandEdges[b]; i < bandEdges[b + 1]; i++) {
+      if (freq[i] > peak) peak = freq[i];
+    }
+    out[b] = peak / 255;
+  }
+  return out;
+}
 
 export class BeatFeed {
   readonly engine = new BeatEngine();
-  /** Log-spaced 0-1 display bins (fast attack, slow release) for the canvas. */
+  /** Log-spaced 0-1 display bins (fast attack, slow release) for the flat canvas. */
   readonly bins = new Float32Array(DISPLAY_BINS);
+  /** Same smoothing, 100 bins — feeds the edge visualizer wrapped around the art. */
+  readonly edgeBins = new Float32Array(EDGE_BINS);
 
   private analyser?: AnalyserNode;
   private sampleRate = 48000;
   private freq?: Uint8Array<ArrayBuffer>; // getByteFrequencyData rejects ArrayBufferLike
   private prevLog?: Float32Array;
   private bandEdges: number[] = [];
+  private edgeBandEdges: number[] = [];
   private energyEma = 0;
   private lastT = 0;
 
@@ -195,13 +226,10 @@ export class BeatFeed {
     this.freq = new Uint8Array(analyser.frequencyBinCount);
     this.prevLog = new Float32Array(analyser.frequencyBinCount);
 
-    // Log-spaced band edges 40 Hz → 14 kHz for the display bins.
-    const binHz = sampleRate / analyser.fftSize;
-    const lo = Math.log(40), hi = Math.log(14_000);
-    this.bandEdges = Array.from({ length: DISPLAY_BINS + 1 }, (_, i) => {
-      const hz = Math.exp(lo + ((hi - lo) * i) / DISPLAY_BINS);
-      return Math.max(1, Math.min(analyser.frequencyBinCount - 1, Math.round(hz / binHz)));
-    });
+    this.bandEdges = computeBandEdges(
+      sampleRate, analyser.fftSize, analyser.frequencyBinCount, DISPLAY_BINS, 40, 14_000);
+    this.edgeBandEdges = computeBandEdges(
+      sampleRate, analyser.fftSize, analyser.frequencyBinCount, EDGE_BINS, 40, 14_000);
   }
 
   get bound() { return !!this.analyser; }
@@ -212,7 +240,7 @@ export class BeatFeed {
     this.energyEma = 0;
   }
 
-  /** One animation frame: spectral flux → engine; also refreshes `bins`. */
+  /** One animation frame: spectral flux → engine; also refreshes `bins`/`edgeBins`. */
   tick(nowMs: number): BeatOutput {
     const a = this.analyser;
     if (!a || !this.freq || !this.prevLog) {
@@ -242,13 +270,16 @@ export class BeatFeed {
     this.energyEma += (loudness - this.energyEma) * 0.1;
 
     // Display bins: per-band peak, fast attack / slow release.
+    const peaks = peakPerBand(this.freq, this.bandEdges, DISPLAY_BINS);
     for (let b = 0; b < DISPLAY_BINS; b++) {
-      let peak = 0;
-      for (let i = this.bandEdges[b]; i < this.bandEdges[b + 1]; i++) {
-        if (this.freq[i] > peak) peak = this.freq[i];
-      }
-      const v = peak / 255;
+      const v = peaks[b];
       this.bins[b] += (v - this.bins[b]) * (v > this.bins[b] ? 0.55 : 0.16);
+    }
+
+    const edgePeaks = peakPerBand(this.freq, this.edgeBandEdges, EDGE_BINS);
+    for (let b = 0; b < EDGE_BINS; b++) {
+      const v = edgePeaks[b];
+      this.edgeBins[b] += (v - this.edgeBins[b]) * (v > this.edgeBins[b] ? 0.55 : 0.16);
     }
 
     return this.engine.process(flux / nBins, this.energyEma, dt);
