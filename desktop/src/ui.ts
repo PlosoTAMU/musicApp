@@ -15,6 +15,7 @@ import { serverClock } from "./serverClock";
 import { LocalTrack, norm, resolve } from "./player";
 import { LyricsStore, LyricLine, parseLRC, activeIndex } from "./lyrics";
 import { BeatFeed, BeatOutput } from "./beat";
+import { drawEdgeVisualizer, sampleArtColors } from "./visualizer";
 import { AudioGraph } from "./audioGraph";
 import { downloadTrack, resolvePlaylist, downloadPlaylistItem } from "./download";
 import { PlaylistSync, CloudPlaylist } from "./playlists";
@@ -774,9 +775,13 @@ function hideHandoffBanner() {
 
 // ── Beat visualizer (owner-side only — mirrors have no local audio) ────────
 
-let vizCtx: CanvasRenderingContext2D | null = null;
+let edgeVizCtx: CanvasRenderingContext2D | null = null;
 let vizTrackId: string | null = null;
 let vizIdle = true;
+let artColors: string[] | null = null;
+let artColorsForYt: string | null = null;
+
+const ART_BOX = 208, ART_CORNER = 22, ART_MAX_BAR = 64;
 
 function vizLoop(now: number) {
   requestAnimationFrame(vizLoop);
@@ -788,8 +793,8 @@ function vizLoop(now: number) {
   if (!ownerPlaying) {
     if (!vizIdle) {
       vizIdle = true;
-      const cv = $("viz") as HTMLCanvasElement;
-      vizCtx?.clearRect(0, 0, cv.clientWidth, cv.clientHeight);
+      const cv = $("edge-viz") as HTMLCanvasElement;
+      edgeVizCtx?.clearRect(0, 0, cv.clientWidth, cv.clientHeight);
       btn.style.transform = "";
       btn.style.boxShadow = "";
       art.style.transform = "";
@@ -821,7 +826,8 @@ function vizLoop(now: number) {
   }
 
   const out = beatFeed.tick(now);
-  drawViz(out);
+  updateArtColors();
+  drawEdgeViz(out);
 
   // The play button IS the head-nod: scale rides the phase-locked nod curve,
   // glow flashes on real hits. Inline styles override the CSS at 60 fps.
@@ -843,32 +849,35 @@ function vizLoop(now: number) {
   }
 }
 
-function drawViz(out: BeatOutput) {
-  const cv = $("viz") as HTMLCanvasElement;
+/** Re-samples art colors once per track change (not per-frame) — mirrors
+ *  the iOS EdgeVisualizerView's precomputeBarColors-on-track-change. */
+function updateArtColors() {
+  const artYt = coord.remote?.playback.track?.yt ?? null;
+  if (artYt === artColorsForYt) return;
+  artColorsForYt = artYt;
+  const img = $("art-img") as HTMLImageElement;
+  if (!artYt || img.hidden || !img.complete) { artColors = null; return; }
+  artColors = sampleArtColors(img);
+}
+
+function drawEdgeViz(out: BeatOutput) {
+  const cv = $("edge-viz") as HTMLCanvasElement;
   const dpr = window.devicePixelRatio || 1;
   const w = cv.clientWidth, h = cv.clientHeight;
   if (!w || !h) return;
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
     cv.width = Math.round(w * dpr);
     cv.height = Math.round(h * dpr);
-    vizCtx = cv.getContext("2d");
-    vizCtx?.setTransform(dpr, 0, 0, dpr, 0, 0); // resize resets ctx state
+    edgeVizCtx = cv.getContext("2d");
+    edgeVizCtx?.setTransform(dpr, 0, 0, dpr, 0, 0); // resize resets ctx state
   }
-  vizCtx ??= cv.getContext("2d");
-  const c = vizCtx;
+  edgeVizCtx ??= cv.getContext("2d");
+  const c = edgeVizCtx;
   if (!c) return;
 
   c.clearRect(0, 0, w, h);
-  const bins = beatFeed.bins;
-  const bw = w / bins.length;
-  for (let i = 0; i < bins.length; i++) {
-    const v = bins[i];
-    const bh = Math.max(1.5, v * (h - 4));
-    // red → red-light with intensity; whole strip brightens on the beat pulse
-    const alpha = Math.min(1, 0.25 + v * 0.6 + out.pulse * 0.15);
-    c.fillStyle = `rgba(${Math.round(241 + 14 * v)},${Math.round(43 + 51 * v)},${Math.round(38 + 46 * v)},${alpha.toFixed(3)})`;
-    c.fillRect(i * bw + 1, h - bh, bw - 2, bh);
-  }
+  const pulseScale = 1 + out.pulse * 0.06; // matches the #art scale above
+  drawEdgeVisualizer(c, ART_BOX * pulseScale, ART_CORNER * pulseScale, ART_MAX_BAR, beatFeed.edgeBins, artColors);
 }
 
 // ── Lyrics ─────────────────────────────────────────────────────────────────
