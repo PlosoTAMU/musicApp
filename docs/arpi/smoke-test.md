@@ -387,3 +387,56 @@ rationale: `docs/arpi/sync-audit-4.md`.
 - [ ] Queue drag-reorder, swipe-delete, Clear All all replicate.
 - [ ] Downloads mirror both ways; rename/crop/delete propagate.
 - [ ] Lyrics, crop editor, per-track fx unaffected.
+
+---
+
+# Sync audit 5 — both apps open, control from either (2026-09-05)
+
+Findings + rationale: `docs/arpi/sync-audit-5.md`. Everything below needs the
+real pair (desktop + phone) on the same home secret.
+
+## Blockers
+
+**S1 — duration on the phone after a desktop track change:**
+- [ ] Desktop owns playback. On desktop click a different song.
+- [ ] Within ~1 s the phone's mini bar hairline and Now Playing slider must show the real length and a moving position. Pre-fix: 0:00 total and a dead bar for up to 30 s.
+- [ ] Same after "Play Here" on desktop while the phone watches.
+
+**S2 — cleared seat is paused where the owner was:**
+- [ ] Phone owns playback mid-song at ~1:00. Force-quit the phone app. Wait >45 s.
+- [ ] Desktop must read **paused** (play icon, EQ off) with the position near 1:00 (not the end of the track), banner "Paused — <song> · Play Here to continue".
+- [ ] Press ⏯ on desktop: it must continue from ~1:00. Pre-fix it started at the last second and skipped to the next song.
+- [ ] Reverse: desktop killed mid-song; the phone mini bar reads "PAUSED · TAP TO CONTINUE HERE"; tap → continues near the right spot.
+
+**S3 — owner comes back after its seat was cleared:**
+- [ ] Desktop owns playback and is PLAYING. Disconnect its network for ~60 s, reconnect.
+- [ ] Music must NOT pause on the desktop. Within a few seconds the phone must show the desktop as the owner again (role chip "Playing Here" on desktop).
+- [ ] Repeat with the desktop PAUSED before the blackout: on reconnect the desktop drops to "Remote" with the banner "Paused — … · Play Here to continue"; ⏯ continues locally.
+- [ ] Contested variant: desktop playing, network off; on the phone tap the song to play it there; reconnect desktop. The **phone keeps playing** and the desktop pauses (yields) — never both.
+- [ ] Laptop lid close/open while playing behaves like the first case.
+
+**S4 — Queue tab on the phone while desktop plays:**
+- [ ] Desktop owns playback with 3 songs queued. Phone Queue tab shows the current song under Now Playing, strip reads "PLAYING ON ANOTHER DEVICE", Up Next lists the 3 songs, no Previous section.
+- [ ] Tap the Now Playing row: desktop pauses; tap again: resumes. Nothing plays on the phone.
+- [ ] Tap an Up Next row: desktop plays it; it leaves the queue on both devices.
+- [ ] Reorder / swipe-delete / Clear All from the phone replicate to desktop.
+- [ ] Queue a song the phone lacks from desktop: it appears under "Not On This Device Yet"; if it is the CURRENT song, Now Playing shows it as a ghost row rather than an empty section.
+- [ ] Phone that was deposed earlier (had its own track): Queue tab shows the DESKTOP's song, not the stale local one.
+
+## Medium
+
+- [ ] **S5** Desktop owns playback. Phone Downloads list: the playing song is highlighted with the pause glyph/EQ. Tap it → desktop pauses (song does NOT restart). Tap again → resumes. Same in a playlist's detail view.
+- [ ] **S6** Desktop owns playback at 1×; on the phone set speed 1.5×. Desktop audio speeds up AND the phone's position keeps tracking (no drift/jump within the next 30 s). Then on desktop switch to another track and back: its saved fx must be the DESKTOP's, not 1.5×.
+- [ ] **S7** Desktop owns playback. Close the desktop window. Within ~2 s the phone must read idle/paused ("PAUSED · TAP TO CONTINUE HERE"), not "playing on another device" for 45 s. The window may linger ≤1.5 s before closing.
+- [ ] **S8** Phone owns playback, PAUSE it, then swipe to the home screen. Within ~2 s desktop reads "Paused — <song> · Play Here to continue" and ⏯ continues there. Reopen the phone and press play: it claims the session back and plays locally. Repeat while PLAYING: backgrounding must NOT release (music continues, desktop still shows the phone as owner).
+
+## Low / parity
+
+- [ ] **S12** Phone owns playback with a queue; press ⏮ twice quickly while desktop adds a song to the queue: both the re-queued current track and desktop's addition survive.
+- [ ] **S13** Kill the phone app, turn Wi-Fi off, launch and play a song, turn Wi-Fi on. Once connected, the desktop must show the phone as the owner without touching the phone again.
+
+## Regression sweep
+
+- [ ] Handover both directions still continues at the right position.
+- [ ] Deposed device still pauses immediately (no double audio).
+- [ ] Follower transport (⏯ ⏭ ⏮ seek, loop) still works both directions with the optimistic UI response.

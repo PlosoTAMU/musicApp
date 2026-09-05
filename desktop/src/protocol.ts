@@ -163,3 +163,34 @@ export const DEVICE_ID: string = (() => {
 
 export const FENCED = new Error("fenced");
 export const QUEUE_STALE = new Error("queueStale");
+/** A fenced write failed because the seat was CLEARED (owner "" at our own
+ *  epoch) rather than TAKEN (epoch bumped). A peer ran the expired-lease clear
+ *  while we were unreachable; nobody else owns the audio, so an owner that is
+ *  still playing may reclaim instead of yielding (sync-audit-5 S3). */
+export const SEAT_CLEARED = new Error("seatCleared");
+/** takeOver({ onlyIfIdle }) refused: another device holds the seat. */
+export const SEAT_TAKEN = new Error("seatTaken");
+
+/** The playback record a peer writes when it clears a dead owner's seat, or
+ *  an owner writes when it releases the seat voluntarily: paused, frozen where
+ *  the audio was last known to be. Freezing at `leaseMs` (last heartbeat)
+ *  errs early by ≤ one renewal period; leaving `playing: true` with a dead
+ *  anchor extrapolated to the END of the track, so the next "Play Here"
+ *  started at the last second and skipped the song (sync-audit-5 S2). */
+export const frozenPlayback = (
+  pb: PlaybackState, leaseMs: number, nowMs: number,
+): PlaybackState => ({
+  ...pb,
+  playing: false,
+  pos: positionAt(pb, leaseMs),
+  anchor: nowMs,
+});
+
+/** True when a fresh snapshot shows OUR epoch with an EMPTY seat — the
+ *  expired-lease clear ran against us (a takeover would have bumped the
+ *  epoch). Strictly "empty": a same-epoch doc naming a DIFFERENT device can't
+ *  be produced by any writer today, and if it ever were, "cleared" (keep
+ *  playing, reclaim) would be the wrong reading — the epoch gate demotes
+ *  instead. Pure so the coordinator gate is pinned by tests. */
+export const seatClearedUnderOwner = (s: SessionState, myEpoch: number): boolean =>
+  s.epoch === myEpoch && !s.ownerDeviceID;

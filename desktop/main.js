@@ -22,6 +22,23 @@ app.whenReady().then(() => {
   win.show();
   win.loadFile("index.html");
 
+  // Closing while this device owns the shared session: hold the window for
+  // up to 1.5 s so the renderer can hand the session back (paused at the
+  // current position) instead of leaving a phantom owner that the phone only
+  // gives up on after the 45 s lease (sync-audit-5 S7). destroy() skips a
+  // second `close`, so this runs exactly once.
+  let releasing = false;
+  win.on("close", e => {
+    if (releasing) return;
+    releasing = true;
+    e.preventDefault();
+    let done = false;
+    const finish = () => { if (done) return; done = true; clearTimeout(timer); win.destroy(); };
+    const timer = setTimeout(finish, 1500);
+    ipcMain.once("seat-released", finish);
+    win.webContents.send("release-seat");
+  });
+
   ipcMain.handle("pick-folder", async () => {
     const r = await dialog.showOpenDialog(win, { properties: ["openDirectory"] });
     return r.canceled ? undefined : r.filePaths[0];

@@ -35,6 +35,12 @@ final class SessionCoordinator: ObservableObject {
 
     /// Fired when we discover another device took over — engine must pause local audio.
     var onDeposed: (() -> Void)?
+    /// Fired when the seat was CLEARED under us (a peer ran the expired-lease
+    /// clear while we were unreachable — suspend, network blip), not TAKEN.
+    /// Role has already dropped to follower WITHOUT touching audio; the engine
+    /// decides whether to reclaim (still playing) or stay a follower
+    /// (sync-audit-5 S3).
+    var onSeatCleared: (() -> Void)?
     /// Fired for EVERY parsed snapshot. `isEcho` = authored by this device.
     /// Display (mirror) and join-resync must see echoes too — after a relaunch
     /// the first snapshot often carries our own last write, and filtering it
@@ -151,6 +157,15 @@ final class SessionCoordinator: ObservableObject {
         // state so the engine treats the snapshot as a follower would.
         if case .owner(let mine) = role, state.epoch > mine {
             demote(reason: "epoch \(state.epoch) > \(mine)")
+        } else if case .owner(let mine) = role, !snap.metadata.isFromCache,
+                  state.epoch == mine, state.ownerDeviceID.isEmpty {
+            // Our epoch, but the seat is empty: a peer's expired-lease clear
+            // ran while we were unreachable. Not a takeover — nothing else
+            // owns the audio — so don't pause it; let the engine reclaim if it
+            // is still playing. Without this the owner kept playing as a
+            // zombie until renewLease fenced (≤20 s) and then paused for no
+            // visible reason (sync-audit-5 S3). Twin of coordinator.ts.
+            seatCleared(reason: "snapshot")
         }
 
         // Crashed-owner recovery: the doc still names THIS device as owner but
@@ -268,9 +283,17 @@ final class SessionCoordinator: ObservableObject {
                 guard let cur = SessionState(snap: snap),
                       cur.ownerDeviceID == expectedOwner,
                       cur.leaseExpired else { return }
+                // The owner is dead, so nothing is playing: freeze the record
+                // where it was last known alive. Leaving `playing: true`
+                // behind made every follower extrapolate to the end of the
+                // track and the next "Play Here" start there (sync-audit-5
+                // S2). Twin of coordinator.ts clearExpiredOwnership.
+                var frozen = cur.playback.frozen(atLeaseMs: cur.leaseMs, nowMs: now)
+                frozen.rev = cur.playback.rev + 1
                 txn.updateData([
                     "ownerDeviceID": "",
                     "leaseMs": now,
+                    "playback": frozen.dict,
                     "updatedBy": dev,
                 ], forDocument: ref)
             }
@@ -280,11 +303,65 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
+    /// Voluntary release — this device is about to stop heartbeating (iOS is
+    /// suspending a PAUSED owner) and still holds the seat. Empties the seat
+    /// and writes the final paused state at the current position, so the
+    /// other devices read "paused · Play Here to continue" immediately instead
+    /// of a phantom owner for leaseTTLMs (sync-audit-5 S8). Fenced: a takeover
+    /// that landed meanwhile wins and this is a no-op. Role drops to follower
+    /// first so nothing else publishes into the reign we are giving up. Twin
+    /// of coordinator.ts releaseSeat.
+    func releaseSeat(final: PlaybackState) async {
+        guard case .owner(let myEpoch) = role, let ref = sessionRef else { return }
+        let dev = SyncDevice.id
+        let now = ServerClock.shared.nowMs
+        dropOwnership()
+        let st: PlaybackState = {
+            var s = final
+            s.isPlaying = false
+            s.anchorMs = now
+            return s
+        }()
+        do {
+            try await db.txn { txn in
+                let snap = try txn.getDocument(ref)
+                guard let cur = SessionState(snap: snap),
+                      cur.epoch == myEpoch, cur.ownerDeviceID == dev else { return }
+                var out = st
+                out.rev = cur.playback.rev + 1
+                txn.updateData([
+                    "ownerDeviceID": "",
+                    "leaseMs": now,
+                    "playback": out.dict,
+                    "updatedBy": dev,
+                ], forDocument: ref)
+            }
+            print("👑→👤 [Sync] Released seat (paused owner going to background)")
+        } catch {
+            // We already dropped to follower but the doc may still name us at
+            // a live lease. Re-arm the crashed-owner self-release so the next
+            // fresh snapshot clears it instead of waiting for a peer's F3.
+            print("👑→👤 [Sync] Seat release failed: \(error)")
+            checkedStaleSelfOwnership = false
+        }
+    }
+
+    /// Why a fenced owner write failed: the seat was CLEARED at our epoch (a
+    /// peer's expired-lease clear — reclaimable) vs. TAKEN (epoch bumped, or
+    /// someone else in the seat — yield). Twin of coordinator.ts fenceError.
+    nonisolated private static func fenceError(_ cur: SessionState, myEpoch: Int) -> SyncError {
+        cur.epoch == myEpoch && cur.ownerDeviceID.isEmpty ? .seatCleared : .fenced
+    }
+
     // MARK: - Takeover (fenced ownership transfer)
 
     /// Returns the *pre-takeover* state so the caller can start local playback at
     /// the extrapolated position — this is the handover continuity guarantee.
-    func takeOver() async throws -> SessionState {
+    ///
+    /// `onlyIfIdle`: refuse (`.seatTaken`) when any other device holds the
+    /// seat. Used by the reclaim-after-clear path — a device that legitimately
+    /// took over while we were away must not be deposed by our return.
+    func takeOver(onlyIfIdle: Bool = false) async throws -> SessionState {
         guard let ref = sessionRef else { throw SyncError.noSession }
         let dev = SyncDevice.id
         let now = ServerClock.shared.nowMs
@@ -292,6 +369,9 @@ final class SessionCoordinator: ObservableObject {
         let pre: SessionState = try await db.txn { txn in
             let snap = try txn.getDocument(ref)
             guard let cur = SessionState(snap: snap) else { throw SyncError.corrupt }
+            if onlyIfIdle, !cur.ownerDeviceID.isEmpty, cur.ownerDeviceID != dev {
+                throw SyncError.seatTaken
+            }
             txn.updateData([
                 "epoch": cur.epoch + 1,
                 "ownerDeviceID": dev,
@@ -320,9 +400,9 @@ final class SessionCoordinator: ObservableObject {
         do {
             try await db.txn { txn in
                 let snap = try txn.getDocument(ref)
-                guard let cur = SessionState(snap: snap),
-                      cur.epoch == myEpoch, cur.ownerDeviceID == dev else {
-                    throw SyncError.fenced
+                guard let cur = SessionState(snap: snap) else { throw SyncError.fenced }
+                guard cur.epoch == myEpoch, cur.ownerDeviceID == dev else {
+                    throw Self.fenceError(cur, myEpoch: myEpoch)
                 }
                 var st = state
                 st.rev = cur.playback.rev + 1
@@ -330,6 +410,8 @@ final class SessionCoordinator: ObservableObject {
             }
             outbox = nil
             retryDelay = 2
+        } catch SyncError.seatCleared {
+            seatCleared(reason: "fenced write")
         } catch is SyncError {
             demote(reason: "fenced write")
         } catch {
@@ -403,12 +485,14 @@ final class SessionCoordinator: ObservableObject {
         do {
             try await db.txn { txn in
                 let snap = try txn.getDocument(ref)
-                guard let cur = SessionState(snap: snap),
-                      cur.epoch == myEpoch, cur.ownerDeviceID == dev else {
-                    throw SyncError.fenced
+                guard let cur = SessionState(snap: snap) else { throw SyncError.fenced }
+                guard cur.epoch == myEpoch, cur.ownerDeviceID == dev else {
+                    throw Self.fenceError(cur, myEpoch: myEpoch)
                 }
                 txn.updateData(["leaseMs": now], forDocument: ref)
             }
+        } catch SyncError.seatCleared {
+            seatCleared(reason: "fenced lease")
         } catch is SyncError {
             demote(reason: "fenced lease")
         } catch {
@@ -422,10 +506,23 @@ final class SessionCoordinator: ObservableObject {
     private func demote(reason: String) {
         guard role.isOwner else { return }
         print("👑→👤 [Sync] Deposed (\(reason))")
+        dropOwnership()
+        onDeposed?()
+    }
+
+    /// Seat cleared, not taken: drop to follower WITHOUT the deposed pause —
+    /// no other device holds the audio. The engine reclaims if still playing.
+    private func seatCleared(reason: String) {
+        guard role.isOwner else { return }
+        print("👑→👤 [Sync] Seat cleared while unreachable (\(reason))")
+        dropOwnership()
+        onSeatCleared?()
+    }
+
+    private func dropOwnership() {
         role = .follower
         stopLease()
         retryTask?.cancel()
-        outbox = nil          // our buffered state lost the race — discard, never replay
-        onDeposed?()
+        outbox = nil          // our buffered state belongs to a reign that ended — discard, never replay
     }
 }

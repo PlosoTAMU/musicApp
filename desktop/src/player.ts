@@ -88,6 +88,10 @@ export class LocalPlayer {
   loop = false;
   onEnded?: () => void;
   onChange?: () => void;
+  /** Fires when the element learns (or refines) the track length — the engine
+   *  republishes so followers get a real `dur` instead of the 0 the first
+   *  publish carried (metadata isn't loaded yet when play() returns). */
+  onDuration?: () => void;
   /** Fires whenever play() starts a track — ui.ts restores per-track fx here
    *  (twin of iOS applyTrackSettings being called from play(_:)). */
   onTrack?: (t: LocalTrack) => void;
@@ -118,6 +122,7 @@ export class LocalPlayer {
     this.el.addEventListener("ended", () => this.onEnded?.());
     this.el.addEventListener("play", () => this.onChange?.());
     this.el.addEventListener("pause", () => this.onChange?.());
+    this.el.addEventListener("durationchange", () => { this.onChange?.(); this.onDuration?.(); });
     this.el.addEventListener("timeupdate", () => {
       if (this.cropEndMs !== undefined && this.current && !this.endFired
           && this.el.currentTime * 1000 >= this.cropEndMs) {

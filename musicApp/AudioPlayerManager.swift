@@ -1521,6 +1521,11 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 // Put current track back at the front of the queue
                 if let current = currentTrack {
                     queue.insert(current, at: 0)
+                    // Report it as intent (pull it out of wherever it sits,
+                    // plant it at the head) so the shared queue gets a
+                    // rebasable op instead of the debounced LWW replaceAll —
+                    // twin of desktop goPrevious' insert (sync-audit-5).
+                    onQueueIntent?(.injectFront([current], removing: [current.id]))
                     // If current is a playlist track, restore the index
                     if let currentIdx = currentPlaylist.firstIndex(where: { $0.id == current.id }) {
                         currentIndex = currentIdx
@@ -1541,6 +1546,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
             if !previousQueue.isEmpty {
                 if let current = currentTrack {
                     queue.insert(current, at: 0)
+                    onQueueIntent?(.injectFront([current], removing: [current.id]))
                 }
                 let previousTrack = previousQueue.removeLast()
                 play(previousTrack)

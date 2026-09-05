@@ -17,6 +17,13 @@ enum SyncError: Error {
     /// Auth failed with a cause worth showing the user verbatim — twin of the
     /// messages desktop firebase.ts's authError produces.
     case auth(String)
+    /// A fenced owner write failed because the seat was CLEARED at our own
+    /// epoch (a peer ran the expired-lease clear while we were unreachable),
+    /// not TAKEN (epoch bumped). Nobody else owns the audio, so an owner that
+    /// is still playing may reclaim instead of yielding (sync-audit-5 S3).
+    case seatCleared
+    /// takeOver(onlyIfIdle:) refused: another device holds the seat.
+    case seatTaken
 }
 
 extension SyncError: LocalizedError {
@@ -31,6 +38,8 @@ extension SyncError: LocalizedError {
         case .badCode: return "That code is invalid or expired"
         case .codeCollision: return "Code collision — try again"
         case .queueStale: return "Queue changed elsewhere while offline"
+        case .seatCleared: return "Session was reset while this device was offline"
+        case .seatTaken: return "Another device took over playback"
         }
     }
 }
@@ -236,6 +245,23 @@ struct PlaybackState: Equatable {
         let elapsed = max(0, now - anchorMs)
         let raw = positionMs + Int(Double(elapsed) * Double(rateX1000) / 1000.0)
         return durationMs > 0 ? min(raw, durationMs) : raw
+    }
+
+    /// The record a peer writes when it clears a dead owner's seat, or an
+    /// owner writes when it releases the seat voluntarily: PAUSED, frozen
+    /// where the audio was last known to be — the owner's last heartbeat.
+    /// Leaving `isPlaying: true` behind with a dead anchor made every follower
+    /// extrapolate to the END of the track, and the next "Play Here" started
+    /// on the last second and skipped the song (sync-audit-5 S2). Freezing at
+    /// the heartbeat errs early by at most one renewal period, which replays a
+    /// few seconds instead of skipping them. Verbatim twin of protocol.ts
+    /// `frozenPlayback`, pinned by desktop/tests/syncAudit5-seat.test.ts.
+    func frozen(atLeaseMs leaseMs: Int, nowMs: Int) -> PlaybackState {
+        var f = self
+        f.positionMs = positionMs(atServerMs: leaseMs)
+        f.anchorMs = nowMs
+        f.isPlaying = false
+        return f
     }
 
     var dict: [String: Any] {

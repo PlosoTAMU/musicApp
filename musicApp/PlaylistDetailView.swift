@@ -67,6 +67,7 @@ struct PlaylistDetailView: View {
     @ObservedObject var playlistManager: PlaylistManager
     @ObservedObject var downloadManager: DownloadManager
     var audioPlayer: AudioPlayerManager
+    @ObservedObject var syncManager: SyncSessionManager
     @State private var showAddSongs = false
     @State private var totalDuration: TimeInterval = 0
     @State private var currentPlayingTrackID: UUID?
@@ -77,7 +78,15 @@ struct PlaylistDetailView: View {
             downloadManager.getDownload(byID: id)
         }
     }
-    
+
+    private var isRemote: Bool { syncManager.engine.isRemoteControlled }
+    private var effPlayingID: UUID? {
+        isRemote ? syncManager.engine.mirrorTrack?.id : currentPlayingTrackID
+    }
+    private var effPlaying: Bool {
+        isRemote ? (syncManager.engine.mirror?.isPlaying ?? false) : isAudioPlaying
+    }
+
     var body: some View {
         ZStack {
             AppBackground()
@@ -118,12 +127,23 @@ struct PlaylistDetailView: View {
                     ForEach(Array(tracks.enumerated()), id: \.element.id) { index, download in
                         PlaylistSongRow(
                             download: download,
-                            isCurrentlyPlaying: currentPlayingTrackID == download.id,
-                            isPlaying: isAudioPlaying,
+                            isCurrentlyPlaying: effPlayingID == download.id,
+                            isPlaying: effPlaying,
                             playlist: playlist,
                             onTap: {
-                                let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
-                                audioPlayer.play(track)
+                                if effPlayingID == download.id {
+                                    if isRemote {
+                                        if effPlaying { syncManager.engine.requestPause() }
+                                        else { syncManager.engine.requestPlay() }
+                                    } else if audioPlayer.isPlaying {
+                                        audioPlayer.pause()
+                                    } else {
+                                        audioPlayer.resume()
+                                    }
+                                } else {
+                                    let track = Track(id: download.id, name: download.name, url: download.url, folderName: playlist.name, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)
+                                    audioPlayer.play(track)
+                                }
                             },
                             onRename: { newName in
                                 downloadManager.renameDownload(download, newName: newName)
@@ -173,7 +193,7 @@ struct PlaylistDetailView: View {
                 .environment(\.editMode, .constant(.active))
                 .scrollIndicators(.visible)
                 .safeAreaInset(edge: .bottom) {
-                    Color.clear.frame(height: currentPlayingTrackID != nil ? 65 : 0)
+                    Color.clear.frame(height: (currentPlayingTrackID != nil || isRemote) ? 65 : 0)
                 }
             }
         }

@@ -9,6 +9,9 @@ struct ContentView: View {
     @StateObject private var downloadManager: DownloadManager
     @StateObject private var playlistManager = PlaylistManager()
     @StateObject private var syncManager: SyncSessionManager
+    // A paused owner going to the background hands its seat back before iOS
+    // suspends it (sync-audit-5 S8) — see SyncSessionManager.appDidEnterBackground.
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showFolderPicker = false
     @State private var showYouTubeDownload = false
     @State private var showNowPlaying = false
@@ -65,7 +68,8 @@ struct ContentView: View {
                 PlaylistsView(
                     playlistManager: playlistManager,
                     downloadManager: downloadManager,
-                    audioPlayer: audioPlayer
+                    audioPlayer: audioPlayer,
+                    syncManager: syncManager
                 )
                 .tabItem {
                     Label("Playlists", systemImage: "music.note.list")
@@ -132,7 +136,7 @@ struct ContentView: View {
                         .padding(.bottom, 8)
                 }
                 
-                if audioPlayer.currentTrack != nil || syncManager.engine.isRemoteControlled {
+                if audioPlayer.currentTrack != nil || syncManager.engine.isRemoteControlled || syncManager.engine.idleResumable {
                     // Slim "next song" bar nested above the mini player. Renders
                     // nothing when there's no next track, so the mini bar sits
                     // alone in that case.
@@ -209,6 +213,9 @@ struct ContentView: View {
                     processIncomingShares()
                 }
             }
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .background { syncManager.appDidEnterBackground() }
         }
         // Library changed (download finished, rename, delete) → refresh Siri's
         // song vocabulary. Launch-only registration meant a song downloaded
@@ -463,6 +470,9 @@ struct MiniPlayerBar: View {
     // an array scan plus a disk `stat`, and the result never changes for the
     // same track.
     @State private var cachedThumbnailPath: String?
+    /// Guards against double-firing "continue here" while the takeover is
+    /// still in flight.
+    @State private var continuing = false
 
     private var progress: CGFloat {
         guard audioPlayer.duration > 0 else { return 0 }
@@ -471,25 +481,48 @@ struct MiniPlayerBar: View {
 
     private var isRemote: Bool { syncManager.engine.isRemoteControlled }
     private var remotePB: PlaybackState? { syncManager.engine.mirror }
-    /// Local track when playing here; resolved remote track when following.
+    /// Nobody owns the session but it holds a paused track and this phone has
+    /// no local current track — offer "continue here" instead of the usual
+    /// remote/local display. Mutually exclusive with isRemote (one requires
+    /// an owner, the other requires none).
+    private var isIdleResumable: Bool { syncManager.engine.idleResumable }
+    /// Local track when playing here; resolved remote track when following
+    /// or when offering to continue an idle session.
     private var activeTrack: Track? {
-        isRemote ? syncManager.engine.mirrorTrack : audioPlayer.currentTrack
+        if isIdleResumable { return syncManager.engine.mirrorTrack }
+        return isRemote ? syncManager.engine.mirrorTrack : audioPlayer.currentTrack
     }
     private var displayName: String {
-        isRemote ? (remotePB?.track?.name ?? "Unknown")
-                 : (audioPlayer.currentTrack?.name ?? "Unknown")
+        if isIdleResumable { return remotePB?.track?.name ?? "Unknown" }
+        return isRemote ? (remotePB?.track?.name ?? "Unknown")
+                         : (audioPlayer.currentTrack?.name ?? "Unknown")
     }
     private var displayFolder: String {
-        isRemote ? (remotePB?.track?.folder ?? "")
-                 : (audioPlayer.currentTrack?.folderName ?? "")
+        if isIdleResumable {
+            return syncManager.engine.mirrorTrack == nil ? "NOT ON THIS DEVICE YET" : "PAUSED · TAP TO CONTINUE HERE"
+        }
+        return isRemote ? (remotePB?.track?.folder ?? "")
+                         : (audioPlayer.currentTrack?.folderName ?? "")
     }
     private var displayIsPlaying: Bool {
-        isRemote ? (remotePB?.isPlaying ?? false) : audioPlayer.isPlaying
+        if isIdleResumable { return false }
+        return isRemote ? (remotePB?.isPlaying ?? false) : audioPlayer.isPlaying
     }
     private func remoteProgress(atMs now: Int) -> CGFloat {
         guard let pb = remotePB, pb.durationMs > 0 else { return 0 }
         let pos = Double(pb.positionMs(atServerMs: now))
         return CGFloat(min(max(pos / Double(pb.durationMs), 0), 1))
+    }
+    /// Takes over playback on this phone at the idle session's frozen
+    /// position. No-op while a takeover is already in flight, or when the
+    /// session's track hasn't replicated to this phone yet (a ghost).
+    private func continueHere() {
+        guard !continuing, syncManager.engine.mirrorTrack != nil else { return }
+        continuing = true
+        Task { @MainActor in
+            defer { continuing = false }
+            try? await syncManager.playHere()
+        }
     }
 
     /// Resolve artwork the same way the lists do — through the Download
@@ -564,14 +597,20 @@ struct MiniPlayerBar: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    // NowPlayingView animates its own slide-up on appear.
-                    showNowPlaying = true
+                    if isIdleResumable {
+                        continueHere()
+                    } else {
+                        // NowPlayingView animates its own slide-up on appear.
+                        showNowPlaying = true
+                    }
                 }
 
                 Spacer()
-                
+
                 Button {
-                    if isRemote {
+                    if isIdleResumable {
+                        continueHere()
+                    } else if isRemote {
                         if displayIsPlaying { syncManager.engine.requestPause() }
                         else { syncManager.engine.requestPlay() }
                     } else if audioPlayer.isPlaying {
@@ -587,27 +626,35 @@ struct MiniPlayerBar: View {
                         .shadow(color: .black.opacity(0.3), radius: 2)
                 }
                 .buttonStyle(.plain)
+                // Greyed while a takeover is in flight, or when the idle
+                // session's track hasn't replicated here yet (nothing to play).
+                .disabled(continuing || (isIdleResumable && syncManager.engine.mirrorTrack == nil))
 
-                Button {
-                    if isRemote { syncManager.engine.requestNext() }
-                    else { audioPlayer.next() }
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundColor(Theme.bone)
-                        .frame(width: 32, height: 36)
-                        .shadow(color: .black.opacity(0.3), radius: 2)
+                if !isIdleResumable {
+                    Button {
+                        if isRemote { syncManager.engine.requestNext() }
+                        else { audioPlayer.next() }
+                    } label: {
+                        Image(systemName: "forward.fill")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundColor(Theme.bone)
+                            .frame(width: 32, height: 36)
+                            .shadow(color: .black.opacity(0.3), radius: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(continuing)
                 }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 12)
         }
         .frame(height: 58)
         // Live progress hairline along the bottom edge
         .overlay(alignment: .bottomLeading) {
-            if isRemote {
-                // No local player ticks while following — extrapolate from the
-                // mirror on a visible-only 0.5 s timeline.
+            if isRemote || isIdleResumable {
+                // No local player ticks while following (or while offering to
+                // continue a paused idle session) — extrapolate from the
+                // mirror on a visible-only 0.5 s timeline. While idle-resumable
+                // the mirror is paused, so this just shows the frozen position.
                 TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                     progressHairline(remoteProgress(atMs: ServerClock.shared.nowMs))
                 }

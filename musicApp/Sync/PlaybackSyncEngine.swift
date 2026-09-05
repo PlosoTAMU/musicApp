@@ -65,6 +65,18 @@ final class PlaybackSyncEngine: ObservableObject {
         return true
     }
 
+    /// Nobody owns the session but it still holds a paused track — the owner
+    /// quit, went to the background while paused, or died and a peer froze
+    /// its position — and this device isn't already showing that track
+    /// locally. The UI offers "continue here"; takeOverHere resumes at the
+    /// frozen position. Twin of desktop's "Paused — X · Play Here to
+    /// continue" banner (sync-audit-5 S8).
+    var idleResumable: Bool {
+        guard coordinator.role == .follower, let s = coordinator.remote,
+              s.ownerDeviceID.isEmpty, s.playback.track != nil else { return false }
+        return player.currentTrack == nil
+    }
+
     /// Remote display mode is on, but the owner's lease has lapsed — it is not
     /// draining commands, so the transport here is inert until someone takes
     /// over. Twin of desktop ui.ts's `#owner-dead` chip / dead-owner banner.
@@ -141,13 +153,26 @@ final class PlaybackSyncEngine: ObservableObject {
             self?.player.pause()
             self?.commands.stopListening()
         }
+        // Seat cleared while we were unreachable (suspend / network blip) and
+        // nobody took it: if audio is still coming out of this device it IS
+        // the owner — reclaim rather than yield. Only an EMPTY seat, though:
+        // a device that took over while we were away keeps it and we pause.
+        // Paused ⇒ simply stay a follower; the session reads "paused at
+        // <pos>, Play Here to continue" (sync-audit-5 S3). Command listening
+        // stops via the $role sink.
+        coordinator.onSeatCleared = { [weak self] in
+            guard let self, self.player.isPlaying else { return }
+            self.claimSessionForLocalPlayback(onlyIfIdle: true)
+        }
         coordinator.onSessionState = { [weak self] state, isEcho in
             self?.handleRemote(state, isEcho: isEcho)
         }
         coordinator.$role
             .removeDuplicates()
-            .sink { [weak self] role in
+            .scan((prev: SyncRole.none, cur: SyncRole.none)) { acc, new in (prev: acc.cur, cur: new) }
+            .sink { [weak self] pair in
                 guard let self else { return }
+                let role = pair.cur
                 if role.isOwner {
                     self.commands.startListening { [weak self] cmd in
                         Task { @MainActor in self?.applyCommand(cmd) }
@@ -157,7 +182,19 @@ final class PlaybackSyncEngine: ObservableObject {
                     // Attach lands us in .follower — if local audio is ALREADY
                     // playing (user played before connecting), the isPlaying
                     // observer never fires (no transition), so claim here.
-                    if role == .follower { self.reconcileLocalPlayback() }
+                    //
+                    // Deferred one turn: @Published emits in willSet, so inside
+                    // this sink `coordinator.role` still reads the OLD value
+                    // and reconcile's own role guard saw `.none` and bailed —
+                    // the play-before-connect claim never actually ran
+                    // (sync-audit-5 S13). Only on the ATTACH transition:
+                    // owner→follower is a depose (audio pauses) or a seat
+                    // clear (onSeatCleared reclaims) — neither may re-claim
+                    // from here, or a just-deposed owner would steal the seat
+                    // back before its own pause landed.
+                    if role == .follower, pair.prev == .none {
+                        Task { @MainActor in self.reconcileLocalPlayback() }
+                    }
                 }
             }
             .store(in: &bag)
@@ -522,6 +559,10 @@ final class PlaybackSyncEngine: ObservableObject {
         Task { await coordinator.publishPlayback(state) }
     }
 
+    /// The owner-side record as it would be published right now — for a
+    /// voluntary seat release (SyncSessionManager.appDidEnterBackground).
+    func currentPlaybackSnapshot() -> PlaybackState { snapshotState() }
+
     // MARK: - Timers
 
     private func wireTimers() {
@@ -540,20 +581,40 @@ final class PlaybackSyncEngine: ObservableObject {
     // reconnect, isPlaying) — one takeover txn at a time.
     private var claimInFlight = false
 
-    private func claimSessionForLocalPlayback() {
-        guard !claimInFlight else { return }
+    /// `onlyIfIdle`: the reclaim-after-clear path — a device that took over
+    /// while we were unreachable keeps the seat, and WE yield (pause) rather
+    /// than double-play. The implicit "play here" claims keep the default and
+    /// depose whoever holds it, as they always have.
+    private func claimSessionForLocalPlayback(onlyIfIdle: Bool = false) {
+        guard !claimInFlight else {
+            // A reclaim that lands behind another claim must not be dropped —
+            // this device would keep playing audibly as a non-owner with an
+            // empty seat. Re-run it once the in-flight claim settles.
+            if onlyIfIdle { pendingReclaim = true }
+            return
+        }
         claimInFlight = true
         Task { @MainActor in
-            defer { claimInFlight = false }
             do {
-                _ = try await coordinator.takeOver()
+                _ = try await coordinator.takeOver(onlyIfIdle: onlyIfIdle)
                 publishNow()
+            } catch SyncError.seatTaken {
+                print("[PlaybackSyncEngine] seat taken while away — yielding")
+                player.pause()
             } catch {
                 print("[PlaybackSyncEngine] local playback takeover failed:", error)
                 publishTrigger.send()
             }
+            claimInFlight = false
+            if pendingReclaim {
+                pendingReclaim = false
+                if !coordinator.role.isOwner, player.isPlaying {
+                    claimSessionForLocalPlayback(onlyIfIdle: true)
+                }
+            }
         }
     }
+    private var pendingReclaim = false
 
 
 

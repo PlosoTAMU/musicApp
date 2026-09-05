@@ -5,6 +5,7 @@ struct PlaylistsView: View {
     @ObservedObject var playlistManager: PlaylistManager
     @ObservedObject var downloadManager: DownloadManager
     var audioPlayer: AudioPlayerManager
+    @ObservedObject var syncManager: SyncSessionManager
     @State private var showCreatePlaylist = false
     @State private var refreshID = UUID()
     @State private var cachedDurations: [UUID: TimeInterval] = [:]
@@ -32,7 +33,8 @@ struct PlaylistsView: View {
                                         playlist: playlist,
                                         playlistManager: playlistManager,
                                         downloadManager: downloadManager,
-                                        audioPlayer: audioPlayer
+                                        audioPlayer: audioPlayer,
+                                        syncManager: syncManager
                                     )
                                 } label: {
                                     PlaylistCardLabel(
@@ -80,7 +82,7 @@ struct PlaylistsView: View {
             }
             .navigationTitle("Playlists")
             .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: hasCurrentTrack ? 65 : 0)
+                Color.clear.frame(height: (hasCurrentTrack || syncManager.engine.isRemoteControlled) ? 65 : 0)
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {

@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import CryptoKit
+import UIKit
 import FirebaseCore
 import FirebaseAuth
 import FirebaseFirestore
@@ -33,6 +34,16 @@ final class SyncSessionManager: ObservableObject {
 
     private static let secretKey = "sync.home.secret"
     private var forwarding = Set<AnyCancellable>()
+    /// Background-execution assertion held while a voluntary seat release is
+    /// in flight (appDidEnterBackground). Ended on completion OR expiry — an
+    /// expired task that is never ended gets the app terminated.
+    private var releaseBgTask: UIBackgroundTaskIdentifier = .invalid
+
+    private func endReleaseTask() {
+        guard releaseBgTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(releaseBgTask)
+        releaseBgTask = .invalid
+    }
 
     init(player: AudioPlayerManager, library: @escaping () -> [Track]) {
         if FirebaseApp.app() == nil { FirebaseApp.configure() }
@@ -277,6 +288,30 @@ final class SyncSessionManager: ObservableObject {
     /// Handoff: this device becomes the owner and audio continues here.
     func playHere() async throws {
         try await engine.takeOverHere()
+    }
+
+    /// The app is leaving the foreground. An owner that is PAUSED gets
+    /// suspended by iOS within seconds (no background audio to keep it alive),
+    /// stops heartbeating, and reads as a dead owner to every other device for
+    /// leaseTTLMs — a phantom "playing on your other device" nobody can
+    /// control. Hand the seat back now, paused at the current position, so the
+    /// desktop reads "Paused · Play Here to continue" at once (sync-audit-5
+    /// S8). A PLAYING owner keeps running under background audio and keeps the
+    /// seat. Pressing play here later re-claims through the normal isPlaying
+    /// path (a fresh epoch), so nothing is lost. Wrapped in a background task
+    /// so the transaction gets its round trip before suspension.
+    func appDidEnterBackground() {
+        guard coordinator.role.isOwner, !player.isPlaying else { return }
+        let final = engine.currentPlaybackSnapshot()
+        let coordinator = self.coordinator
+        endReleaseTask()   // a previous release still pending → don't stack
+        releaseBgTask = UIApplication.shared.beginBackgroundTask(withName: "sync.releaseSeat") { [weak self] in
+            self?.endReleaseTask()
+        }
+        Task { @MainActor [weak self] in
+            await coordinator.releaseSeat(final: final)
+            self?.endReleaseTask()
+        }
     }
 
     /// Forget the home secret; back to setup.

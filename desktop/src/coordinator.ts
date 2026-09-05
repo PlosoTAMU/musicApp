@@ -11,7 +11,8 @@ import {
   runTransaction, updateDoc, deleteField, Unsubscribe,
 } from "firebase/firestore";
 import {
-  SessionState, PlaybackState, DEVICE_ID, FENCED, sameId, leaseExpired,
+  SessionState, PlaybackState, DEVICE_ID, FENCED, SEAT_CLEARED, SEAT_TAKEN,
+  sameId, leaseExpired, frozenPlayback, seatClearedUnderOwner,
 } from "./protocol";
 import { serverClock } from "./serverClock";
 
@@ -37,6 +38,11 @@ export class SessionCoordinator {
   demo = false;
 
   onDeposed?: () => void;
+  /** The seat was CLEARED under us (a peer ran the expired-lease clear while
+   *  we were unreachable — sleep, network blip), not TAKEN. Role has already
+   *  dropped to follower without touching audio; the engine decides whether to
+   *  reclaim (still playing) or stay a follower (sync-audit-5 S3). */
+  onSeatCleared?: () => void;
   /** Every parsed snapshot, echoes included. `isEcho` = authored by this
    *  device. After a relaunch the first snapshot is often our own last write —
    *  filtering it out starved the join-resync ping and the queue mirror
@@ -157,6 +163,15 @@ export class SessionCoordinator {
         this.remote = state;
         if (this.role === "owner" && state.epoch > this.myEpoch) {
           this.demote(`epoch ${state.epoch} > ${this.myEpoch}`);
+        } else if (this.role === "owner" && !snap.metadata.fromCache
+                   && seatClearedUnderOwner(state, this.myEpoch)) {
+          // Our epoch, but the seat is empty: a peer's expired-lease clear
+          // ran while we were unreachable. Not a takeover — nothing else owns
+          // the audio — so don't pause it; let the engine reclaim if it is
+          // still playing. Without this the owner kept playing as a zombie
+          // until renewLease fenced (≤20 s) and then paused for no visible
+          // reason (sync-audit-5 S3).
+          this.seatCleared("snapshot");
         }
         // Crashed-owner recovery: doc names THIS device as owner but we booted
         // as a follower — a previous process died mid-reign. Release once, on
@@ -219,7 +234,10 @@ export class SessionCoordinator {
 
   // ── Takeover (returns pre-takeover state for handover continuity) ─────
 
-  async takeOver(): Promise<SessionState> {
+  /** `onlyIfIdle`: refuse (SEAT_TAKEN) when any other device holds the seat.
+   *  Used by the reclaim-after-clear path — a device that legitimately took
+   *  over while we were away must not be deposed by our return. */
+  async takeOver(onlyIfIdle = false): Promise<SessionState> {
     if (this.demo) { this.role = "owner"; return this.remote!; }
     const ref = this.ref;
     if (!ref) throw new Error("not connected");
@@ -228,6 +246,8 @@ export class SessionCoordinator {
       const snap = await txn.get(ref);
       const cur = snap.data() as SessionState | undefined;
       if (!cur) throw new Error("corrupt session");
+      if (onlyIfIdle && cur.ownerDeviceID && !sameId(cur.ownerDeviceID, DEVICE_ID))
+        throw SEAT_TAKEN;
       txn.update(ref, {
         epoch: cur.epoch + 1, ownerDeviceID: DEVICE_ID,
         leaseMs: now, "playback.rev": 0, updatedBy: DEVICE_ID,
@@ -261,7 +281,7 @@ export class SessionCoordinator {
         const snap = await txn.get(ref);
         const cur = snap.data() as SessionState | undefined;
         if (!cur || cur.epoch !== epoch || !sameId(cur.ownerDeviceID, DEVICE_ID))
-          throw FENCED;
+          throw fenceError(cur, epoch);
         txn.update(ref, {
           playback: { ...state, rev: cur.playback.rev + 1 },
           updatedBy: DEVICE_ID,
@@ -269,7 +289,8 @@ export class SessionCoordinator {
       });
       this.outbox = undefined; this.retryDelay = 2000;
     } catch (e) {
-      if (e === FENCED) this.demote("fenced write");
+      if (e === SEAT_CLEARED) this.seatCleared("fenced write");
+      else if (e === FENCED) this.demote("fenced write");
       else { this.outbox = state; this.scheduleRetry(); }
     }
   }
@@ -289,13 +310,56 @@ export class SessionCoordinator {
         const cur = snap.data() as SessionState | undefined;
         if (!cur || cur.ownerDeviceID !== expectedOwner
             || !leaseExpired(cur, serverClock.nowMs)) return;
+        const now = serverClock.nowMs;
+        // The owner is dead, so nothing is playing: freeze the record where
+        // it was last known alive. Leaving `playing: true` behind made every
+        // follower extrapolate to the end of the track and the next "Play
+        // Here" start there (sync-audit-5 S2). Twin of SessionCoordinator.swift.
+        const frozen = frozenPlayback(cur.playback, cur.leaseMs, now);
         txn.update(ref, {
           ownerDeviceID: "",
-          leaseMs: serverClock.nowMs,
+          leaseMs: now,
+          playback: { ...frozen, rev: cur.playback.rev + 1 },
           updatedBy: DEVICE_ID,
         });
       });
     } catch { /* best-effort */ }
+  }
+
+  /** Voluntary release — this device is about to stop heartbeating (app quit)
+   *  and is still the owner. Empties the seat and writes the final PAUSED
+   *  state at the current position, so the other devices read "paused, Play
+   *  Here to continue" immediately instead of a phantom owner for LEASE_TTL
+   *  (sync-audit-5 S7). Fenced: a takeover that landed meanwhile wins and
+   *  this becomes a no-op. Role drops to follower first so nothing else
+   *  publishes into the reign we are giving up. */
+  async releaseSeat(final: PlaybackState) {
+    const ref = this.ref;
+    if (this.demo || this.role !== "owner" || !ref) return;
+    const epoch = this.myEpoch;
+    this.dropOwnership();
+    const now = serverClock.nowMs;
+    try {
+      await runTransaction(this.db, async txn => {
+        const snap = await txn.get(ref);
+        const cur = snap.data() as SessionState | undefined;
+        if (!cur || cur.epoch !== epoch || !sameId(cur.ownerDeviceID, DEVICE_ID)) return;
+        txn.update(ref, {
+          ownerDeviceID: "",
+          leaseMs: now,
+          playback: { ...final, playing: false, anchor: now, rev: cur.playback.rev + 1 },
+          updatedBy: DEVICE_ID,
+        });
+      });
+      console.log("[sync] released seat (quit)");
+    } catch (e) {
+      // Already a follower locally, but the doc may still name us at a live
+      // lease. Re-arm the crashed-owner self-release so the next fresh
+      // snapshot clears it instead of waiting for a peer's expired-lease clear.
+      console.log("[sync] seat release failed", e);
+      this.staleChecked = false;
+    }
+    this.onChange?.();
   }
 
   private scheduleRetry() {
@@ -346,22 +410,44 @@ export class SessionCoordinator {
         const snap = await txn.get(ref);
         const cur = snap.data() as SessionState | undefined;
         if (!cur || cur.epoch !== epoch || !sameId(cur.ownerDeviceID, DEVICE_ID))
-          throw FENCED;
+          throw fenceError(cur, epoch);
         txn.update(ref, { leaseMs: now });
       });
     } catch (e) {
-      if (e === FENCED) this.demote("fenced lease");
+      if (e === SEAT_CLEARED) this.seatCleared("fenced lease");
+      else if (e === FENCED) this.demote("fenced lease");
     }
   }
 
   private demote(reason: string) {
     if (this.role !== "owner") return;
     console.log(`[sync] deposed (${reason})`);
+    this.dropOwnership();
+    this.onDeposed?.();
+    this.onChange?.();
+  }
+
+  /** Seat cleared, not taken: drop to follower WITHOUT the deposed pause —
+   *  no other device holds the audio. The engine reclaims if still playing. */
+  private seatCleared(reason: string) {
+    if (this.role !== "owner") return;
+    console.log(`[sync] seat cleared while unreachable (${reason})`);
+    this.dropOwnership();
+    this.onSeatCleared?.();
+    this.onChange?.();
+  }
+
+  private dropOwnership() {
     this.role = "follower"; this.myEpoch = 0;
     if (this.leaseTimer) clearInterval(this.leaseTimer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.outbox = undefined;
-    this.onDeposed?.();
-    this.onChange?.();
   }
+}
+
+/** Why a fenced owner write failed: the seat was CLEARED at our epoch (a
+ *  peer's expired-lease clear — reclaimable) vs. TAKEN (epoch bumped, or
+ *  someone else in the seat — yield). */
+function fenceError(cur: SessionState | undefined, myEpoch: number): Error {
+  return cur && cur.epoch === myEpoch && !cur.ownerDeviceID ? SEAT_CLEARED : FENCED;
 }

@@ -7,7 +7,7 @@ import { CommandBus, Command } from "./commandBus";
 import { LocalPlayer, LocalTrack, scanLibrary, resolve, toRef } from "./player";
 import {
   PlaybackState, SessionState, TrackRef, DEVICE_ID, positionAt,
-  sameId, sessionIdle, liveRemoteOwner,
+  sameId, sessionIdle, liveRemoteOwner, SEAT_TAKEN,
 } from "./protocol";
 import { serverClock } from "./serverClock";
 
@@ -81,7 +81,24 @@ export class SyncEngine {
       this.player.pause();
       this.commands.stop();
     };
+    // Seat cleared while we were unreachable (sleep / network blip), nobody
+    // took it: if audio is still coming out of this device, it IS the owner —
+    // reclaim rather than yield. Paused ⇒ simply stay a follower; the session
+    // reads "paused at <pos>, Play Here to continue" (sync-audit-5 S3).
+    coord.onSeatCleared = () => {
+      this.commands.stop();
+      if (this.player.playing) void this.reclaimSeat();
+      else this.onChange?.();
+    };
     coord.onRemote = (s, isEcho) => this.handleRemote(s, isEcho);
+
+    // The first publish of a track fires before <audio> knows its length, so
+    // it carried dur: 0 and followers showed 0:00 with a dead progress bar
+    // until the 30 s anchor refresh (sync-audit-5 S1). Re-publish once the
+    // element reports a real duration.
+    this.player.onDuration = () => {
+      if (coord.role === "owner" && this.player.current && this.player.durMs > 0) this.publish();
+    };
 
     // Anchor refresh — bounds follower extrapolation drift to ≤30 s.
     setInterval(() => {
@@ -103,6 +120,33 @@ export class SyncEngine {
 
   becomeCommandTarget() {
     this.commands.start(cmd => this.applyLocal(cmd));
+  }
+
+  /** Reclaim an emptied seat. onlyIfIdle: a device that took over while we
+   *  were away keeps it — then WE yield and pause, never double-play. */
+  private async reclaimSeat() {
+    try {
+      await this.coord.takeOver(true);
+      this.becomeCommandTarget();
+      this.publish();
+      console.log("[sync] reclaimed seat after clear — still playing here");
+    } catch (e) {
+      if (e === SEAT_TAKEN) console.log("[sync] seat taken while away — yielding");
+      else console.log("[sync] reclaim failed", e);
+      this.player.pause();
+      this.onChange?.();
+    }
+  }
+
+  /** App is quitting while we own the audio: stop, then hand the session
+   *  back paused at the current position so the other devices don't stare at
+   *  a phantom owner for LEASE_TTL_MS (sync-audit-5 S7). Bounded by the
+   *  caller's timeout — best-effort. */
+  async releaseForQuit() {
+    if (this.coord.demo || this.coord.role !== "owner") return;
+    this.player.pause();
+    this.commands.stop();
+    await this.coord.releaseSeat(this.snapshot());
   }
 
   // ── Remote → local ──────────────────────────────────────────────────────

@@ -30,23 +30,40 @@ struct DownloadsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        // Explicit `let`s so the body can compute remote-mode effective
+        // values up front — this re-evaluates whenever syncManager (an
+        // @ObservedObject) changes, same as any other read of it here.
+        let isRemote = syncManager.engine.isRemoteControlled
+        let effPlayingID: UUID? = isRemote ? syncManager.engine.mirrorTrack?.id : currentTrack?.id
+        let effPlaying = isRemote ? (syncManager.engine.mirror?.isPlaying ?? false) : isPlaying
+
+        return NavigationView {
             ZStack {
                 AppBackground()
-                
+
                 VStack(spacing: 0) {
                     // Always-visible search bar
                     ThemedSearchField(placeholder: "Search downloads", text: $searchText)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
-                    
+
                     List {
                         ForEach(filteredDownloads) { download in
                             DownloadRow(
                                 download: download,
                                 audioPlayer: audioPlayer,
-                                isCurrentlyPlaying: currentTrack?.id == download.id,
-                                isEnginePlaying: isPlaying,
+                                isCurrentlyPlaying: effPlayingID == download.id,
+                                isEnginePlaying: effPlaying,
+                                onToggleCurrent: {
+                                    if isRemote {
+                                        if effPlaying { syncManager.engine.requestPause() }
+                                        else { syncManager.engine.requestPlay() }
+                                    } else if audioPlayer.isPlaying {
+                                        audioPlayer.pause()
+                                    } else {
+                                        audioPlayer.resume()
+                                    }
+                                },
                                 onAddToPlaylist: {
                                     showAddToPlaylist = download
                                 },
@@ -99,7 +116,7 @@ struct DownloadsView: View {
                 HomeSyncSheet(manager: syncManager)
             }
             .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: hasCurrentTrack ? (hasActiveDownload ? 130 : 65) : (hasActiveDownload ? 65 : 0))
+                Color.clear.frame(height: (hasCurrentTrack || isRemote) ? (hasActiveDownload ? 130 : 65) : (hasActiveDownload ? 65 : 0))
             }
             .onReceive(audioPlayer.$currentTrack) { track in
                 hasCurrentTrack = track != nil
@@ -162,6 +179,9 @@ struct DownloadRow: View {
     let audioPlayer: AudioPlayerManager
     let isCurrentlyPlaying: Bool
     let isEnginePlaying: Bool
+    /// Toggles playback of the currently-playing row. Routed through the
+    /// parent so remote-mode taps hit the owner instead of local audio.
+    let onToggleCurrent: () -> Void
     let onAddToPlaylist: () -> Void
     let onDelete: () -> Void
     let onRename: (String) -> Void
@@ -288,13 +308,9 @@ struct DownloadRow: View {
     
     private func handleTap() {
         guard !download.pendingDeletion else { return }
-        
-        if audioPlayer.currentTrack?.id == download.id {
-            if audioPlayer.isPlaying {
-                audioPlayer.pause()
-            } else {
-                audioPlayer.resume()
-            }
+
+        if isCurrentlyPlaying {
+            onToggleCurrent()
         } else {
             let folderName = folderName(for: download.source)
             let track = Track(id: download.id, name: download.name, url: download.url, folderName: folderName, cropStartTime: download.cropStartTime, cropEndTime: download.cropEndTime)

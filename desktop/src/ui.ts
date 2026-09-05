@@ -354,7 +354,17 @@ function wire() {
     fx.bass = Math.min(Math.max(s.bassDb, -10), 20); // iOS range — clamp fix [#14]
     fx.reverb = Math.min(Math.max(s.reverbPct, 0), 100) / 100;
     fx.bypass = s.bypass ?? false;   // absent = pre-M10 writer, treat as active
-    initFxSliders(); // updates slider DOM values + calls applyFx()
+    // The remote values are the OWNER's audible settings, not intent for
+    // whatever track happens to be loaded here — applying them must not
+    // overwrite that track's per-file memory (twin of iOS
+    // isApplyingRemoteSettings, sync-audit-3 F7 / sync-audit-5 S6).
+    applyingRemoteFx = true;
+    try { initFxSliders(); }          // slider DOM + applyFx()
+    finally { applyingRemoteFx = false; }
+    // If the audio is HERE, the effective rate just changed under the
+    // followers — re-anchor now, not on the next transition (iOS republishes
+    // on $playbackSpeed / $effectsBypass for the same reason).
+    engine.publish();
     renderNow();     // the rail fx button reflects bypass
   };
 
@@ -405,6 +415,16 @@ function wire() {
     initFxSliders(); // slider DOM + applyFx()
     pushSettingsDebounced();
   };
+
+  // Window close: main.js holds the window open (≤1.5 s) while we hand the
+  // session back paused at the current position, then destroys it. Without
+  // this the phone stared at a phantom "playing on your other device" for
+  // LEASE_TTL_MS after the desktop quit (sync-audit-5 S7).
+  ipcRenderer.on("release-seat", () => {
+    void engine.releaseForQuit()
+      .catch(() => {})
+      .finally(() => ipcRenderer.send("seat-released"));
+  });
 
   coord.onChange = renderAll;
   engine.onChange = renderAll;
@@ -537,6 +557,8 @@ const fx = ((): { volume: number; speed: number; pitch: number; bass: number;
 })();
 
 let settingsPushTimer: ReturnType<typeof setTimeout> | null = null;
+/** True while settingsSync.onRemote is applying another device's values. */
+let applyingRemoteFx = false;
 function pushSettingsDebounced() {
   if (settingsPushTimer) clearTimeout(settingsPushTimer);
   settingsPushTimer = setTimeout(() => {
@@ -560,7 +582,8 @@ function applyFx(publishRate = false) {
   // Remember the audible values for this track — twin of iOS
   // saveCurrentTrackSettings firing on every effect didSet.
   const cur = engine.player.current;
-  if (cur) trackFx.set(cur.id, { speed: fx.speed, pitch: fx.pitch, reverb: fx.reverb, bass: fx.bass });
+  if (cur && !applyingRemoteFx)
+    trackFx.set(cur.id, { speed: fx.speed, pitch: fx.pitch, reverb: fx.reverb, bass: fx.bass });
   localStorage.setItem(FX_KEY, JSON.stringify(fx));
   $("fx-volume-val").textContent = `${Math.round(fx.volume * 100)}%`;
   $("fx-speed-val").textContent = `${fx.speed.toFixed(2)}×`;
@@ -1067,11 +1090,16 @@ function renderNow() {
   // whether a takeover is safe yet.
   $("owner-dead").hidden = !(notOwner && !idle && !liveOwner);
   $("remote-banner").hidden = !notOwner;
+  // An EMPTY seat with a track is a paused session (the owner quit or was
+  // cleared and its position frozen) — not an owner that "stopped
+  // responding"; that wording is for a seat still held by a silent device.
   $("remote-banner-text").textContent = !notOwner ? ""
     : liveOwner
       ? `Controlling your other device${pb?.track ? ` — ${pb.track.name}` : ""}`
       : pb?.track
-        ? `Your other device stopped responding — ${pb.track.name} · Play Here to continue`
+        ? idle
+          ? `Paused — ${pb.track.name} · Play Here to continue`
+          : `Your other device stopped responding — ${pb.track.name} · Play Here to continue`
         : `Nothing playing yet · Play Here to start`;
   ($("btn-playhere") as HTMLButtonElement).disabled = busy || !coord.online;
 
