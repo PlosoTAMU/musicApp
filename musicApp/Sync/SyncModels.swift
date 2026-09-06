@@ -130,8 +130,8 @@ struct TrackMeta {
               let by = dict["by"] as? String else { return nil }
         self.name = name; self.folder = folder; self.ext = ext; self.by = by
         self.yt = dict["yt"] as? String
-        self.cropStartMs = dict["cropStartMs"] as? Int
-        self.cropEndMs = dict["cropEndMs"] as? Int
+        self.cropStartMs = wireInt(dict["cropStartMs"])
+        self.cropEndMs = wireInt(dict["cropEndMs"])
         self.deleted = dict["deleted"] as? Bool ?? false
         self.metaBy = dict["metaBy"] as? String
     }
@@ -282,15 +282,33 @@ struct PlaybackState: Equatable {
     init?(dict: [String: Any]?) {
         guard let d = dict,
               let playing = d["playing"] as? Bool,
-              let pos = d["pos"] as? Int,
-              let anchor = d["anchor"] as? Int,
-              let rate = d["rate"] as? Int,
-              let rev = d["rev"] as? Int else { return nil }
+              let pos = wireInt(d["pos"]),
+              let anchor = wireInt(d["anchor"]),
+              let rate = wireInt(d["rate"]),
+              let rev = wireInt(d["rev"]) else { return nil }
         self.init(track: (d["track"] as? [String: Any]).flatMap(TrackRef.init(dict:)),
                   isPlaying: playing, positionMs: pos, anchorMs: anchor,
-                  rateX1000: rate, durationMs: d["dur"] as? Int ?? 0, rev: rev,
+                  rateX1000: rate, durationMs: wireInt(d["dur"]) ?? 0, rev: rev,
                   loop: d["loop"] as? Bool ?? false)
     }
+}
+
+/// Integer field off the wire, tolerant of a Firestore DOUBLE.
+///
+/// The desktop stamped `leaseMs` / `anchor` / `atMs` with an unrounded
+/// ServerClock value; the JS SDK stores a non-integer as a double, and
+/// `NSNumber as? Int` bridging returns nil for any double with a fractional
+/// part. That one nil made `SessionState(snap:)` fail wholesale: the phone
+/// silently dropped every snapshot of a desktop-written session, and its own
+/// `takeOver` threw `.corrupt` — audio played here, nothing was published,
+/// the desktop never updated. The desktop now rounds at the source
+/// (serverClock.ts `nowMs`); this keeps docs already written that way, and
+/// any future stray double, readable. Bools and strings are untouched.
+func wireInt(_ v: Any?) -> Int? {
+    guard let n = v as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return nil }
+    let d = n.doubleValue
+    guard d.isFinite else { return nil }
+    return Int(d.rounded())
 }
 
 // MARK: - Session document
@@ -332,18 +350,18 @@ struct SessionState {
 
     init?(snap: DocumentSnapshot) {
         guard let d = snap.data(),
-              let epoch = d["epoch"] as? Int,
+              let epoch = wireInt(d["epoch"]),
               let ownerDev = d["ownerDeviceID"] as? String,
-              let lease = d["leaseMs"] as? Int,
+              let lease = wireInt(d["leaseMs"]),
               let playback = PlaybackState(dict: d["playback"] as? [String: Any]),
-              let qv = d["queueVersion"] as? Int else { return nil }
+              let qv = wireInt(d["queueVersion"]) else { return nil }
         self.epoch = epoch; self.ownerDeviceID = ownerDev
         self.leaseMs = lease; self.playback = playback
         self.queue = (d["queue"] as? [[String: Any]])?.compactMap(TrackRef.init(dict:)) ?? []
         self.queueVersion = qv
         self.updatedBy = d["updatedBy"] as? String ?? ""
         if let h = d["handoff"] as? [String: Any],
-           let by = h["by"] as? String, let at = h["atMs"] as? Int {
+           let by = h["by"] as? String, let at = wireInt(h["atMs"]) {
             self.handoff = Handoff(by: by, atMs: at)
         }
     }

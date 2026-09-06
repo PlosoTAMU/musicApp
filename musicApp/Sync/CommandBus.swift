@@ -44,7 +44,7 @@ enum SyncCommand {
         case "pause": self = .pause
         case "next": self = .next
         case "prev": self = .previous
-        case "seek": guard let ms = dict["ms"] as? Int else { return nil }; self = .seek(ms: ms)
+        case "seek": guard let ms = wireInt(dict["ms"]) else { return nil }; self = .seek(ms: ms)
         case "playTrack":
             guard let raw = dict["ref"] as? [String: Any],
                   let ref = TrackRef(dict: raw) else { return nil }

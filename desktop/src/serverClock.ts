@@ -9,7 +9,16 @@ class ServerClock {
   offsetMs = 0;
 
   get isSynced() { return this.samples.length > 0; }
-  get nowMs() { return Date.now() + this.offsetMs; }
+  /** Always an integer. The offset is a median of server timestamps that
+   *  carry microseconds (`Timestamp.toMillis()` keeps nanoseconds/1e6), so
+   *  the raw sum is fractional almost every time — and the JS SDK stores a
+   *  non-integer as a Firestore DOUBLE. Swift's `as? Int` bridging refuses a
+   *  double with a fractional part, so every `leaseMs` / `anchor` /
+   *  `updatedAtMs` this device wrote made the iOS side drop the whole doc:
+   *  the phone went blind to the session and its own takeover threw
+   *  `.corrupt` (the "started a song on the phone, desktop never updated"
+   *  wedge). Pinned by tests/serverClock-integer.test.ts. */
+  get nowMs() { return Math.round(Date.now() + this.offsetMs); }
 
   ingest(serverMs: number, sendMs: number, ackMs: number) {
     this.samples.push(serverMs - (sendMs + ackMs) / 2);
