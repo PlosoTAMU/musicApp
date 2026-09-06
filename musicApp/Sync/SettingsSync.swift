@@ -40,21 +40,36 @@ final class SettingsSync {
     private var lastAppliedSpeed: Double?
     private var lastAppliedBass: Double?
     private var lastAppliedReverb: Double?
+    private var lastAppliedPitch: Double?
     private var lastAppliedBypass: Bool?
 
-    init(db: Firestore, player: AudioPlayerManager) {
+    /// True when THIS device owns the session's audio. Decides whether a
+    /// remote's values are persisted into the current track's memory (see
+    /// applyRemote). Injected so this class stays independent of the
+    /// coordinator; SyncSessionManager wires it.
+    private let ownsAudio: () -> Bool
+
+    init(db: Firestore, player: AudioPlayerManager, ownsAudio: @escaping () -> Bool) {
         self.db = db
         self.player = player
+        self.ownsAudio = ownsAudio
 
         // effectsBypass rides along (sync-audit-4 M10): publishing the sliders
         // without the master switch meant a bypassed device pushed values it
         // wasn't hearing and the other device played them — and they
         // contradicted PlaybackState.rate, which IS bypass-adjusted.
-        Publishers.CombineLatest4(player.$playbackSpeed, player.$bassBoost,
-                                  player.$reverbAmount, player.$effectsBypass)
+        //
+        // Pitch rides along too. It was the one effect neither side published
+        // ("reverb, pitch and bass don't sync") — nested CombineLatest because
+        // CombineLatest4 is the widest Combine ships.
+        Publishers.CombineLatest(
+            Publishers.CombineLatest4(player.$playbackSpeed, player.$bassBoost,
+                                      player.$reverbAmount, player.$effectsBypass),
+            player.$pitchShift)
             .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
-            .sink { [weak self] speed, bass, reverb, bypass in
-                self?.push(speed: speed, bass: bass, reverb: reverb, bypass: bypass)
+            .sink { [weak self] core, pitch in
+                let (speed, bass, reverb, bypass) = core
+                self?.push(speed: speed, bass: bass, reverb: reverb, pitch: pitch, bypass: bypass)
             }
             .store(in: &bag)
     }
@@ -78,6 +93,7 @@ final class SettingsSync {
         lastAppliedSpeed = nil
         lastAppliedBass = nil
         lastAppliedReverb = nil
+        lastAppliedPitch = nil
         lastAppliedBypass = nil
     }
 
@@ -85,19 +101,22 @@ final class SettingsSync {
         db.collection("users").document(uid).collection("sync").document("settings")
     }
 
-    private func push(speed: Double, bass: Double, reverb: Double, bypass: Bool) {
+    private func push(speed: Double, bass: Double, reverb: Double, pitch: Double, bypass: Bool) {
         guard !uid.isEmpty else { return }
         if speed == lastAppliedSpeed, bass == lastAppliedBass,
-           reverb == lastAppliedReverb, bypass == lastAppliedBypass { return }
+           reverb == lastAppliedReverb, pitch == lastAppliedPitch,
+           bypass == lastAppliedBypass { return }
 
         // Update lastApplied* to track "last state we believe Firestore already has"
         lastAppliedSpeed = speed
         lastAppliedBass = bass
         lastAppliedReverb = reverb
+        lastAppliedPitch = pitch
         lastAppliedBypass = bypass
 
         let doc: [String: Any] = [
-            "speed": speed, "bassDb": bass, "reverbPct": reverb, "bypass": bypass,
+            "speed": speed, "bassDb": bass, "reverbPct": reverb, "pitchSt": pitch,
+            "bypass": bypass,
             "updatedBy": SyncDevice.id, "at": ServerClock.shared.nowMs,
         ]
         Task { try? await docRef.setData(doc) }
@@ -113,6 +132,9 @@ final class SettingsSync {
         let clampedSpeed = min(max(speed, 0.5), 2.0)
         let clampedBass = min(max(bass, -10), 20)
         let clampedReverb = min(max(reverb, 0), 100)
+        // Absent = written by a client from before pitch synced; read as 0.
+        let pitch = (d["pitchSt"] as? NSNumber)?.doubleValue ?? 0
+        let clampedPitch = min(max(pitch, -12), 12)
         // Absent = written by a pre-M10 client, which had no concept of the
         // switch and whose values were being applied as if active.
         let bypass = d["bypass"] as? Bool ?? false
@@ -120,18 +142,24 @@ final class SettingsSync {
         lastAppliedSpeed = clampedSpeed
         lastAppliedBass = clampedBass
         lastAppliedReverb = clampedReverb
+        lastAppliedPitch = clampedPitch
         lastAppliedBypass = bypass
 
-        // Suppress the didSet → saveCurrentTrackSettings hop while we assign
-        // (sync-audit-3.md F7): the remote values represent the OWNER's
-        // effective playback settings, not intent for the current track loaded
-        // here. Persisting them into whichever local track happens to be
-        // `currentTrack` corrupted that track's per-file memory.
-        player.isApplyingRemoteSettings = true
+        // Per-track memory (didSet → saveCurrentTrackSettings):
+        //  - FOLLOWER: suppress (sync-audit-3.md F7). The values describe the
+        //    OWNER's playback, not intent for whatever track is loaded here;
+        //    persisting them corrupted that track's per-file memory.
+        //  - OWNER: persist. A remote's slider drag is exactly a local drag of
+        //    the song playing here and must stick the same way. Suppressing it
+        //    meant the next track change restored the OLD memory and published
+        //    it, silently undoing the other device's change — which read as
+        //    "reverb/bass don't sync".
+        player.isApplyingRemoteSettings = !ownsAudio()
         defer { player.isApplyingRemoteSettings = false }
         player.playbackSpeed = clampedSpeed
         player.bassBoost = clampedBass
         player.reverbAmount = clampedReverb
+        player.pitchShift = clampedPitch
         player.effectsBypass = bypass
     }
 }

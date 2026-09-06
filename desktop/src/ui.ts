@@ -331,10 +331,12 @@ function wire() {
   };
 
   // Effects — speed also republishes rate (followers extrapolate with it).
-  // Pitch is LOCAL-ONLY (iOS doesn't sync it) — no settings push.
+  // Every effect syncs (pitch included — it was local-only on both ends, so
+  // it was the one slider that never reached the other device). Volume is
+  // not an effect and stays local.
   bindFx("fx-volume", v => { fx.volume = v / 100; });
   bindFx("fx-speed", v => { fx.speed = v / 100; pushSettingsDebounced(); }, true);
-  bindFx("fx-pitch", v => { fx.pitch = v; });
+  bindFx("fx-pitch", v => { fx.pitch = v; pushSettingsDebounced(); });
   bindFx("fx-bass", v => { fx.bass = v; pushSettingsDebounced(); });
   bindFx("fx-reverb", v => { fx.reverb = v / 100; pushSettingsDebounced(); });
 
@@ -350,14 +352,19 @@ function wire() {
   };
 
   settingsSync.onRemote = s => {
-    fx.speed = Math.min(Math.max(s.speed, 0.5), 2.0);
-    fx.bass = Math.min(Math.max(s.bassDb, -10), 20); // iOS range — clamp fix [#14]
-    fx.reverb = Math.min(Math.max(s.reverbPct, 0), 100) / 100;
-    fx.bypass = s.bypass ?? false;   // absent = pre-M10 writer, treat as active
-    // The remote values are the OWNER's audible settings, not intent for
-    // whatever track happens to be loaded here — applying them must not
-    // overwrite that track's per-file memory (twin of iOS
-    // isApplyingRemoteSettings, sync-audit-3 F7 / sync-audit-5 S6).
+    // Already clamped to the shared ranges by parseSettingsDoc.
+    fx.speed = s.speed;
+    fx.bass = s.bassDb;
+    fx.reverb = s.reverbPct / 100;
+    fx.pitch = s.pitchSt;
+    fx.bypass = s.bypass;
+    // Per-track memory: applyFx persists these ONLY when the audio is here.
+    // On a follower the values describe the OWNER's playback, not intent for
+    // whatever track happens to be loaded locally (sync-audit-3 F7 /
+    // sync-audit-5 S6). On the OWNER a remote's drag is exactly a local drag
+    // of the current song and must stick the same way — otherwise the next
+    // track-change restore (which also publishes) silently undid it, which
+    // read as "my reverb/bass never synced".
     applyingRemoteFx = true;
     try { initFxSliders(); }          // slider DOM + applyFx()
     finally { applyingRemoteFx = false; }
@@ -564,7 +571,7 @@ function pushSettingsDebounced() {
   settingsPushTimer = setTimeout(() => {
     settingsSync.push({
       speed: fx.speed, bassDb: fx.bass, reverbPct: fx.reverb * 100,
-      bypass: fx.bypass,
+      pitchSt: fx.pitch, bypass: fx.bypass,
     });
   }, 300);
 }
@@ -580,9 +587,10 @@ function applyFx(publishRate = false) {
   graph.setReverbMix(fx.bypass ? 0 : fx.reverb);
   graph.setPitchSemitones(fx.bypass ? 0 : fx.pitch);
   // Remember the audible values for this track — twin of iOS
-  // saveCurrentTrackSettings firing on every effect didSet.
+  // saveCurrentTrackSettings firing on every effect didSet. Remote-applied
+  // values count too, but only while the audio is HERE (see onRemote).
   const cur = engine.player.current;
-  if (cur && !applyingRemoteFx)
+  if (cur && (!applyingRemoteFx || coord.role === "owner"))
     trackFx.set(cur.id, { speed: fx.speed, pitch: fx.pitch, reverb: fx.reverb, bass: fx.bass });
   localStorage.setItem(FX_KEY, JSON.stringify(fx));
   $("fx-volume-val").textContent = `${Math.round(fx.volume * 100)}%`;
@@ -805,7 +813,9 @@ let vizIdle = true;
 let artColors: string[] | null = null;
 let artColorsForYt: string | null = null;
 
-const ART_BOX = 208, ART_CORNER = 22, ART_MAX_BAR = 64;
+// Must match #art in index.html (300px, 28px corners); the edge-viz canvas is
+// ART_BOX + 2 × ART_MAX_BAR plus a little pulse headroom.
+const ART_BOX = 300, ART_CORNER = 28, ART_MAX_BAR = 64;
 
 function vizLoop(now: number) {
   requestAnimationFrame(vizLoop);
@@ -1517,6 +1527,57 @@ function editCrop(t: LocalTrack) {
 }
 
 let lastMenuXY = { x: 0, y: 0 };
+
+/** One labeled action pill for a library row. */
+function actionBtn(icon: string, label: string, title: string,
+                   onclick: (b: HTMLButtonElement) => void, cls = ""): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.className = `act ${cls}`.trim();
+  b.title = title;
+  const i = document.createElement("span"); i.className = "ico"; i.textContent = icon;
+  const l = document.createElement("span"); l.className = "lbl"; l.textContent = label;
+  b.append(i, l);
+  b.onclick = () => onclick(b);
+  return b;
+}
+
+/** Inline action row for a library track — what the old ⋯ menu held, spelled
+ *  out (icon + caption) so what each one does is obvious without opening
+ *  anything: Play · Queue · Playlist · Crop · Rename · ⓘ · Delete. Redownload
+ *  (rare) lives on right-click only; trackMenu keeps the full set. Captions
+ *  collapse to icons when the library panel is narrow (CSS container query). */
+function rowActions(t: LocalTrack): HTMLElement {
+  const wrap = document.createElement("span");
+  wrap.className = "row-actions";
+  const ref = t.yt ? { id: t.id, name: t.name, yt: t.yt } : { id: t.id, name: t.name };
+  wrap.appendChild(actionBtn("▶", "Play", "Play now (on whichever device is playing)",
+    () => run(() => engine.playLocal(t)), "primary"));
+  wrap.appendChild(actionBtn("＋", "Queue", "Add to the up-next queue",
+    () => engine.queueLocal(t)));
+  // With a playlist open, one tap drops it straight into that playlist;
+  // otherwise the pill opens the playlist picker.
+  if (openPlaylistId) {
+    const name = playlistSync.playlists.find(p => p.id === openPlaylistId)?.name ?? "playlist";
+    wrap.appendChild(actionBtn("♪", `Add to ${name}`, `Add to the open playlist “${name}”`,
+      () => { void playlistSync.addTrack(openPlaylistId!, ref); }));
+  } else {
+    wrap.appendChild(actionBtn("♪", "Playlist", "Add to a playlist…", b => {
+      const r = b.getBoundingClientRect(); addToPlaylistMenu(r.left, r.bottom, ref);
+    }));
+  }
+  if (t.yt && !coord.demo)
+    wrap.appendChild(actionBtn("✂", "Crop", "Trim the start/end of this track",
+      () => editCrop(t)));
+  wrap.appendChild(actionBtn("✎", "Rename", "Rename this song (syncs to every device)",
+    () => showPrompt("Rename song", t.name, v => renameTrack(t, v))));
+  wrap.appendChild(actionBtn("ⓘ", "Info", "Song info (file, source, crop)", b => {
+    const r = b.getBoundingClientRect(); showInfoPop(r.left, r.bottom, t);
+  }, "icon-only"));
+  wrap.appendChild(actionBtn("✕", "Delete", "Delete from every device (5 s undo)",
+    () => deleteTrack(t), "danger"));
+  return wrap;
+}
+
 /** Row action menu for a library track (twin of the iOS row context menu). */
 function trackMenu(x: number, y: number, t: LocalTrack) {
   lastMenuXY = { x, y };
@@ -1707,7 +1768,7 @@ function renderPlaylists() {
     if (!open.tracks.length) {
       const d = document.createElement("div");
       d.className = "list-empty";
-      d.textContent = "Empty — use ＋ Add songs, ♪ on a library row, or ⋯ → Add to playlist";
+      d.textContent = "Empty — use ＋ Add songs, or ♪ Add to <this playlist> on a library row";
       listEl.appendChild(d);
     }
     for (const tr of open.tracks) {
@@ -1921,30 +1982,7 @@ function renderLibrary() {
     folder.className = "chip"; folder.textContent = t.folder;
     li.appendChild(folder);
 
-    const playBtn = document.createElement("button");
-    playBtn.className = "row-btn"; playBtn.innerHTML = "▶";
-    playBtn.title = "Play now (on whichever device is playing)";
-    playBtn.onclick = () => run(() => engine.playLocal(t));
-    li.appendChild(playBtn);
-
-    const addBtn = document.createElement("button");
-    addBtn.className = "row-btn"; addBtn.textContent = "＋"; addBtn.title = "Add to queue";
-    addBtn.onclick = () => { engine.queueLocal(t); };
-    li.appendChild(addBtn);
-
-    // With a playlist open, rows grow a one-tap "add to that playlist".
-    if (openPlaylistId) {
-      li.appendChild(rowBtn("♪", "Add to open playlist", () => {
-        void playlistSync.addTrack(openPlaylistId!,
-          t.yt ? { id: t.id, name: t.name, yt: t.yt } : { id: t.id, name: t.name });
-      }));
-    }
-
-    // ⋯ = rename / info / redownload / delete (also on right-click).
-    const moreBtn = document.createElement("button");
-    moreBtn.className = "row-btn"; moreBtn.textContent = "⋯"; moreBtn.title = "More actions";
-    moreBtn.onclick = () => { const r = moreBtn.getBoundingClientRect(); trackMenu(r.right, r.bottom, t); };
-    li.appendChild(moreBtn);
+    li.appendChild(rowActions(t));
 
     listEl.appendChild(li);
   }
@@ -1961,6 +1999,19 @@ function renderLibrary() {
 // ── Boot: auto-connect — the whole point of the shared secret ──────────────
 
 wire();
+// Dev screenshot driver (main.js, PULSOR_SHOT=main): stage a fake library
+// through the REAL row renderer so shots show the actual row markup. Inert
+// in normal runs — the hook only exists when the env var is set.
+if (process.env.PULSOR_SHOT) {
+  (window as unknown as { __pulsorStage?: (names: string[]) => void }).__pulsorStage = names => {
+    engine.library = names.map((name, i) => ({
+      id: `STAGE-${i}`, name, folder: i ? "Downloads" : "Synthwave", yt: "4NRXx6U8ABQ", path: "",
+    }));
+    if (coord.role === "none") coord.role = "follower";
+    renderLibrary();
+    $("library-list").querySelector("li")?.classList.add("playing");
+  };
+}
 if (musicDir) engine.loadLibrary(musicDir);
 renderAll();
 requestAnimationFrame(vizLoop);

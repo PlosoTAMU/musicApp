@@ -7,8 +7,9 @@ const path = require("path");
 app.whenReady().then(() => {
   const win = new BrowserWindow({
     show: false,                              // shown maximized below (no flash)
-    width: 1280,
-    height: 800,
+    // PULSOR_SHOT_W/H: dev screenshot driver only (see below).
+    width: Number(process.env.PULSOR_SHOT_W) || 1280,
+    height: Number(process.env.PULSOR_SHOT_H) || 800,
     minWidth: 900,
     minHeight: 600,
     backgroundColor: "#0A0809",
@@ -117,10 +118,17 @@ app.whenReady().then(() => {
           mkRow(q, "As It Was", "not here yet", "ghost");
           mkRow(q, "Levitating", "syncing", "ghost syncing");
           document.getElementById("upnext-count").textContent = "3";
-          const lib = document.getElementById("library-list"); lib.innerHTML = "";
-          mkRow(lib, "Blinding Lights", "Synthwave", "playing");
-          for (const n of ["After Hours", "Starboy", "Out of Time", "Die For You", "Less Than Zero"])
-            mkRow(lib, n, "Downloads", "");
+          // Real renderer for the library rows when the renderer exposes its
+          // stage hook (PULSOR_SHOT builds), so the shot shows the actual row
+          // markup; hand-built rows otherwise.
+          const names = ["Blinding Lights", "After Hours", "Starboy", "Out of Time", "Die For You", "Less Than Zero"];
+          if (window.__pulsorStage) {
+            window.__pulsorStage(names);
+          } else {
+            const lib = document.getElementById("library-list"); lib.innerHTML = "";
+            mkRow(lib, "Blinding Lights", "Synthwave", "playing");
+            for (const n of names.slice(1)) mkRow(lib, n, "Downloads", "");
+          }
           document.getElementById("lib-status").textContent = "212 local tracks";
           document.getElementById("repl-status").textContent = 'Uploading \\u201CStarboy\\u201D\\u2026';
         })()`);

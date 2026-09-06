@@ -119,7 +119,9 @@ export class AudioGraph {
     if (this.dry) this.dry.gain.value = 1 - mix * 0.35;
   }
 
-  /** ±12 st; 0 = exact passthrough. Local-only — iOS doesn't sync pitch. */
+  /** ±12 st; 0 = exact passthrough. Synced like the other effects
+   *  (settings doc `pitchSt`); a no-op here when the worklet failed to load,
+   *  the value still forwards to the other device. */
   setPitchSemitones(st: number) {
     // lib.dom's AudioParamMap predates .get(); it's a live maplike at runtime.
     const params = this.pitch?.parameters as Map<string, AudioParam> | undefined;

@@ -125,17 +125,23 @@
 
     /* ── Main: two-column fullscreen ────────────────────────────────────── */
     #main {
-      flex: 1; display: grid; grid-template-columns: 460px 1fr;
+      flex: 1; display: grid; grid-template-columns: clamp(520px, 40vw, 600px) 1fr;
       gap: 0; min-height: 0;
     }
 
-    /* Left rail: now playing hero */
+    /* Left rail: now playing hero. 600px wide so the iOS-style action row
+       (five buttons with captions), the 300px artwork with its 64px beat
+       bars, and the enlarged transport all fit without crowding. `safe
+       center` + overflow: on a short window the content scrolls instead of
+       clipping its top off. */
     .rail {
       position: relative;
-      display: flex; flex-direction: column; justify-content: center;
-      padding: 12px 36px 24px; border-right: 1px solid var(--seam);
-      min-height: 0;
+      display: flex; flex-direction: column; justify-content: safe center;
+      padding: 10px 36px 16px; border-right: 1px solid var(--seam);
+      min-height: 0; overflow-y: auto;
     }
+    /* Scrolls silently on a short window — no scrollbar carving into the hero. */
+    .rail::-webkit-scrollbar { display: none; }
     .rail-content { display: contents; }
 
     /* Full-remote banner — shown while another device owns playback. The rail
@@ -152,14 +158,16 @@
       text-overflow: ellipsis; white-space: nowrap; }
     #remote-banner #btn-playhere { margin-left: auto; flex: none;
       color: var(--red-light); }
+    /* Title sits under the (bigger) artwork, centered like iOS, a step
+       smaller than before so the art stays the hero. */
     #track-name {
-      font-size: 30px; font-weight: 800; line-height: 1.2;
-      display: flex; align-items: center; gap: 12px;
-      margin: 18px 0 14px; min-height: 40px;
+      font-size: 24px; font-weight: 800; line-height: 1.2;
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      margin: 14px 0 10px; min-height: 34px;
     }
     /* Long titles scroll gently instead of clipping (measured in renderNow —
        short names never move). */
-    #track-title { flex: 1; min-width: 0; overflow: hidden; }
+    #track-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-align: center; }
     #track-title-text { display: inline-block; white-space: nowrap; }
     #track-title.marquee #track-title-text {
       animation: marquee 9s ease-in-out infinite alternate;
@@ -177,18 +185,21 @@
        ART_MAX_BAR in ui.ts) past the art's edge, so top/bottom need real
        clearance from the rail-top row and track-name or the lines run into
        them. */
-    #art-wrap { position: relative; width: fit-content; margin: 76px auto 82px; }
+    #art-wrap { position: relative; width: fit-content; margin: 60px auto 62px; }
+    /* 300px — must match ART_BOX / ART_CORNER in ui.ts (the beat bars are
+       drawn against the same box). */
     #art {
-      width: 208px; height: 208px; border-radius: 22px; overflow: hidden;
+      width: 300px; height: 300px; border-radius: 28px; overflow: hidden;
       background: var(--smoke-raised); border: 1px solid var(--seam);
       display: flex; align-items: center; justify-content: center;
-      font-size: 46px; color: var(--bone-faint);
+      font-size: 64px; color: var(--bone-faint);
       flex: none; will-change: transform, box-shadow; position: relative; z-index: 1;
     }
     #art img { width: 100%; height: 100%; object-fit: cover; }
+    /* art + 2 × ART_MAX_BAR (64) + a little headroom for the pulse scale. */
     #edge-viz {
       position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: 340px; height: 340px; pointer-events: none;
+      width: 444px; height: 444px; pointer-events: none;
     }
 
     /* Row thumbnails */
@@ -227,10 +238,11 @@
             font-size: 12px; font-variant-numeric: tabular-nums;
             color: var(--bone-dim); margin-top: 2px; }
 
+    /* Transport — one size up across the board (the rail has the room now). */
     .transport { display: flex; justify-content: center; align-items: center;
-                 gap: 26px; margin: 26px 0 8px; }
+                 gap: 28px; margin: 18px 0 4px; }
     .transport button {
-      width: 56px; height: 56px; border-radius: 50%;
+      width: 66px; height: 66px; border-radius: 50%;
       background: var(--smoke-raised); border: 1px solid var(--seam);
       color: var(--bone); cursor: pointer;
       display: flex; align-items: center; justify-content: center;
@@ -238,22 +250,26 @@
     }
     .transport button:hover { filter: brightness(1.25); }
     .transport button:active { transform: scale(.9); opacity: .85; }
-    .transport svg { width: 20px; height: 20px; fill: var(--bone); }
+    .transport svg { width: 24px; height: 24px; fill: var(--bone); }
     .transport svg text { fill: var(--bone); }
     /* Seek ±10 sit smaller than prev/next so the play button stays dominant. */
-    .transport #btn-back10, .transport #btn-fwd10 { width: 48px; height: 48px; }
-    .transport #btn-back10 svg, .transport #btn-fwd10 svg { width: 22px; height: 22px; }
+    .transport #btn-back10, .transport #btn-fwd10 { width: 56px; height: 56px; }
+    .transport #btn-back10 svg, .transport #btn-fwd10 svg { width: 26px; height: 26px; }
     .transport #btn-toggle {
-      width: 80px; height: 80px;
+      width: 96px; height: 96px;
       background: var(--red-gradient);
       border-color: rgba(255,255,255,.20);
       box-shadow: 0 6px 24px rgba(241,43,38,.55);
     }
-    .transport #btn-toggle svg { width: 30px; height: 30px; }
+    .transport #btn-toggle svg { width: 36px; height: 36px; }
 
-    /* Rail action row — desktop twin of the iOS Now Playing top bar
-       (loop / effects bypass / lyrics / add-to-playlist; no crop here). */
-    .rail-top { display: flex; align-items: center; gap: 10px; }
+    /* Rail top — desktop twin of the iOS Now Playing top bar. Line 1 is the
+       "Now Playing" tag (+ BPM); line 2 is the full action row, spread across
+       the rail like iOS (loop / effects / lyrics / playlist / crop), each a
+       round icon button with a caption underneath so nothing needs a hover
+       to be understood. */
+    .rail-top { display: flex; flex-direction: column; gap: 10px; }
+    .rail-top-line { display: flex; align-items: center; gap: 10px; }
     /* nowrap keeps the label one line; chips shrink + ellipsize instead. */
     .rail-top .eyebrow { flex: 1; min-width: 0; white-space: nowrap; }
     /* BPM rides the far right of the row, away from the "Now Playing" tag.
@@ -261,32 +277,45 @@
        the tag and the action row stay put whether or not a tempo is locked. */
     .rail-top #bpm { margin-left: auto; flex: none; }
     .rail-top #bpm.off { visibility: hidden; }
-    .rail-actions { display: flex; gap: 8px; }
+    .rail-actions { display: flex; justify-content: space-between; gap: 8px; }
     .rail-actions button {
+      width: 84px; flex: none; padding: 0;
+      background: none; border: none; color: var(--bone); cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      transition: transform .15s cubic-bezier(.34,1.56,.64,1), opacity .15s;
+    }
+    .rail-actions .ico {
       position: relative;
-      width: 38px; height: 38px; border-radius: 50%; flex: none;
+      width: 46px; height: 46px; border-radius: 50%;
       background: var(--smoke-raised); border: 1px solid var(--seam);
-      color: var(--bone); cursor: pointer;
       display: flex; align-items: center; justify-content: center;
-      transition: transform .15s cubic-bezier(.34,1.56,.64,1), opacity .15s, filter .15s;
+      transition: filter .15s, background .15s, box-shadow .15s;
+    }
+    .rail-actions .lbl {
+      font-size: 10px; font-weight: 600; letter-spacing: 1px;
+      text-transform: uppercase; color: var(--bone-dim); white-space: nowrap;
+      transition: color .15s;
     }
     /* Bypassed effects wear a slash — lit means active, slashed means muted. */
-    .rail-actions button.slash::after {
+    .rail-actions button.slash .ico::after {
       content: ""; position: absolute; left: 50%; top: 50%;
-      width: 2px; height: 24px; border-radius: 1px;
+      width: 2px; height: 28px; border-radius: 1px;
       background: var(--bone-dim);
       transform: translate(-50%, -50%) rotate(45deg);
       box-shadow: 0 0 0 1.5px var(--smoke-raised);
     }
-    .rail-actions button:hover { filter: brightness(1.25); }
-    .rail-actions button:active { transform: scale(.9); opacity: .85; }
+    .rail-actions button:hover .ico { filter: brightness(1.25); }
+    .rail-actions button:hover .lbl { color: var(--bone); }
+    .rail-actions button:active { transform: scale(.92); opacity: .85; }
     .rail-actions button:disabled { opacity: .35; cursor: default;
-      filter: none; transform: none; }
-    .rail-actions svg { width: 15px; height: 15px; fill: var(--bone); }
-    .rail-actions button.on {
+      transform: none; }
+    .rail-actions button:disabled .ico { filter: none; }
+    .rail-actions svg { width: 19px; height: 19px; fill: var(--bone); }
+    .rail-actions button.on .ico {
       background: var(--red-gradient); border-color: rgba(255,255,255,.18);
       box-shadow: 0 3px 10px rgba(241,43,38,.5);
     }
+    .rail-actions button.on .lbl { color: var(--bone); }
 
     /* Right column: queue + library */
     .content {
@@ -331,6 +360,39 @@
       opacity: 1; transition: color .15s;
     }
     .row-btn:hover { color: var(--red-light); }
+    /* Library row actions — every action the ⋯ menu used to hide, laid out
+       inline as labeled pills (the rows have the width). Subdued until the
+       row is hovered so the list still reads as a list; a container query
+       drops the captions to icons when the panel gets narrow, so nothing
+       ever wraps or pushes the title out. Right-click keeps the same actions
+       as a menu for keyboard/trackpad habits. */
+    #library-panel { container-type: inline-size; }
+    .row-actions { display: flex; align-items: center; gap: 5px; flex: none;
+      opacity: .72; transition: opacity .15s; }
+    .panel li:hover .row-actions, .panel li:focus-within .row-actions { opacity: 1; }
+    .act {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--smoke-raised); border: 1px solid var(--seam);
+      border-radius: 999px; color: var(--bone-dim); font: inherit;
+      font-size: 11px; font-weight: 600; padding: 4px 9px; cursor: pointer;
+      white-space: nowrap; line-height: 1.2;
+      transition: color .15s, border-color .15s, background .15s;
+    }
+    .act .ico { font-size: 12px; line-height: 1; width: 13px; text-align: center; }
+    .act:hover { color: var(--bone); border-color: rgba(255,94,84,.45);
+                 background: rgba(255,94,84,.10); }
+    .act.primary { color: var(--bone); }
+    .act.primary .ico { color: var(--red-light); }
+    .act.danger:hover { color: var(--danger); border-color: rgba(255,107,107,.4);
+                        background: rgba(255,107,107,.08); }
+    .act:disabled { opacity: .35; cursor: default; }
+    /* Self-explanatory glyph (ⓘ) — caption would only add width. */
+    .act.icon-only .lbl { display: none; }
+    .act.icon-only { padding: 4px 7px; }
+    @container (max-width: 860px) {
+      .act .lbl { display: none; }
+      .act { padding: 4px 7px; }
+    }
     /* Playlist Play/Shuffle in their 2 s "…now?" confirm window — always
        visible + hot, like the iOS emberLight capsule. */
     .row-btn.confirm { opacity: 1; color: var(--red-light); font-weight: 700;
@@ -375,16 +437,19 @@
     .lyr-retry { width: auto; padding: 7px 18px; font-size: 13px; margin: 2px 4px 8px; }
 
     /* ── Effects (twin of the iOS audio settings sheet) ─────────────────── */
-    #fx { margin-top: 18px; display: grid; gap: 10px; }
-    .fx-row { display: grid; grid-template-columns: 52px 1fr 52px;
-              align-items: center; gap: 10px; font-size: 12px;
+    /* Two columns: the rail is wide enough now, and one column of five
+       sliders was the tallest thing under the (bigger) artwork. */
+    #fx { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr;
+          column-gap: 18px; row-gap: 6px; }
+    .fx-row { display: grid; grid-template-columns: 48px 1fr 44px;
+              align-items: center; gap: 8px; font-size: 12px;
               color: var(--bone-dim); }
     .fx-row .fx-val { text-align: right; font-variant-numeric: tabular-nums;
                       color: var(--bone-faint); }
     .fx-row input[type=range]::-webkit-slider-thumb { width: 11px; height: 11px;
                                                       margin-top: -3.5px; }
-    .fx-reset-row { display: flex; align-items: center; justify-content: space-between;
-                    margin-top: 2px; }
+    .fx-reset-row { grid-column: 1 / -1; display: flex; align-items: center;
+                    justify-content: space-between; margin-top: 0; }
     .fx-reset-hint { font-size: 10px; color: var(--bone-faint); }
     #fx-reset-all { font-size: 11px; }
 
@@ -555,25 +620,33 @@
     <div class="rail">
       <div class="rail-content" id="rail-content">
         <div class="rail-top">
-          <div class="eyebrow">Now Playing
-            <span id="owner-dead" class="chip warn" hidden>owner offline</span>
-            <span id="bpm" class="chip off"></span>
+          <div class="rail-top-line">
+            <div class="eyebrow">Now Playing
+              <span id="owner-dead" class="chip warn" hidden>owner offline</span>
+              <span id="bpm" class="chip off"></span>
+            </div>
           </div>
+          <!-- Same order as the iOS top bar: loop, effects, lyrics, add to playlist, crop. -->
           <div class="rail-actions">
-            <button id="rail-loop" title="Loop this track">
-              <svg viewBox="0 0 24 24"><path d="M17 2l4 4-4 4V7H8a3 3 0 0 0-3 3v1H3v-1a5 5 0 0 1 5-5h9V2zM7 22l-4-4 4-4v3h9a3 3 0 0 0 3-3v-1h2v1a5 5 0 0 1-5 5H7v3z"/></svg>
+            <button id="rail-loop" title="Repeat this track">
+              <span class="ico"><svg viewBox="0 0 24 24"><path d="M17 2l4 4-4 4V7H8a3 3 0 0 0-3 3v1H3v-1a5 5 0 0 1 5-5h9V2zM7 22l-4-4 4-4v3h9a3 3 0 0 0 3-3v-1h2v1a5 5 0 0 1-5 5H7v3z"/></svg></span>
+              <span class="lbl">Loop</span>
             </button>
             <button id="rail-fx" title="Effects on/off">
-              <svg viewBox="0 0 24 24"><path d="M5.25 3h1.5v18h-1.5zM11.25 3h1.5v18h-1.5zM17.25 3h1.5v18h-1.5z"/><circle cx="6" cy="15" r="2.5"/><circle cx="12" cy="8" r="2.5"/><circle cx="18" cy="13" r="2.5"/></svg>
-            </button>
-            <button id="rail-crop" title="Crop this track">
-              <svg viewBox="0 0 24 24"><path d="M9 2v13.5A3.5 3.5 0 1 0 12.5 19H15v-2h-2.5A3.5 3.5 0 0 0 11 15.05V2zm-.5 15.5A1.5 1.5 0 1 1 5.5 19a1.5 1.5 0 0 1 3 0zM15 2v6.5l2-1.4V2zm2.5 13.5a3.5 3.5 0 1 0 1 6.86 3.5 3.5 0 0 0-1-6.86m0 5A1.5 1.5 0 1 1 19 19a1.5 1.5 0 0 1-1.5 1.5z"/></svg>
+              <span class="ico"><svg viewBox="0 0 24 24"><path d="M5.25 3h1.5v18h-1.5zM11.25 3h1.5v18h-1.5zM17.25 3h1.5v18h-1.5z"/><circle cx="6" cy="15" r="2.5"/><circle cx="12" cy="8" r="2.5"/><circle cx="18" cy="13" r="2.5"/></svg></span>
+              <span class="lbl">Effects</span>
             </button>
             <button id="rail-lyrics" title="Lyrics (L)">
-              <svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M4 3h16c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2h-6.6L9 21.5V17H4c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2zm3.6 4.5h2.6v3.4c0 1.6-.9 2.7-2.6 3.1v-1.5c.8-.2 1.1-.7 1.1-1.5H7.6V7.5zm5.8 0H16v3.4c0 1.6-.9 2.7-2.6 3.1v-1.5c.8-.2 1.1-.7 1.1-1.5h-1.1V7.5z"/></svg>
+              <span class="ico"><svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M4 3h16c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2h-6.6L9 21.5V17H4c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2zm3.6 4.5h2.6v3.4c0 1.6-.9 2.7-2.6 3.1v-1.5c.8-.2 1.1-.7 1.1-1.5H7.6V7.5zm5.8 0H16v3.4c0 1.6-.9 2.7-2.6 3.1v-1.5c.8-.2 1.1-.7 1.1-1.5h-1.1V7.5z"/></svg></span>
+              <span class="lbl">Lyrics</span>
             </button>
-            <button id="rail-addpl" title="Add current track to a playlist">
-              <svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zM3 10h12v2H3zM3 14h8v2H3zM17 10h2v3h3v2h-3v3h-2v-3h-3v-2h3v-3z"/></svg>
+            <button id="rail-addpl" title="Add the current track to a playlist">
+              <span class="ico"><svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zM3 10h12v2H3zM3 14h8v2H3zM17 10h2v3h3v2h-3v3h-2v-3h-3v-2h3v-3z"/></svg></span>
+              <span class="lbl">Playlist</span>
+            </button>
+            <button id="rail-crop" title="Crop the current track">
+              <span class="ico"><svg viewBox="0 0 24 24"><path d="M9 2v13.5A3.5 3.5 0 1 0 12.5 19H15v-2h-2.5A3.5 3.5 0 0 0 11 15.05V2zm-.5 15.5A1.5 1.5 0 1 1 5.5 19a1.5 1.5 0 0 1 3 0zM15 2v6.5l2-1.4V2zm2.5 13.5a3.5 3.5 0 1 0 1 6.86 3.5 3.5 0 0 0-1-6.86m0 5A1.5 1.5 0 1 1 19 19a1.5 1.5 0 0 1-1.5 1.5z"/></svg></span>
+              <span class="lbl">Crop</span>
             </button>
           </div>
         </div>

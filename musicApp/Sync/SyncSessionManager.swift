@@ -281,7 +281,8 @@ final class SyncSessionManager: ObservableObject {
     /// Wire two-way effects-settings sync:
     ///   sync.attachSettings(player: audioPlayer)
     func attachSettings(player: AudioPlayerManager) {
-        settingsSync = SettingsSync(db: coordinator.db, player: player)
+        settingsSync = SettingsSync(db: coordinator.db, player: player,
+                                    ownsAudio: { [weak self] in self?.coordinator.role.isOwner ?? false })
         if !uid.isEmpty { settingsSync?.activate(uid: uid) }
     }
 
