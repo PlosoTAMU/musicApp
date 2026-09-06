@@ -96,11 +96,6 @@ const mmss = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
-const ICON_PLAY =
-  '<svg viewBox="0 0 24 24"><path d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.9-6.2c.6-.4.6-1.4 0-1.8L9.6 4.9c-.7-.4-1.6.1-1.6.9z"/></svg>';
-const ICON_PAUSE =
-  '<svg viewBox="0 0 24 24"><path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z"/></svg>';
-
 // ── Connection ─────────────────────────────────────────────────────────────
 
 // A hung stage must surface as an error, not an eternal spinner. The timeout
@@ -1128,7 +1123,10 @@ function renderNow() {
   const cw = badgeYt ? replicator.cropFor(badgeYt) : {};
   $("crop-badge").hidden = cw.startMs == null && cw.endMs == null;
   $("eq").hidden = !isPlaying();
-  $("btn-toggle").innerHTML = isPlaying() ? ICON_PAUSE : ICON_PLAY;
+  // Class flip, never innerHTML: rebuilding the icon under a press dropped
+  // the click (see the button's markup comment) — "the animation played but
+  // it didn't pause".
+  $("btn-toggle").classList.toggle("playing", isPlaying());
 
   // Hero art — YouTube thumb keyed by the track's yt id; cache the last id so
   // the 500 ms tick doesn't restart the image fetch.
@@ -1833,8 +1831,28 @@ function renderPlaylists() {
 
 function renderAll() { renderNow(); renderLibrary(); }
 
+// Every list below is rebuilt from scratch (innerHTML = ""), and renderAll
+// runs on every session snapshot — so a rebuild can land between a row's
+// mousedown and mouseup, detaching the node the press started on, and
+// Chromium then never fires the click (same failure as the old toggle icon).
+// While a pointer is held, rebuilds are parked and replayed one tick after
+// release — after the click has been dispatched.
+let pointerHeld = false;
+let libraryRenderDeferred = false;
+window.addEventListener("pointerdown", () => { pointerHeld = true; }, true);
+const releasePointer = () => {
+  pointerHeld = false;
+  if (!libraryRenderDeferred) return;
+  libraryRenderDeferred = false;
+  setTimeout(renderLibrary, 0);   // after the click that ends this press
+};
+window.addEventListener("pointerup", releasePointer, true);
+window.addEventListener("pointercancel", releasePointer, true);
+window.addEventListener("blur", releasePointer);
+
 function renderLibrary() {
   if (coord.role === "none") return;
+  if (pointerHeld) { libraryRenderDeferred = true; return; }
   renderPlaylists();
 
   // "Playing" highlight + pause/resume toggle match by resolved id, not name —

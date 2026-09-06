@@ -4,6 +4,12 @@
 const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require("electron");
 const path = require("path");
 
+// The app owns the media keys (globalShortcut below → renderer toggle). With
+// Chromium's built-in handling left on, a play/pause key ALSO pauses the
+// <audio> element directly, so one press toggled twice and ended where it
+// started. Standard Electron fix for apps that register MediaPlayPause.
+app.commandLine.appendSwitch("disable-features", "HardwareMediaKeyHandling,MediaSessionService");
+
 app.whenReady().then(() => {
   const win = new BrowserWindow({
     show: false,                              // shown maximized below (no flash)
@@ -103,8 +109,7 @@ app.whenReady().then(() => {
           p.max = "200000"; p.value = "74000"; p.style.setProperty("--fill", "37%");
           document.getElementById("time-cur").textContent = "1:14";
           document.getElementById("time-dur").textContent = "3:20";
-          document.getElementById("btn-toggle").innerHTML =
-            '<svg viewBox="0 0 24 24"><path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z"/></svg>';
+          document.getElementById("btn-toggle").classList.add("playing");
           const mkRow = (list, name, chip, cls) => {
             const li = document.createElement("li");
             if (cls) li.className = cls;

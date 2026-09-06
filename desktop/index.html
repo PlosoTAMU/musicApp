@@ -262,6 +262,13 @@
       box-shadow: 0 6px 24px rgba(241,43,38,.55);
     }
     .transport #btn-toggle svg { width: 36px; height: 36px; }
+    #btn-toggle .i-pause { display: none; }
+    #btn-toggle.playing .i-pause { display: block; }
+    #btn-toggle.playing .i-play { display: none; }
+    /* Icons never take the pointer: mousedown/mouseup both land on the BUTTON,
+       which is never replaced, so a click can't be lost to a repaint between
+       them (Chromium drops the click when the mousedown node is detached). */
+    .transport svg, .rail-actions svg, .act .ico, .act .lbl { pointer-events: none; }
 
     /* Rail top — desktop twin of the iOS Now Playing top bar. Line 1 is the
        "Now Playing" tag (+ BPM); line 2 is the full action row, spread across
@@ -676,8 +683,14 @@
           <button id="btn-back10" title="Back 10s">
             <svg viewBox="0 0 24 24"><path d="M11 7V3.2L6 8l5 4.8V9a5 5 0 1 1-5 5H4a7 7 0 1 0 7-7z"/><text x="12.5" y="17.5" font-size="7.5" font-weight="800" text-anchor="middle">10</text></svg>
           </button>
+          <!-- Both glyphs live in the DOM; .playing on the button picks one.
+               The icon used to be re-created by innerHTML on every 500 ms
+               repaint, and a click whose mousedown landed on an <svg> that was
+               replaced before mouseup never fires — the press animation ran,
+               nothing paused. -->
           <button id="btn-toggle" title="Play/Pause">
-            <svg viewBox="0 0 24 24"><path d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.9-6.2c.6-.4.6-1.4 0-1.8L9.6 4.9c-.7-.4-1.6.1-1.6.9z"/></svg>
+            <svg class="i-play" viewBox="0 0 24 24"><path d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.9-6.2c.6-.4.6-1.4 0-1.8L9.6 4.9c-.7-.4-1.6.1-1.6.9z"/></svg>
+            <svg class="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z"/></svg>
           </button>
           <button id="btn-fwd10" title="Forward 10s">
             <svg viewBox="0 0 24 24"><path d="M13 7V3.2L18 8l-5 4.8V9a5 5 0 1 0 5 5h2a7 7 0 1 1-7-7z"/><text x="11.5" y="17.5" font-size="7.5" font-weight="800" text-anchor="middle">10</text></svg>
