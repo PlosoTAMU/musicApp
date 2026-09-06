@@ -432,7 +432,7 @@ struct UpNextMiniBar: View {
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     AsyncThumbnailView(
-                        thumbnailPath: downloadManager.getDownload(byID: next.id)?.resolvedThumbnailPath,
+                        thumbnailPath: downloadManager.artworkPath(for: next),
                         size: 26,
                         cornerRadius: 6
                     )
@@ -525,18 +525,22 @@ struct MiniPlayerBar: View {
         }
     }
 
-    /// Resolve artwork the same way the lists do — through the Download
-    /// record's stored thumbnail path — instead of guessing the filename
-    /// from the audio URL. Falls back to the audio-derived path.
+    /// One resolver for every surface (DownloadManager.artworkPath(for:)), so
+    /// this bar can never show different art from Now Playing for the same
+    /// song. The old fallback here was the LEGACY audio-filename key, which
+    /// Now Playing only used last — a reusable key that could hold another
+    /// song's artwork, which is exactly the mismatch users saw.
     private func refreshThumbnailPath() {
         guard let track = activeTrack else { cachedThumbnailPath = nil; return }
-        if let stored = downloadManager.getDownload(byID: track.id)?.resolvedThumbnailPath,
-           FileManager.default.fileExists(atPath: stored) {
-            cachedThumbnailPath = stored
-            return
-        }
-        let derived = Artwork.thumbnailURL(forAudioFileURL: track.url).path
-        cachedThumbnailPath = FileManager.default.fileExists(atPath: derived) ? derived : nil
+        cachedThumbnailPath = downloadManager.artworkPath(for: track)
+    }
+
+    /// A thumbnail heal landed (record re-pointed, file written) for the song
+    /// on screen: re-resolve, and only redraw when the answer changed.
+    private func artworkMayHaveChanged() {
+        let before = cachedThumbnailPath
+        refreshThumbnailPath()
+        if cachedThumbnailPath != before { updateBackgroundImage() }
     }
     
     var body: some View {
@@ -678,6 +682,12 @@ struct MiniPlayerBar: View {
             refreshThumbnailPath()
             updateBackgroundImage()
         }
+        // Library changes (a boot-time heal adopting `<videoID>.jpg`, a
+        // thumbnail fetch finishing) — objectWillChange fires BEFORE the
+        // mutation, so hop one turn to read the settled record.
+        .onReceive(downloadManager.objectWillChange) { _ in
+            DispatchQueue.main.async { artworkMayHaveChanged() }
+        }
     }
 
     private func progressHairline(_ p: CGFloat) -> some View {
@@ -697,18 +707,14 @@ struct MiniPlayerBar: View {
         }
 
         let audioURL = track.url
+        // Same resolved file as the foreground art — never a second guess.
         let path = cachedThumbnailPath
         // Disk read + crop off the main thread so swapping tracks never
         // hitches the UI (the foreground artwork is handled by AsyncThumbnailView).
         DispatchQueue.global(qos: .userInitiated).async {
             PerformanceMonitor.shared.start("NowPlayingView_UpdateBackground")
             // Wide aspect crop for the mini player
-            let cropped: UIImage?
-            if let path = path {
-                cropped = Artwork.croppedBackground(atPath: path, aspect: 4.0)
-            } else {
-                cropped = Artwork.croppedBackground(forAudioFileURL: audioURL, aspect: 4.0)
-            }
+            let cropped = path.flatMap { Artwork.croppedBackground(atPath: $0, aspect: 4.0) }
             PerformanceMonitor.shared.end("NowPlayingView_UpdateBackground")
             DispatchQueue.main.async {
                 // Only apply if we're still on the same track
@@ -742,6 +748,9 @@ struct NowPlayingView: View {
     // Resolved once per track change (see refreshThumbnailImage()) instead of
     // recomputed in `body` on every 0.5s playback tick.
     @State private var cachedNowPlayingThumbnail: UIImage?
+    // The file the art above was decoded from — lets a library change be
+    // ignored unless it actually re-resolved this song's artwork.
+    @State private var cachedArtworkPath: String?
     // Title text-width measurement (Core Text) only changes with the track,
     // not with the 0.5s playback tick — cache it instead of remeasuring every
     // time titleView's body re-evaluates.
@@ -862,6 +871,18 @@ struct NowPlayingView: View {
             updateBackgroundImage()
             refreshThumbnailImage()
             refreshTitleMetrics()
+        }
+        // A thumbnail heal/fetch landed for the song on screen — re-resolve
+        // (one turn later: objectWillChange precedes the mutation) and redraw
+        // only if the resolved file actually changed.
+        .onReceive(downloadManager.objectWillChange) { _ in
+            DispatchQueue.main.async {
+                let path = displayTrack.flatMap { downloadManager.artworkPath(for: $0) }
+                if path != cachedArtworkPath {
+                    refreshThumbnailImage()
+                    updateBackgroundImage()
+                }
+            }
         }
         // Plain .gesture (NOT highPriority) so child controls — the volume bar
         // and progress slider — still receive their own drags. The dismiss drag
@@ -1142,9 +1163,16 @@ struct NowPlayingView: View {
     // own view identity, so on the panel's animated mount SwiftUI INSERTS it
     // (default .opacity transition) instead of letting it ride the panel offset
     // like the unconditional siblings (title/controls/volume) — that's the
-    // fade. Keeping the Button always in the tree and collapsing it to zero
-    // height/opacity when there's no next track makes it structurally identical
-    // to its siblings: it slides up/down with the panel, never fades on its own.
+    // fade. Keeping the Button always in the tree makes it structurally
+    // identical to its siblings: it slides up/down with the panel, never fades
+    // on its own.
+    //
+    // FIXED FOOTPRINT, too. The strip previously collapsed to zero height when
+    // the queue was empty, so the two Spacers above re-balanced and the
+    // artwork, title, and every control dropped down the screen the moment the
+    // last queued song started (and jumped back up when one was added). The
+    // slot is now always `upNextStripHeight` tall; an empty queue just leaves
+    // it invisible and inert. Nothing else moves.
     @ViewBuilder
     private var upNextStrip: some View {
         let next = audioPlayer.upNextTracks.first
@@ -1153,7 +1181,7 @@ struct NowPlayingView: View {
         } label: {
             HStack(spacing: 10) {
                 AsyncThumbnailView(
-                    thumbnailPath: next.flatMap { downloadManager.getDownload(byID: $0.id)?.resolvedThumbnailPath },
+                    thumbnailPath: next.flatMap { downloadManager.artworkPath(for: $0) },
                     size: 34,
                     cornerRadius: 7
                 )
@@ -1189,14 +1217,18 @@ struct NowPlayingView: View {
         .buttonStyle(.plain)
         .disabled(next == nil)
         .allowsHitTesting(next != nil)
-        // Collapse to nothing when there's no next track — same footprint as the
-        // old conditional, no overflow, but the view identity stays stable.
-        .frame(height: next == nil ? 0 : nil)
+        .accessibilityHidden(next == nil)
+        // Constant slot: the strip's natural height (34 pt art + 7 pt vertical
+        // padding each side) regardless of whether there is a next track, so
+        // the layout above it never shifts. Empty queue ⇒ invisible, not gone.
+        .frame(height: Self.upNextStripHeight)
         .opacity(next == nil ? 0 : 1)
-        .clipped()
-        .padding(.top, next == nil ? 0 : 14)
+        .padding(.top, 14)
         .padding(.horizontal, 24)
     }
+
+    /// Natural height of the Up Next strip — reserved even when empty.
+    private static let upNextStripHeight: CGFloat = 48
 
     /// Jump straight to the upcoming track. A queued song is pulled from the
     /// queue and played; a playlist track just plays.
@@ -1403,12 +1435,16 @@ struct NowPlayingView: View {
         }
 
         let audioURL = track.url
+        // The SAME file the foreground art resolves to. This used to read the
+        // legacy `<audio filename>.jpg` directly, so the blurred backdrop could
+        // be a different picture from the artwork sitting on top of it.
+        let path = downloadManager.artworkPath(for: track)
         // Screen-aspect crop for the full-screen backdrop
         let screenAspect = UIScreen.main.bounds.width / UIScreen.main.bounds.height
         // Disk read + crop off the main thread so this doesn't compete with
         // the sheet's slide-up animation (matches MiniPlayerBar's version).
         DispatchQueue.global(qos: .userInitiated).async {
-            let cropped = Artwork.croppedBackground(forAudioFileURL: audioURL, aspect: screenAspect)
+            let cropped = path.flatMap { Artwork.croppedBackground(atPath: $0, aspect: screenAspect) }
             DispatchQueue.main.async {
                 if self.displayTrack?.url == audioURL {
                     self.backgroundImage = cropped
@@ -1427,7 +1463,8 @@ struct NowPlayingView: View {
     /// Called on track change (onAppear/onChange), not from `body` — the path
     /// resolution below never changes for the same track.
     private func refreshThumbnailImage() {
-        cachedNowPlayingThumbnail = getThumbnailImage(for: displayTrack)
+        cachedArtworkPath = displayTrack.flatMap { downloadManager.artworkPath(for: $0) }
+        cachedNowPlayingThumbnail = cachedArtworkPath.flatMap(loadNowPlayingImage(atPath:))
     }
 
     /// Re-measures the title text width once per track change instead of on
@@ -1438,23 +1475,12 @@ struct NowPlayingView: View {
         cachedTitleWidth = text.widthOfString(usingFont: Theme.roundedUIFont(size: 28, weight: .heavy))
     }
 
-    private func getThumbnailImage(for track: Track?) -> UIImage? {
-        guard let track = track else { return nil }
-
-        // Prefer the Download record's stored thumbnail path (the same source
-        // the lists use); fall back to the audio-derived path.
-        let pathString: String
-        if let stored = downloadManager.getDownload(byID: track.id)?.resolvedThumbnailPath,
-           FileManager.default.fileExists(atPath: stored) {
-            pathString = stored
-        } else if let derived = EmbeddedPython.shared.getThumbnailPath(for: track.url) {
-            pathString = derived.path
-        } else {
-            return nil
-        }
-
-        // ⚡ Use a size-specific cache key so list thumbnails (48px) don't conflict with NowPlaying (200px)
-        let cacheKey = pathString + "_nowplaying"
+    /// Full-resolution decode of an already-resolved artwork file (the path
+    /// comes from DownloadManager.artworkPath(for:), the same resolver the
+    /// mini player and Up Next use — no second lookup scheme here).
+    private func loadNowPlayingImage(atPath pathString: String) -> UIImage? {
+        // Own cache variant: list decodes are size-capped, this one is not.
+        let cacheKey = ThumbnailCache.shared.key(path: pathString, variant: "nowplaying")
         if let cached = ThumbnailCache.shared.get(cacheKey) {
             return cached
         }
@@ -1579,7 +1605,7 @@ struct UpNextRow: View {
     var body: some View {
         HStack(spacing: 12) {
             AsyncThumbnailView(
-                thumbnailPath: download?.resolvedThumbnailPath,
+                thumbnailPath: download?.artworkPath,
                 size: 44,
                 cornerRadius: 8
             )

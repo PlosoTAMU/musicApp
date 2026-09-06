@@ -332,13 +332,28 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
     
     
     
+    // In-memory copy of the sidecar, keyed on the file's modification date.
+    // getThumbnailPath(for:) is now on the artwork hot path (every list row
+    // whose record has no keyed/stored art falls through to it), and reading +
+    // JSON-decoding the whole file per row would hitch scrolling. A stat per
+    // call keeps it correct across saves from any code path (incl. Python).
+    private let metadataLock = NSLock()
+    private var metadataCache: (modified: Date?, value: [String: [String: String]])?
+
     private func loadMetadata() -> [String: [String: String]] {
         let metadataURL = getMetadataFileURL()
-        guard let data = try? Data(contentsOf: metadataURL),
-              let metadata = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
-            return [:]
+        let modified = (try? FileManager.default.attributesOfItem(atPath: metadataURL.path)[.modificationDate]) as? Date
+        metadataLock.lock(); defer { metadataLock.unlock() }
+        if let cached = metadataCache, cached.modified == modified { return cached.value }
+        let value: [String: [String: String]]
+        if let data = try? Data(contentsOf: metadataURL),
+           let decoded = try? JSONDecoder().decode([String: [String: String]].self, from: data) {
+            value = decoded
+        } else {
+            value = [:]
         }
-        return metadata
+        metadataCache = (modified, value)
+        return value
     }
     
     private func getMetadataFileURL() -> URL {
@@ -649,7 +664,9 @@ class EmbeddedPython: ObservableObject, @unchecked Sendable {
                         }
                         
                         try saveData.write(to: savePath, options: .atomic)
-                        
+                        // Same path may already be cached from a stale decode.
+                        ThumbnailCache.shared.invalidate(path: savePath.path)
+
                         if let _ = UIImage(contentsOfFile: savePath.path) {
                             print("✅ [ensureThumbnail] Saved for \(videoID): \(Int(image.size.width))x\(Int(image.size.height))")
                             completion?(true)

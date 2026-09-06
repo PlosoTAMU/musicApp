@@ -196,7 +196,7 @@ struct DownloadRow: View {
             HStack(spacing: 12) {
                 ZStack {
                     AsyncThumbnailView(
-                        thumbnailPath: download.resolvedThumbnailPath,
+                        thumbnailPath: download.artworkPath,
                         size: 48,
                         cornerRadius: 10,
                         grayscale: download.pendingDeletion

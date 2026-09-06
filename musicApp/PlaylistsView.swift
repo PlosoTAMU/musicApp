@@ -135,7 +135,7 @@ struct PlaylistsView: View {
     /// First track's artwork doubles as the playlist cover.
     private func coverThumbnailPath(for playlist: Playlist) -> String? {
         for trackID in playlist.trackIDs {
-            if let path = downloadManager.getDownload(byID: trackID)?.resolvedThumbnailPath {
+            if let path = downloadManager.getDownload(byID: trackID)?.artworkPath {
                 return path
             }
         }

@@ -361,33 +361,15 @@ struct SourceChip: View {
 /// NowPlayingView no longer carry duplicate copies of it.
 enum Artwork {
     
-    private static let thumbnailsDirectory: URL = {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Thumbnails", isDirectory: true)
-    }()
-    
-    /// Thumbnail file URL for a given audio file URL
-    /// (Thumbnails/<audio filename>.jpg).
-    static func thumbnailURL(forAudioFileURL audioURL: URL) -> URL {
-        thumbnailsDirectory.appendingPathComponent("\(audioURL.lastPathComponent).jpg")
-    }
-    
-    /// Loads the thumbnail image for an audio file, if one exists on disk —
-    /// downsampled, since every caller only ever blurs this into a backdrop
-    /// (full-resolution decode buys nothing once blur destroys the detail).
-    static func image(forAudioFileURL audioURL: URL) -> UIImage? {
-        downsampledImage(atPath: thumbnailURL(forAudioFileURL: audioURL).path)
-    }
+    // NOTE: there is deliberately no `forAudioFileURL` backdrop loader any
+    // more. It read the LEGACY `<audio filename>.jpg` key directly, which is
+    // how the Now Playing backdrop could show a different picture from the
+    // artwork on top of it. Resolve through DownloadManager.artworkPath(for:)
+    // and pass the path here.
 
-    /// Loads the thumbnail and center-crops it to the given aspect ratio
-    /// (width / height). Used for the blurred backgrounds behind the mini
-    /// player (wide) and the Now Playing screen (screen aspect).
-    static func croppedBackground(forAudioFileURL audioURL: URL, aspect: CGFloat) -> UIImage? {
-        guard let original = image(forAudioFileURL: audioURL) else { return nil }
-        return crop(original, aspect: aspect)
-    }
-
-    /// Same crop, but from an explicit on-disk thumbnail path.
+    /// Loads the thumbnail at `path` and center-crops it to the given aspect
+    /// ratio (width / height). Used for the blurred backgrounds behind the
+    /// mini player (wide) and the Now Playing screen (screen aspect).
     static func croppedBackground(atPath path: String, aspect: CGFloat) -> UIImage? {
         guard let original = downsampledImage(atPath: path) else { return nil }
         return crop(original, aspect: aspect)

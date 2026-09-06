@@ -755,7 +755,11 @@ class DownloadManager: ObservableObject {
                     
                     // Save atomically
                     try saveData.write(to: savePath, options: .atomic)
-                    
+                    // A view may have cached a decode of an earlier file at
+                    // this path (a placeholder-sized one that failed the size
+                    // gate above) — drop it so the fresh art shows.
+                    ThumbnailCache.shared.invalidate(path: savePath.path)
+
                     // Verify readable
                     if let _ = UIImage(contentsOfFile: savePath.path) {
                         print("✅ [Thumbnail] Saved \(Int(image.size.width))x\(Int(image.size.height)) (\(saveData.count / 1024)KB) from: \(urlString)")
@@ -1371,6 +1375,15 @@ class DownloadManager: ObservableObject {
     
     func getDownload(byID id: UUID) -> Download? {
         downloads.first { $0.id == id && !$0.pendingDeletion }
+    }
+
+    /// Artwork for a Track — `Download.artworkPath` when the track maps to a
+    /// record, else the audio-URL lookup (imported files, records mid-delete).
+    /// The single entry point for every player surface, so the mini player,
+    /// Now Playing, and Up Next can never disagree about a song's art.
+    func artworkPath(for track: Track) -> String? {
+        if let download = getDownload(byID: track.id) { return download.artworkPath }
+        return EmbeddedPython.shared.getThumbnailPath(for: track.url)?.path
     }
     
     func findDuplicateByVideoID(videoID: String, source: DownloadSource) -> Download? {

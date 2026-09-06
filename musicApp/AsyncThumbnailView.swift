@@ -62,8 +62,12 @@ struct AsyncThumbnailView: View {
             return
         }
         
-        // ⚡ Check cache first (fast path, no disk I/O)
-        if let cached = ThumbnailCache.shared.get(path) {
+        // ⚡ Check cache first (fast path, no disk I/O). Keyed by path AND
+        // size: one shared key meant a 26 pt Up Next decode got reused by the
+        // 42 pt mini player (blurry, visibly "different" from Now Playing's
+        // full-resolution art) — whichever surface loaded first won.
+        let cacheKey = ThumbnailCache.key(path: path, size: size)
+        if let cached = ThumbnailCache.shared.get(cacheKey) {
             image = cached
             return
         }
@@ -98,7 +102,7 @@ struct AsyncThumbnailView: View {
             let scaledImage = UIImage(cgImage: cgImage)
             
             // Cache it
-            ThumbnailCache.shared.set(path, image: scaledImage)
+            ThumbnailCache.shared.set(cacheKey, image: scaledImage)
             
             await MainActor.run {
                 if !Task.isCancelled {
@@ -114,19 +118,43 @@ final class ThumbnailCache {
     static let shared = ThumbnailCache()
     
     private var cache = NSCache<NSString, UIImage>()
-    
+    /// Per-path generation, bumped when the file at that path is rewritten
+    /// (a thumbnail heal or refetch). Keys embed it, so a cached decode of the
+    /// OLD bytes can never be served for the new file. NSCache can't
+    /// enumerate, so this is how "invalidate everything for this path" works.
+    private var generation: [String: Int] = [:]
+    private let lock = NSLock()
+
     private init() {
         cache.countLimit = 100  // Keep up to 100 thumbnails in memory
         cache.totalCostLimit = 100 * 1024 * 1024  // ~100MB limit
     }
-    
-    func get(_ path: String) -> UIImage? {
-        cache.object(forKey: path as NSString)
+
+    /// Cache key for a decode of `path` at `size` points. Callers that decode
+    /// at a bespoke size (Now Playing's full-resolution art) pass their own
+    /// label via `variant` instead.
+    static func key(path: String, size: CGFloat) -> String {
+        shared.key(path: path, variant: "s\(Int(size.rounded()))")
     }
-    
-    func set(_ path: String, image: UIImage) {
+
+    func key(path: String, variant: String) -> String {
+        lock.lock(); defer { lock.unlock() }
+        return "\(path)#\(variant)#\(generation[path] ?? 0)"
+    }
+
+    /// The file at `path` was rewritten — every cached decode of it is stale.
+    func invalidate(path: String) {
+        lock.lock(); defer { lock.unlock() }
+        generation[path, default: 0] += 1
+    }
+
+    func get(_ key: String) -> UIImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    func set(_ key: String, image: UIImage) {
         let cost = Int(image.size.width * image.size.height * 4)  // Approximate bytes
-        cache.setObject(image, forKey: path as NSString, cost: cost)
+        cache.setObject(image, forKey: key as NSString, cost: cost)
     }
     
     func clear() {

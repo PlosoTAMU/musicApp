@@ -20,7 +20,7 @@ struct SelectSongsSheet: View {
                         } label: {
                             HStack(spacing: 12) {
                                 AsyncThumbnailView(
-                                    thumbnailPath: download.resolvedThumbnailPath,
+                                    thumbnailPath: download.artworkPath,
                                     size: 48,
                                     cornerRadius: 10
                                 )
@@ -96,7 +96,7 @@ struct PlaylistDetailView: View {
                 VStack(spacing: 14) {
                     HStack(spacing: 14) {
                         AsyncThumbnailView(
-                            thumbnailPath: tracks.first?.resolvedThumbnailPath,
+                            thumbnailPath: tracks.first?.artworkPath,
                             size: 72,
                             cornerRadius: 14
                         )
@@ -298,7 +298,7 @@ struct PlaylistSongRow: View {
             HStack(spacing: 12) {
                 ZStack {
                     AsyncThumbnailView(
-                        thumbnailPath: download.resolvedThumbnailPath,
+                        thumbnailPath: download.artworkPath,
                         size: 48,
                         cornerRadius: 10
                     )

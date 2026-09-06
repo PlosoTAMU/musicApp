@@ -65,7 +65,7 @@ struct CreatePlaylistSheet: View {
                         } label: {
                             HStack(spacing: 12) {
                                 AsyncThumbnailView(
-                                    thumbnailPath: download.resolvedThumbnailPath,
+                                    thumbnailPath: download.artworkPath,
                                     size: 40,
                                     cornerRadius: 9
                                 )

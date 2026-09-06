@@ -442,7 +442,7 @@ struct QueueTrackRow: View {
             HStack(spacing: 12) {
                 ZStack {
                     AsyncThumbnailView(
-                        thumbnailPath: download?.resolvedThumbnailPath,
+                        thumbnailPath: download?.artworkPath,
                         size: 46,
                         cornerRadius: 10
                     )
