@@ -12,7 +12,7 @@ import { SyncEngine } from "./engine";
 import { Replicator } from "./replicator";
 import { leaseExpired, liveRemoteOwner, ownerSuspectDead, sameId, handoffActive, TrackRef } from "./protocol";
 import { serverClock } from "./serverClock";
-import { LocalTrack, norm, resolve } from "./player";
+import { LocalTrack, norm, resolve, toRef } from "./player";
 import { LyricsStore, LyricLine, parseLRC, activeIndex } from "./lyrics";
 import { BeatFeed, BeatOutput } from "./beat";
 import { drawEdgeVisualizer, sampleArtColors } from "./visualizer";
@@ -78,7 +78,7 @@ function watchMusicDir(dir: string) {
   } catch { /* fs.watch unavailable — edits sync on next launch/download */ }
 }
 let searchTerm = "";
-let lastArtYt: string | undefined | null = null; // null = uninitialized
+let lastArtKey: string | null | undefined = undefined; // undefined = uninitialized
 
 // Lyrics panel state — lines come from the shared Firestore/LRCLIB cache.
 let lyricsOpen = false;
@@ -311,7 +311,7 @@ function wire() {
   // Add-to-playlist from the now-playing rail — opens the picker for any device's
   // current track (no need to open a playlist first, like iOS).
   $("rail-addpl").onclick = () => {
-    const ref = coord.remote?.playback.track;
+    const ref = currentTrackRef();
     if (!ref) { showHint("Nothing playing"); return; }
     const r = $("rail-addpl").getBoundingClientRect();
     addToPlaylistMenu(r.right, r.bottom,
@@ -508,6 +508,16 @@ const isPlaying = () =>
 const isLooping = () =>
   localAudio() ? engine.player.loop : !!coord.remote?.playback?.loop;
 
+/** The track to PAINT. While the audio is here, the local element is the
+ *  truth: coord.remote only catches up after a publish + Firestore round-trip
+ *  (and publishPlayback is a transaction, so there's no local echo at all —
+ *  a failed/queued write left the hero art and title on the previous song
+ *  indefinitely). Followers still read the mirror. */
+const currentTrackRef = (): TrackRef | undefined =>
+  localAudio()
+    ? (engine.player.current ? toRef(engine.player.current) : undefined)
+    : coord.remote?.playback.track;
+
 function toggleCmd() {
   const pb = coord.remote?.playback;
   const playing = isPlaying();
@@ -629,7 +639,7 @@ function resetFxSlider(id: string) {
 /** The currently-playing track resolved to a local file on this device, or
  *  undefined when nothing plays / it isn't in this library. */
 function currentLocalTrack(): LocalTrack | undefined {
-  const ref = coord.remote?.playback.track;
+  const ref = currentTrackRef();
   return ref ? resolve(ref, engine.library) : undefined;
 }
 
@@ -881,11 +891,14 @@ function vizLoop(now: number) {
 /** Re-samples art colors once per track change (not per-frame) — mirrors
  *  the iOS EdgeVisualizerView's precomputeBarColors-on-track-change. */
 function updateArtColors() {
-  const artYt = coord.remote?.playback.track?.yt ?? null;
+  const artYt = currentTrackRef()?.yt ?? null;
   if (artYt === artColorsForYt) return;
-  artColorsForYt = artYt;
   const img = $("art-img") as HTMLImageElement;
-  if (!artYt || img.hidden || !img.complete) { artColors = null; return; }
+  if (!artYt) { artColorsForYt = artYt; artColors = null; return; }
+  // Don't latch on a thumbnail that hasn't decoded yet — latching here left
+  // the bars on the previous track's colors (or none) for the whole song.
+  if (img.hidden || !img.complete || !img.naturalWidth) { artColors = null; return; }
+  artColorsForYt = artYt;
   artColors = sampleArtColors(img);
 }
 
@@ -926,7 +939,7 @@ const fileDurationSec = (p: string): Promise<number | undefined> =>
   });
 
 function loadLyrics(force = false) {
-  const ref = coord.remote?.playback.track;
+  const ref = currentTrackRef();
   const seq = ++lyricsSeq;
   lyricsTrackId = ref?.id ?? null;
   lyricsLines = null; lyricsPlain = null; lyricsActiveIdx = -1; lyricsOffsetMs = 0;
@@ -1108,7 +1121,11 @@ function renderNow() {
         : `Nothing playing yet · Play Here to start`;
   ($("btn-playhere") as HTMLButtonElement).disabled = busy || !coord.online;
 
-  const titleText = pb?.track?.name ?? (idle ? "Pick a song →" : "Nothing playing");
+  // Now-playing identity comes from currentTrackRef(), not the mirror: as
+  // owner the element already switched songs, while pb.track only catches up
+  // once the publish transaction lands (sometimes never — see the outbox).
+  const cur = currentTrackRef();
+  const titleText = cur?.name ?? (idle ? "Pick a song →" : "Nothing playing");
   const titleEl = $("track-title"), titleInner = $("track-title-text");
   if (titleInner.textContent !== titleText) {
     titleInner.textContent = titleText;
@@ -1119,7 +1136,7 @@ function renderNow() {
   }
   // ✂ CROPPED badge — twin of the iOS Now Playing capsule. cropFor reads the
   // synced meta, so followers see it too.
-  const badgeYt = pb?.track ? (resolve(pb.track, engine.library)?.yt ?? pb.track.yt) : undefined;
+  const badgeYt = cur ? (resolve(cur, engine.library)?.yt ?? cur.yt) : undefined;
   const cw = badgeYt ? replicator.cropFor(badgeYt) : {};
   $("crop-badge").hidden = cw.startMs == null && cw.endMs == null;
   $("eq").hidden = !isPlaying();
@@ -1130,9 +1147,10 @@ function renderNow() {
 
   // Hero art — YouTube thumb keyed by the track's yt id; cache the last id so
   // the 500 ms tick doesn't restart the image fetch.
-  const artYt = pb?.track?.yt;
-  if (artYt !== lastArtYt) {
-    lastArtYt = artYt;
+  const artYt = cur?.yt;
+  const artKey = cur ? `${cur.id}|${artYt ?? ""}` : null;
+  if (artKey !== lastArtKey) {
+    lastArtKey = artKey;
     const img = $("art-img") as HTMLImageElement;
     if (artYt) {
       img.src = `https://i.ytimg.com/vi/${artYt}/mqdefault.jpg`;
@@ -1164,10 +1182,10 @@ function renderNow() {
   $("repl-status").textContent = Date.now() < hintUntil ? hint : replicator.status;
 
   if (lyricsOpen) {
-    const cur = pb?.track?.id ?? null;
-    const changed = cur === null || lyricsTrackId === null
-      ? cur !== lyricsTrackId
-      : !sameId(cur, lyricsTrackId);
+    const curId = cur?.id ?? null;
+    const changed = curId === null || lyricsTrackId === null
+      ? curId !== lyricsTrackId
+      : !sameId(curId, lyricsTrackId);
     if (changed) loadLyrics();
     else updateLyricsHighlight();
   }
@@ -1740,7 +1758,7 @@ function renderPlaylists() {
   $("pl-count").textContent = n ? String(n) : "";
   const listEl = $("pl-list");
   listEl.innerHTML = "";
-  const playingRef = coord.remote?.playback.track;
+  const playingRef = currentTrackRef();
   const playingLocal = playingRef ? resolve(playingRef, engine.library) : undefined;
 
   const open = openPlaylistId ? playlistSync.get(openPlaylistId) : undefined;
@@ -1857,7 +1875,7 @@ function renderLibrary() {
 
   // "Playing" highlight + pause/resume toggle match by resolved id, not name —
   // duplicate titles no longer double-highlight [U12].
-  const playingRef = coord.remote?.playback.track;
+  const playingRef = currentTrackRef();
   const playingLocal = playingRef ? resolve(playingRef, engine.library) : undefined;
 
   // Up Next — from REMOTE refs (session truth); ghosts flagged, not hidden.
