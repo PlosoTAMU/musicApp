@@ -8,6 +8,7 @@ import { LocalPlayer, LocalTrack, scanLibrary, resolve, toRef } from "./player";
 import {
   PlaybackState, SessionState, TrackRef, DEVICE_ID, positionAt,
   sameId, sessionIdle, liveRemoteOwner, SEAT_TAKEN,
+  transferPending, knownDurationMs,
 } from "./protocol";
 import { serverClock } from "./serverClock";
 
@@ -159,6 +160,10 @@ export class SyncEngine {
     // player.queue is display-only (trackEnded reads coord.remote.queue), but
     // the two ends must not quietly disagree about what an echo means.
     this.maybeRequestStatus(s);
+    if (s.playback.track && s.playback.dur > 0)
+      this.knownDurMs.set(s.playback.track.id, s.playback.dur);
+    // The owner asked for playback to move here (sync-audit-6, task 3).
+    this.maybeAcceptTransfer(s);
     if (!isEcho) {
       this.ghostQueue = s.queue.filter(r => !resolve(r, this.library));
       this.player.queue = s.queue
@@ -180,6 +185,44 @@ export class SyncEngine {
       this.commands.send({ t: "status" });
     }
   }
+
+  // ── Transfer (owner asks the other device to take over) ─────────────────
+
+  /** One claim per beacon: remembers the beacon it answered (by atMs), so a
+   *  claim that failed — track not here, seat taken by another follower,
+   *  offline — is not retried on every snapshot. */
+  private answeredTransferAtMs: number | null = null;
+  private transferClaimInFlight = false;
+
+  private maybeAcceptTransfer(s: SessionState) {
+    if (this.coord.demo || this.coord.role === "owner" || !this.coord.online) return;
+    const h = s.handoff;
+    if (!h || !transferPending(s, serverClock.nowMs)) return;
+    if (this.answeredTransferAtMs === h.atMs || this.transferClaimInFlight) return;
+    this.answeredTransferAtMs = h.atMs;
+    // Not in this library ⇒ leave the beacon for a device that has it.
+    if (s.playback.track && !resolve(s.playback.track, this.library)) return;
+    this.transferClaimInFlight = true;
+    void this.takeOverHere(s.playback.playing, h.by)
+      .catch(e => console.log("[sync] transfer claim failed", e))
+      .finally(() => { this.transferClaimInFlight = false; this.onChange?.(); });
+  }
+
+  /** Owner side of the button: post the beacon. The claiming device deposes
+   *  us (audio pauses here through onDeposed, continues there). */
+  async transferAway() {
+    if (this.coord.role !== "owner") return;
+    await this.coord.postTransfer();
+  }
+
+  /** Retract an unanswered transfer (UI timeout). */
+  async cancelTransfer() { await this.coord.cancelTransfer(); }
+
+  /** Duration to draw for the mirror — the published one, or the last known
+   *  length of the same track while the owner's first publish says 0. */
+  mirrorDurMs(): number { return knownDurationMs(this.coord.remote?.playback, this.knownDurMs); }
+  /** Track id → last non-zero duration seen (mirror or our own element). */
+  private knownDurMs = new Map<string, number>();
 
   // ── Controls: one call site, both roles (command-bus bridge) ───────────
 
@@ -344,12 +387,22 @@ export class SyncEngine {
 
   private snapshot(): PlaybackState {
     const cur = this.player.current;
+    // The element reports no length until metadata loads, which is AFTER the
+    // publish that announces a track change. A track this device has played
+    // before (⏮ always is) has a known length — publish that instead of 0 so
+    // followers never draw a collapsed slider for a beat (sync-audit-6, task
+    // 4). The durationchange republish still corrects any crop-window drift.
+    let dur = Math.round(this.player.durMs);
+    if (cur) {
+      if (dur > 0) this.knownDurMs.set(cur.id, dur);
+      else dur = this.knownDurMs.get(cur.id) ?? 0;
+    }
     const pb: PlaybackState = {
       playing: this.player.playing,
       pos: Math.round(this.player.posMs),
       anchor: serverClock.nowMs,
       rate: this.player.rateX1000,
-      dur: Math.round(this.player.durMs),
+      dur,
       rev: 0,
       loop: this.player.loop,
     };
@@ -491,12 +544,12 @@ export class SyncEngine {
   /** "Play Here": refuse before the epoch bump if the track is a ghost here.
    *  `forcePlay` = Bluetooth handoff: the old owner paused when its headphones
    *  dropped, so the session reads "paused" — but the intent is continuation. */
-  async takeOverHere(forcePlay = false) {
+  async takeOverHere(forcePlay = false, requireHandoffFrom?: string) {
     const pb = this.coord.remote?.playback;
     if (pb?.track && !resolve(pb.track, this.library))
       throw new Error(`“${pb.track.name}” is not in this device's library`);
 
-    const pre = await this.coord.takeOver();
+    const pre = await this.coord.takeOver(false, requireHandoffFrom);
     const prePb = pre.playback;
     const posMs = positionAt(prePb, serverClock.nowMs);
 

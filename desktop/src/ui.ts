@@ -10,7 +10,9 @@ import { db, bootstrapAuth, signOutHome } from "./firebase";
 import { SessionCoordinator } from "./coordinator";
 import { SyncEngine } from "./engine";
 import { Replicator } from "./replicator";
-import { leaseExpired, liveRemoteOwner, ownerSuspectDead, sameId, handoffActive, TrackRef } from "./protocol";
+import {
+  leaseExpired, liveRemoteOwner, ownerSuspectDead, sameId, handoffActive, outgoingTransfer, TrackRef,
+} from "./protocol";
 import { serverClock } from "./serverClock";
 import { LocalTrack, norm, resolve, toRef } from "./player";
 import { LyricsStore, LyricLine, parseLRC, activeIndex } from "./lyrics";
@@ -79,6 +81,9 @@ function watchMusicDir(dir: string) {
 }
 let searchTerm = "";
 let lastArtKey: string | null | undefined = undefined; // undefined = uninitialized
+// "Play on other device" wait: when it passes and we still own the seat, the
+// beacon is retracted and the banner says why (checked on the 500 ms tick).
+let transferDeadline: number | null = null;
 
 // Lyrics panel state — lines come from the shared Firestore/LRCLIB cache.
 let lyricsOpen = false;
@@ -176,6 +181,13 @@ function wire() {
   $("btn-next").onclick = () => engine.next();
   $("btn-toggle").onclick = toggleCmd;
   $("btn-playhere").onclick = () => run(() => engine.takeOverHere());
+  // Owner side of the handover: ask the other device to take the seat. It can
+  // only answer while its app is open (a backgrounded phone has no listener),
+  // so an unclaimed request is retracted after 12 s with a hint.
+  $("btn-transfer").onclick = () => {
+    transferDeadline = Date.now() + 12_000;
+    void engine.transferAway().then(renderNow);
+  };
 
   // Seek ±10 with press-and-hold twins of the iOS Rewind/FastForward buttons:
   // a quick click jumps ±10 s; holding ⏪ scrubs back 0.5 s every 200 ms, and
@@ -1048,9 +1060,10 @@ function nudgeLyrics(deltaMs: number) {
 /** Position-only update (slider + clock text) — cheap enough for the fast
  *  tick; renderNow calls it too so the two paths can't disagree. */
 function renderPosition() {
-  const pb = coord.remote?.playback;
   const live = currentPosMs();
-  const dur = coord.role === "owner" ? engine.player.durMs : (pb?.dur ?? 0);
+  // Followers: the owner's dur, or the last known length of the same track
+  // while its first publish still says 0 (sync-audit-6, task 4).
+  const dur = coord.role === "owner" ? engine.player.durMs : engine.mirrorDurMs();
   const shown = dragMs ?? Math.min(live, dur);
   const slider = $("progress") as HTMLInputElement;
   slider.max = String(Math.max(dur, 1));
@@ -1107,11 +1120,28 @@ function renderNow() {
   // actual command routing — this only changes what the UI SAYS, not
   // whether a takeover is safe yet.
   $("owner-dead").hidden = !(notOwner && !idle && !liveOwner);
-  $("remote-banner").hidden = !notOwner;
+  // The banner is the handover strip in BOTH directions now: as a follower
+  // it offers Play Here; as the owner (with a track loaded, real session)
+  // it offers "Play on other device" — the twin of the iPhone's
+  // "Switch playback to other device" pill (sync-audit-6, task 3).
+  const canTransfer = !notOwner && !coord.demo && !!engine.player.current;
+  // A claim deposes us (notOwner flips) — the wait is over. Until then the
+  // deadline itself counts as "waiting": the beacon's own echo takes a round
+  // trip, so outgoingTransfer() alone reads false for the first second.
+  if (notOwner) transferDeadline = null;
+  const transferWaiting = canTransfer
+    && (transferDeadline !== null || outgoingTransfer(s, serverClock.nowMs));
+  if (transferDeadline !== null && Date.now() > transferDeadline) {
+    transferDeadline = null;
+    void engine.cancelTransfer();
+    showHint("No other device answered — is the app open there?");
+  }
+  $("remote-banner").hidden = !(notOwner || canTransfer);
   // An EMPTY seat with a track is a paused session (the owner quit or was
   // cleared and its position frozen) — not an owner that "stopped
   // responding"; that wording is for a seat still held by a silent device.
-  $("remote-banner-text").textContent = !notOwner ? ""
+  $("remote-banner-text").textContent = !notOwner
+    ? (transferWaiting ? "Waiting for your other device…" : "Playing on this computer")
     : liveOwner
       ? `Controlling your other device${pb?.track ? ` — ${pb.track.name}` : ""}`
       : pb?.track
@@ -1119,7 +1149,10 @@ function renderNow() {
           ? `Paused — ${pb.track.name} · Play Here to continue`
           : `Your other device stopped responding — ${pb.track.name} · Play Here to continue`
         : `Nothing playing yet · Play Here to start`;
+  $("btn-playhere").hidden = !notOwner;
+  $("btn-transfer").hidden = notOwner;
   ($("btn-playhere") as HTMLButtonElement).disabled = busy || !coord.online;
+  ($("btn-transfer") as HTMLButtonElement).disabled = busy || !coord.online || transferWaiting;
 
   // Now-playing identity comes from currentTrackRef(), not the mirror: as
   // owner the element already switched songs, while pb.track only catches up

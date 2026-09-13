@@ -22,12 +22,21 @@ final class LibraryReplicator {
     // Down-sync: cloud → local via yt-dlp, one file in flight.
     private var listener: ListenerRegistration?
     private var meta: [String: TrackMeta] = [:]        // docId → cloud metadata
-    private var metaByYt: [String: String] = [:]       // yt → docId — kills the
+    private var metaByYt: [String: String] = [:]       // yt → CANONICAL docId (see
+                                                       // canonicalDocId) — kills the
                                                        // O(N) `meta.values.first`
                                                        // that ran per snapshot doc
                                                        // change and per pump step.
-    private var metaByNormName: [String: String] = [:] // normalized(name) → docId
+    private var docsByYt: [String: Set<String>] = [:]  // yt → every docId carrying it
+    private var metaByNormName: [String: String] = [:] // name key → docId
                                                        // for upload-side dedupe.
+    /// The library listener has delivered its first snapshot. Until then
+    /// `meta` is empty and the upload pump must NOT run: `upload()` looks for
+    /// a doc to match by yt/name, finds nothing, and mints a fresh doc under
+    /// this record's UUID — a DUPLICATE of the doc the desktop already holds
+    /// for the same song, every time the phone connected with anything
+    /// unmirrored (sync-audit-6). Twin of replicator.ts `ready`.
+    private var snapshotReady = false
     private var downQueue: [TrackMeta] = []
     // Membership index over downQueue. The initial listener snapshot delivers
     // every cloud doc as one batch, and the "already queued?" check ran a
@@ -120,20 +129,22 @@ final class LibraryReplicator {
         // Clear down-sync state to prevent stale metadata from interfering across account switches.
         meta.removeAll()
         metaByYt.removeAll()
+        docsByYt.removeAll()
         metaByNormName.removeAll()
         downQueue.removeAll()
         downQueuedYT.removeAll()
         downloadingYT.removeAll()
         downFails.removeAll()
         processedFailures.removeAll()
+        snapshotReady = false
         listener?.remove()
         listener = db.collection("users").document(uid).collection("library")
             .addSnapshotListener { [weak self] snap, _ in
                 guard let snap else { return }
                 Task { @MainActor in self?.handleSnapshot(snap) }
             }
-        // Re-diff on activation so a backlog uploads without waiting for a change.
-        pumpUploads()
+        // The backlog upload runs once the first snapshot has landed
+        // (handleSnapshot → pumpUploads); before that every match would miss.
     }
 
     /// Detach from the current home. Without this, `forgetHome` left the
@@ -144,7 +155,9 @@ final class LibraryReplicator {
         uid = ""
         meta.removeAll()
         metaByYt.removeAll()
+        docsByYt.removeAll()
         metaByNormName.removeAll()
+        snapshotReady = false
         downQueue.removeAll()
         downQueuedYT.removeAll()
         downloadingYT.removeAll()
@@ -155,13 +168,41 @@ final class LibraryReplicator {
 
     // MARK: - Down: cloud → local
 
+    /// The doc that speaks for a yt when several live docs carry it (a
+    /// duplicate minted by a pre-fix upload race on either end): the most
+    /// recently edited one, ties broken by the smaller docId so both ends
+    /// agree. nil ⇒ no LIVE doc — only tombstones — for that yt. Twin of
+    /// desktop libraryMeta.ts `canonicalByYt`, which also cleans duplicates up.
+    private func canonicalDocId(forYT yt: String) -> String? {
+        var best: (id: String, at: Int)?
+        for id in docsByYt[yt] ?? [] {
+            guard let m = meta[id], !m.deleted else { continue }
+            if let b = best {
+                let wins = m.metaAtMs > b.at || (m.metaAtMs == b.at && id < b.id)
+                if !wins { continue }
+            }
+            best = (id, m.metaAtMs)
+        }
+        return best?.id
+    }
+
+    private func reindex(yt: String) {
+        if let canonical = canonicalDocId(forYT: yt) { metaByYt[yt] = canonical }
+        else { metaByYt.removeValue(forKey: yt) }
+    }
+
     @MainActor
     private func handleSnapshot(_ snap: QuerySnapshot) {
+        var touchedYts = Set<String>()
         for change in snap.documentChanges {
             let id = change.document.documentID
             if change.type == .removed {
                 if let old = meta.removeValue(forKey: id) {
-                    if let yt = old.yt, metaByYt[yt] == id { metaByYt.removeValue(forKey: yt) }
+                    if let yt = old.yt {
+                        docsByYt[yt]?.remove(id)
+                        if docsByYt[yt]?.isEmpty == true { docsByYt.removeValue(forKey: yt) }
+                        reindex(yt: yt)
+                    }
                     let n = Self.normalize(old.name)
                     if metaByNormName[n] == id { metaByNormName.removeValue(forKey: n) }
                 }
@@ -171,23 +212,35 @@ final class LibraryReplicator {
             // Keep secondary indexes in step with the primary map: a rename
             // or yt-change (rare) leaves a stale pointer otherwise.
             if let prev = meta[id] {
-                if let prevYt = prev.yt, prevYt != m.yt,
-                   metaByYt[prevYt] == id { metaByYt.removeValue(forKey: prevYt) }
+                if let prevYt = prev.yt, prevYt != m.yt {
+                    docsByYt[prevYt]?.remove(id)
+                    if docsByYt[prevYt]?.isEmpty == true { docsByYt.removeValue(forKey: prevYt) }
+                    reindex(yt: prevYt)
+                }
                 let prevName = Self.normalize(prev.name)
                 if prevName != Self.normalize(m.name),
                    metaByNormName[prevName] == id { metaByNormName.removeValue(forKey: prevName) }
             }
             meta[id] = m
-            if let yt = m.yt { metaByYt[yt] = id }
-            metaByNormName[Self.normalize(m.name)] = id
+            let nameKey = Self.normalize(m.name)
+            if !nameKey.isEmpty { metaByNormName[nameKey] = id }
             guard let yt = m.yt else { continue }
+            docsByYt[yt, default: []].insert(id)
+            reindex(yt: yt)
+            touchedYts.insert(yt)
+        }
 
-            if m.deleted {
-                // Tombstone: never fetch it, and apply the deletion locally
-                // unless we authored it (echo).
+        // Act per yt, not per doc, so a tombstone on a duplicate can't delete
+        // a song whose canonical doc is alive, and a stale duplicate's name
+        // can't rename a track back and forth against the canonical one.
+        for yt in touchedYts {
+            guard let canonicalId = metaByYt[yt], let m = meta[canonicalId] else {
+                // Only tombstones remain for this yt: never fetch it, and
+                // apply the deletion locally unless we authored it (echo).
                 downQueue.removeAll { $0.yt == yt }
                 downQueuedYT.remove(yt)
-                if m.metaBy != SyncDevice.id { applyDeletion(yt) }
+                let authoredHere = (docsByYt[yt] ?? []).contains { meta[$0]?.metaBy == SyncDevice.id }
+                if !authoredHere { applyDeletion(yt) }
                 continue
             }
 
@@ -201,13 +254,19 @@ final class LibraryReplicator {
                 downQueuedYT.insert(yt)
             }
         }
+        let firstSnapshot = !snapshotReady
+        snapshotReady = true
         pumpDownloads()
+        // The initial snapshot is in: the upload backlog can now dedupe
+        // against real cloud state instead of an empty map.
+        if firstSnapshot { pumpUploads() }
     }
 
     private func hasLocally(_ m: TrackMeta) -> Bool {
         guard let yt = m.yt else { return true }  // nothing fetchable — treat as handled
         if findDuplicate(yt) != nil { return true }
-        return localNames.contains(Self.normalize(m.name))
+        let key = Self.normalize(m.name)
+        return !key.isEmpty && localNames.contains(key)
     }
 
     private func metaForYt(_ yt: String) -> TrackMeta? {
@@ -222,7 +281,8 @@ final class LibraryReplicator {
             let m = downQueue.removeFirst()
             guard let yt = m.yt else { continue }
             downQueuedYT.remove(yt)
-            if metaForYt(yt)?.deleted == true { continue }
+            // No LIVE doc any more (tombstoned since it was queued) ⇒ skip.
+            guard metaForYt(yt) != nil else { continue }
             if hasLocally(m) { continue }              // raced with a manual/other-source add
             downloadingYT.insert(yt)
             startDownload("https://www.youtube.com/watch?v=\(yt)", yt, .youtube, m.name)
@@ -260,7 +320,7 @@ final class LibraryReplicator {
     }
 
     private func pumpUploads() {
-        guard !uploadInFlight, let next = pendingUploads.first else { return }
+        guard snapshotReady, !uploadInFlight, let next = pendingUploads.first else { return }
         pendingUploads.removeFirst()
         uploadInFlight = true
         Task { [weak self] in
@@ -359,25 +419,26 @@ final class LibraryReplicator {
         Task { try? await ref.setData(self.metaFields(for: d), merge: true) }
     }
 
+    /// Every live doc for the yt, not just the canonical one: a surviving
+    /// duplicate would keep the song alive on the other device (its tombstone
+    /// guard ignores a tombstone while any live doc remains).
     func pushTombstone(for d: Download) {
-        guard let yt = d.videoID, let ref = docRef(forYT: yt) else { return }
+        guard !uid.isEmpty, let yt = d.videoID else { return }
+        let ids = (docsByYt[yt] ?? []).filter { meta[$0]?.deleted == false }
+        guard !ids.isEmpty else { return }
+        let col = db.collection("users").document(uid).collection("library")
         Task {
-            try? await ref.setData([
-                "deleted": true,
-                "metaAt": FieldValue.serverTimestamp(),
-                "metaBy": SyncDevice.id,
-            ], merge: true)
+            for id in ids {
+                try? await col.document(id).setData([
+                    "deleted": true,
+                    "metaAt": FieldValue.serverTimestamp(),
+                    "metaBy": SyncDevice.id,
+                ], merge: true)
+            }
         }
     }
 
-    /// Windows-illegal chars get replaced with "_" at replication time on
-    /// desktop; compare names through the same lens so "What? Song" matches
-    /// "What_ Song" (twin of desktop/src/player.ts's `norm`).
-    private static func normalize(_ s: String) -> String {
-        let illegal = Set("<>:\"/\\|?*")
-        var out = ""
-        out.reserveCapacity(s.count)
-        for ch in s { out.append(illegal.contains(ch) ? "_" : ch) }
-        return out.trimmingCharacters(in: .whitespaces).lowercased()
-    }
+    /// The shared cross-device name key (letters + digits only) — see
+    /// SyncNames.key for why the old illegal-char lens was not enough.
+    private static func normalize(_ s: String) -> String { SyncNames.key(s) }
 }

@@ -6,7 +6,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
 import { pathToFileURL } from "url";
-import { TrackRef, sameId } from "./protocol";
+import { TrackRef, sameId, nameKey } from "./protocol";
 import { byName } from "./listOps";
 
 export interface LocalTrack {
@@ -38,9 +38,10 @@ function ytFromName(base: string): string | undefined {
 const stripTag = (base: string) =>
   base.replace(/\s*\[[A-Za-z0-9_-]{11}\]\s*$/, "").trim();
 
-/** Windows-illegal chars were replaced with "_" at replication time; compare
- *  names through the same lens so "What? Song" matches "What_ Song". */
-const norm = (s: string) => s.replace(/[<>:"/\\|?*]/g, "_").trim().toLowerCase();
+/** Cross-device name comparison — the shared letters-and-digits key (see
+ *  protocol.ts nameKey). "What? Song", "What_ Song" and "what song" are one
+ *  key; so are iOS's neutralized "Song Name" and the on-disk "Song_Name". */
+const norm = nameKey;
 
 export function scanLibrary(root: string): LocalTrack[] {
   const out: LocalTrack[] = [];
@@ -69,7 +70,8 @@ export function resolve(ref: TrackRef, lib: LocalTrack[]): LocalTrack | undefine
     (ref.yt ? lib.find(t => t.yt === ref.yt) : undefined) ??
     lib.find(t => t.name === ref.name && t.folder === ref.folder) ??
     lib.find(t => t.name === ref.name) ??
-    lib.find(t => norm(t.name) === norm(ref.name))
+    // Empty key (no letters/digits in the name) would match every such track.
+    (norm(ref.name) ? lib.find(t => norm(t.name) === norm(ref.name)) : undefined)
   );
 }
 

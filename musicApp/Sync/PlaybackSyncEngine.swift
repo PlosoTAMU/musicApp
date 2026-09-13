@@ -77,6 +77,31 @@ final class PlaybackSyncEngine: ObservableObject {
         return player.currentTrack == nil
     }
 
+    /// The owner's published length for the mirrored track, or — when that is
+    /// 0 — the last non-zero length seen for the SAME track. The desktop
+    /// publishes the instant it swaps `src`, before the element knows its
+    /// duration, and republishes ~100–500 ms later once it does (sync-audit-5
+    /// S1); Firestore delivers those as two snapshots or one, so a remote
+    /// pressing ⏮/⏭ sometimes saw `dur: 0` for a beat — the slider's range
+    /// collapsed to 0…1, the handle jumped to the END, the countdown went
+    /// negative. Since "the previous song" was just playing, its length is
+    /// almost always known here (sync-audit-6, task 4). Twin of desktop
+    /// engine.ts `mirrorDurMs`.
+    var mirrorDurationMs: Int {
+        guard let pb = mirror else { return 0 }
+        if pb.durationMs > 0 { return pb.durationMs }
+        guard let id = pb.track?.id else { return 0 }
+        return knownDurationsMs[id] ?? 0
+    }
+    private var knownDurationsMs: [UUID: Int] = [:]
+
+    /// A transfer this device posted and nobody has claimed yet (Now Playing
+    /// shows "Waiting for your other device…").
+    var outgoingTransferPending: Bool {
+        coordinator.role.isOwner
+            && (coordinator.remote?.outgoingTransfer(nowMs: ServerClock.shared.nowMs) ?? false)
+    }
+
     /// Remote display mode is on, but the owner's lease has lapsed — it is not
     /// draining commands, so the transport here is inert until someone takes
     /// over. Twin of desktop ui.ts's `#owner-dead` chip / dead-owner banner.
@@ -230,6 +255,12 @@ final class PlaybackSyncEngine: ObservableObject {
         // must still populate the mirror and trigger the owner ping.
         mirror = state.playback
         mirrorTrack = state.playback.track.flatMap { resolver.resolve($0) }
+        if let id = state.playback.track?.id, state.playback.durationMs > 0 {
+            knownDurationsMs[id] = state.playback.durationMs
+        }
+
+        // The owner asked for playback to move here (sync-audit-6, task 3).
+        maybeAcceptTransfer(state)
 
         let owner = state.ownerDeviceID
         if !owner.isEmpty, owner != SyncDevice.id, owner != syncedOwner {
@@ -618,6 +649,44 @@ final class PlaybackSyncEngine: ObservableObject {
 
 
 
+    // MARK: - Transfer (owner asks the other device to take over)
+
+    /// One claim per beacon: remembers the beacon it answered (by its atMs),
+    /// so a claim that failed — track not here, seat taken by the other
+    /// follower, offline — is not retried on every snapshot.
+    private var answeredTransferAtMs: Int?
+    private var transferClaimInFlight = false
+
+    private func maybeAcceptTransfer(_ state: SessionState) {
+        guard !coordinator.role.isOwner, coordinator.isOnline,
+              let h = state.handoff, state.transferPending(nowMs: ServerClock.shared.nowMs),
+              answeredTransferAtMs != h.atMs, !transferClaimInFlight else { return }
+        answeredTransferAtMs = h.atMs
+        // Not in this library ⇒ leave the beacon for a device that has it.
+        if let ref = state.playback.track, resolver.resolve(ref) == nil { return }
+        transferClaimInFlight = true
+        Task { @MainActor in
+            defer { transferClaimInFlight = false }
+            do {
+                try await takeOverHere(forcePlay: state.playback.isPlaying, requireHandoffFrom: h.by)
+            } catch {
+                print("[PlaybackSyncEngine] transfer claim failed:", error)
+            }
+        }
+    }
+
+    /// Owner side of the button: post the beacon. The claiming device deposes
+    /// us (audio pauses here through onDeposed, continues there).
+    func transferAway() async {
+        guard coordinator.role.isOwner else { return }
+        await coordinator.postTransfer()
+    }
+
+    /// Retract an unanswered transfer (UI timeout).
+    func cancelTransfer() async {
+        await coordinator.cancelTransfer()
+    }
+
     // MARK: - Handover (the takeover path)
 
     /// "Play here": fenced epoch bump, then resume audio at the extrapolated
@@ -634,11 +703,11 @@ final class PlaybackSyncEngine: ObservableObject {
     /// reachable from RouteHandoffMonitor, which calls this with no UI guard
     /// when headphones hop to a phone that lacks the song (sync-audit-4 B4).
     /// Twin of desktop engine.ts's takeOverHere pre-check.
-    func takeOverHere(forcePlay: Bool = false) async throws {
+    func takeOverHere(forcePlay: Bool = false, requireHandoffFrom: String? = nil) async throws {
         if let ref = coordinator.remote?.playback.track, resolver.resolve(ref) == nil {
             throw SyncError.trackNotHere(ref.name)
         }
-        let pre = try await coordinator.takeOver()
+        let pre = try await coordinator.takeOver(requireHandoffFrom: requireHandoffFrom)
         let pb = pre.playback
         let posMs = pb.positionMs(atServerMs: ServerClock.shared.nowMs)
 

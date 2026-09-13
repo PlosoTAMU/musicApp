@@ -32,6 +32,11 @@ export interface PlaybackState {
 export interface Handoff {
   by: string;    // device that lost its route
   atMs: number;  // ServerClock ms when it happened
+  /** Explicit "play on the other device" request from the owner (the banner
+   *  button), as opposed to the Bluetooth beacon: a follower that can play
+   *  the track claims the seat on its next snapshot, no route change needed.
+   *  Optional on the wire — absent ⇒ Bluetooth semantics (sync-audit-6). */
+  transfer?: boolean;
 }
 
 export interface SessionState {
@@ -75,6 +80,43 @@ export const HANDOFF_WINDOW_MS = 60_000;
 export const handoffActive = (s: SessionState, nowMs: number): boolean =>
   !!s.handoff && !sameId(s.handoff.by, DEVICE_ID) &&
   nowMs - s.handoff.atMs < HANDOFF_WINDOW_MS;
+
+/** Another device asked for playback to move off it. A follower that can
+ *  resolve the track takes over immediately (engine.maybeAcceptTransfer).
+ *  Twin of SessionState.transferPending(nowMs:). */
+export const transferPending = (s: SessionState, nowMs: number): boolean =>
+  handoffActive(s, nowMs) && s.handoff!.transfer === true;
+
+/** THIS device posted a transfer nobody has claimed yet (the claiming
+ *  takeover deletes `handoff`). Twin of SessionState.outgoingTransfer(nowMs:). */
+export const outgoingTransfer = (s: SessionState | undefined, nowMs: number): boolean =>
+  !!s?.handoff && s.handoff.transfer === true && sameId(s.handoff.by, DEVICE_ID)
+  && nowMs - s.handoff.atMs < HANDOFF_WINDOW_MS;
+
+/** The length to draw for a mirrored track: the owner's `dur`, or — when
+ *  that is 0 — the last non-zero length seen for the SAME track. The owner
+ *  publishes the instant it swaps src, before the element knows its length,
+ *  and republishes once it does; a follower can see the first frame alone
+ *  for a beat (sync-audit-6, task 4). Twin of PlaybackSyncEngine.mirrorDurationMs. */
+export const knownDurationMs = (
+  pb: PlaybackState | undefined, known: Map<string, number>,
+): number => {
+  if (!pb) return 0;
+  if (pb.dur > 0) return pb.dur;
+  if (!pb.track) return 0;
+  for (const [id, dur] of known) if (sameId(id, pb.track.id)) return dur;
+  return 0;
+};
+
+/** The ONE way both apps compare track names when no YouTube id can settle
+ *  it: letters and digits only, lowercased, everything else dropped. Anything
+ *  narrower broke in practice — desktop writes Windows-illegal chars as "_",
+ *  iOS's neutralizeName turns "_" into a space and deletes * ~ ` #, and
+ *  yt-dlp titles carry all of those. A mismatch here is a re-download (the
+ *  down-sync's last rung is this comparison). Verbatim twin of Swift
+ *  SyncNames.key — pinned by tests/audit6-sync.test.ts. */
+export const nameKey = (s: string): string =>
+  s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
 /** Same extrapolation as PlaybackState.positionMs(atServerMs:) in Swift.
  *  Clamped to track length — a dead owner stops publishing, and unbounded

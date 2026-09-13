@@ -11,6 +11,10 @@ struct AsyncThumbnailView: View {
     
     @State private var image: UIImage?
     @State private var loadTask: Task<Void, Never>?
+    /// Bumped per load. The decode's completion compares against it, so a
+    /// slower decode for an EARLIER path can never land on top of a newer one
+    /// (cancellation alone is racy: cancel() is only checked at the end).
+    @State private var loadGeneration = 0
     
     init(thumbnailPath: String?, size: CGFloat = 48, cornerRadius: CGFloat = 8, grayscale: Bool = false) {
         self.thumbnailPath = thumbnailPath
@@ -80,6 +84,8 @@ struct AsyncThumbnailView: View {
         
         // ⚡ Capture size locally to avoid referencing self in detached task
         let targetSize = size
+        loadGeneration += 1
+        let generation = loadGeneration
         
         loadTask = Task.detached(priority: .utility) {
             // ⚡ Use ImageIO for much faster thumbnail generation
@@ -105,7 +111,8 @@ struct AsyncThumbnailView: View {
             ThumbnailCache.shared.set(cacheKey, image: scaledImage)
             
             await MainActor.run {
-                if !Task.isCancelled {
+                // Only the most recent load for this view may paint.
+                if !Task.isCancelled && self.loadGeneration == generation {
                     self.image = scaledImage
                 }
             }

@@ -361,7 +361,12 @@ final class SessionCoordinator: ObservableObject {
     /// `onlyIfIdle`: refuse (`.seatTaken`) when any other device holds the
     /// seat. Used by the reclaim-after-clear path — a device that legitimately
     /// took over while we were away must not be deposed by our return.
-    func takeOver(onlyIfIdle: Bool = false) async throws -> SessionState {
+    ///
+    /// `requireHandoffFrom`: claim a transfer request. The transaction insists
+    /// the doc still carries that device's `transfer` beacon — the takeover
+    /// deletes it, so when two followers both answer, the second one's txn
+    /// finds no beacon and refuses instead of deposing the first (`.seatTaken`).
+    func takeOver(onlyIfIdle: Bool = false, requireHandoffFrom: String? = nil) async throws -> SessionState {
         guard let ref = sessionRef else { throw SyncError.noSession }
         let dev = SyncDevice.id
         let now = ServerClock.shared.nowMs
@@ -371,6 +376,9 @@ final class SessionCoordinator: ObservableObject {
             guard let cur = SessionState(snap: snap) else { throw SyncError.corrupt }
             if onlyIfIdle, !cur.ownerDeviceID.isEmpty, cur.ownerDeviceID != dev {
                 throw SyncError.seatTaken
+            }
+            if let from = requireHandoffFrom {
+                guard let h = cur.handoff, h.transfer, h.by == from else { throw SyncError.seatTaken }
             }
             txn.updateData([
                 "epoch": cur.epoch + 1,
@@ -463,6 +471,34 @@ final class SessionCoordinator: ObservableObject {
     func clearHandoff() async {
         guard let ref = sessionRef else { return }
         try? await ref.updateData(["handoff": FieldValue.delete()])
+    }
+
+    /// "Switch playback to the other device": the owner asks any follower
+    /// that can play the current track to take the seat now. Same beacon
+    /// slot as the Bluetooth handoff (plain write, self-expiring), with
+    /// `transfer: true` so followers act without waiting for a route change.
+    /// The claiming takeover deletes it; an unanswered one is retracted by
+    /// the UI's timeout (cancelTransfer) or expires with the window.
+    /// Twin of coordinator.ts postTransfer.
+    func postTransfer() async {
+        guard role.isOwner, let ref = sessionRef else { return }
+        try? await ref.updateData([
+            "handoff": ["by": SyncDevice.id, "atMs": ServerClock.shared.nowMs, "transfer": true],
+            "updatedBy": SyncDevice.id,
+        ])
+    }
+
+    /// Retract OUR unanswered transfer. Fenced on the beacon being ours: a
+    /// follower's claim (which deletes it) or a newer beacon is left alone.
+    func cancelTransfer() async {
+        guard let ref = sessionRef else { return }
+        let dev = SyncDevice.id
+        try? await db.txn { txn in
+            let snap = try txn.getDocument(ref)
+            guard let cur = SessionState(snap: snap),
+                  let h = cur.handoff, h.by == dev, h.transfer else { return }
+            txn.updateData(["handoff": FieldValue.delete()], forDocument: ref)
+        }
     }
 
     // MARK: - Lease heartbeat

@@ -96,8 +96,11 @@ struct ContentView: View {
                     failedDownloads: downloadManager.$failedDownloads.eraseToAnyPublisher(),
                     metaChanges: downloadManager.trackMetaChanged.eraseToAnyPublisher(),
                     deletions: downloadManager.trackDeleted.eraseToAnyPublisher(),
+                    // Source-agnostic: a Spotify-pasted track carries the
+                    // YouTube id the cloud doc names, and the source-filtered
+                    // duplicate check refused to match it (sync-audit-6).
                     findDuplicate: { [weak downloadManager] yt in
-                        downloadManager?.findDuplicateByVideoID(videoID: yt, source: .youtube)
+                        downloadManager?.download(forVideoID: yt)
                     },
                     startDownload: { [weak downloadManager] url, yt, source, title in
                         downloadManager?.startBackgroundDownload(url: url, videoID: yt, source: source, title: title)
@@ -468,8 +471,9 @@ struct MiniPlayerBar: View {
     // Resolved once per track change (see refreshThumbnailPath()) instead of
     // recomputed in `body` on every 0.5s playback tick — the lookup involves
     // an array scan plus a disk `stat`, and the result never changes for the
-    // same track.
-    @State private var cachedThumbnailPath: String?
+    // same track. Keyed by the track it was resolved FOR: see
+    // displayThumbnailPath for why the bare path was not enough.
+    @State private var cachedThumbnail: (trackID: UUID?, path: String?) = (nil, nil)
     /// Guards against double-firing "continue here" while the takeover is
     /// still in flight.
     @State private var continuing = false
@@ -509,9 +513,12 @@ struct MiniPlayerBar: View {
         return isRemote ? (remotePB?.isPlaying ?? false) : audioPlayer.isPlaying
     }
     private func remoteProgress(atMs now: Int) -> CGFloat {
-        guard let pb = remotePB, pb.durationMs > 0 else { return 0 }
+        // mirrorDurationMs, not pb.durationMs: the owner's first publish of a
+        // track can carry dur 0 (see PlaybackSyncEngine.mirrorDurationMs).
+        let durationMs = syncManager.engine.mirrorDurationMs
+        guard let pb = remotePB, durationMs > 0 else { return 0 }
         let pos = Double(pb.positionMs(atServerMs: now))
-        return CGFloat(min(max(pos / Double(pb.durationMs), 0), 1))
+        return CGFloat(min(max(pos / Double(durationMs), 0), 1))
     }
     /// Takes over playback on this phone at the idle session's frozen
     /// position. No-op while a takeover is already in flight, or when the
@@ -531,16 +538,31 @@ struct MiniPlayerBar: View {
     /// Now Playing only used last — a reusable key that could hold another
     /// song's artwork, which is exactly the mismatch users saw.
     private func refreshThumbnailPath() {
-        guard let track = activeTrack else { cachedThumbnailPath = nil; return }
-        cachedThumbnailPath = downloadManager.artworkPath(for: track)
+        guard let track = activeTrack else { cachedThumbnail = (trackID: nil, path: nil); return }
+        cachedThumbnail = (trackID: track.id, path: downloadManager.artworkPath(for: track))
+    }
+
+    /// The artwork file to draw on THIS render. The cache is trusted only for
+    /// the track it was resolved for. On the render where the track has just
+    /// changed, `.onChange(of: activeTrack?.id)` has not run yet, so the cache
+    /// still names the PREVIOUS track's file — and because the thumbnail view
+    /// is re-keyed by track id, that stale path was handed to a brand-new
+    /// view, which drew the previous song's art under the new song's title
+    /// (an instant cache hit) until the re-resolve one pass later replaced it.
+    /// Resolving inline for that single pass costs one stat per track change
+    /// and removes the flash; every other tick still reads the cache.
+    private var displayThumbnailPath: String? {
+        let id = activeTrack?.id
+        if cachedThumbnail.trackID == id { return cachedThumbnail.path }
+        return activeTrack.flatMap { downloadManager.artworkPath(for: $0) }
     }
 
     /// A thumbnail heal landed (record re-pointed, file written) for the song
     /// on screen: re-resolve, and only redraw when the answer changed.
     private func artworkMayHaveChanged() {
-        let before = cachedThumbnailPath
+        let before = cachedThumbnail.path
         refreshThumbnailPath()
-        if cachedThumbnailPath != before { updateBackgroundImage() }
+        if cachedThumbnail.path != before { updateBackgroundImage() }
     }
     
     var body: some View {
@@ -566,7 +588,7 @@ struct MiniPlayerBar: View {
                 // Left side - thumbnail and text (fully tappable)
                 HStack(spacing: 12) {
                     AsyncThumbnailView(
-                        thumbnailPath: cachedThumbnailPath,
+                        thumbnailPath: displayThumbnailPath,
                         size: 42,
                         cornerRadius: 10
                     )
@@ -708,7 +730,7 @@ struct MiniPlayerBar: View {
 
         let audioURL = track.url
         // Same resolved file as the foreground art — never a second guess.
-        let path = cachedThumbnailPath
+        let path = displayThumbnailPath
         // Disk read + crop off the main thread so swapping tracks never
         // hitches the UI (the foreground artwork is handled by AsyncThumbnailView).
         DispatchQueue.global(qos: .userInitiated).async {
@@ -735,6 +757,13 @@ struct NowPlayingView: View {
     @Binding var isPresented: Bool
     @State private var isSeeking = false
     @State private var switchingHere = false
+    /// Owner → other device: shown under the pill after a transfer request
+    /// that nobody answered (see transferAway()).
+    @State private var transferHint: String?
+    /// Set the moment the button is tapped — the beacon's own snapshot echo
+    /// takes a round trip, so `engine.outgoingTransferPending` alone reads
+    /// false for the first second and the button would look un-pressed.
+    @State private var transferRequested = false
     @State private var localSeekPosition: Double = 0
     @State private var showPlaylistPicker = false
     @State private var backgroundImage: UIImage?
@@ -784,7 +813,10 @@ struct NowPlayingView: View {
         isRemoteControlled ? (engine.mirror?.loop ?? false) : audioPlayer.isLoopEnabled
     }
     private var displayDuration: Double {
-        isRemoteControlled ? Double(engine.mirror?.durationMs ?? 0) / 1000.0
+        // mirrorDurationMs falls back to the last duration seen for this
+        // track when the owner's publish carries dur 0 (its element hasn't
+        // loaded metadata yet — common right after ⏮/⏭ on the desktop).
+        isRemoteControlled ? Double(engine.mirrorDurationMs) / 1000.0
                            : audioPlayer.duration
     }
     private func displayPosition(atMs now: Int) -> Double {
@@ -832,6 +864,7 @@ struct NowPlayingView: View {
                     topBar
 
                     if isRemoteControlled { switchHerePill }
+                    else if canTransferAway { switchAwayPill }
 
                     Spacer(minLength: 4)
 
@@ -1023,15 +1056,8 @@ struct NowPlayingView: View {
 
             Spacer()
 
-            // Up Next — opens the queue as a half-sheet (separate layer, so it
-            // can't push any of these controls off-screen).
-            Button {
-                showUpNext = true
-            } label: {
-                Image(systemName: "list.bullet")
-            }
-            .buttonStyle(CircleControlButtonStyle(diameter: 40, tint: Theme.bone))
-
+            // The queue (Up Next sheet) opens from the Up Next strip under the
+            // transport — no separate list button up here.
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
                     // In remote mode the owner holds the audio, so send intent
@@ -1060,9 +1086,9 @@ struct NowPlayingView: View {
                 filled: !audioPlayer.effectsBypass
             ))
             
-            // Every option is a first-class button — no ⋯ menu. Six options
-            // after the dismiss chevron: up next, loop, effects, lyrics,
-            // add-to-playlist, crop.
+            // Every option is a first-class button — no ⋯ menu. Five options
+            // after the dismiss chevron: loop, effects, lyrics,
+            // add-to-playlist, crop. (Up Next lives on the strip below.)
             Button {
                 showLyrics = true
             } label: {
@@ -1124,6 +1150,58 @@ struct NowPlayingView: View {
         .padding(.top, 10)
     }
 
+    /// This iPhone owns the audio and a home is connected: playback can be
+    /// handed to the other device. Twin of the desktop banner's "Play on other
+    /// device". Only while a track is loaded — there is nothing to hand over
+    /// otherwise.
+    private var canTransferAway: Bool {
+        syncManager.isConnected && engine.coordinator.role.isOwner
+            && audioPlayer.currentTrack != nil
+    }
+
+    /// Owner-side counterpart of switchHerePill. Posts a transfer beacon on
+    /// the session; the other device claims the seat on its next snapshot and
+    /// this one is deposed (audio pauses here, continues there) — at which
+    /// point isRemoteControlled flips and the remote pill takes this slot.
+    @ViewBuilder
+    private var switchAwayPill: some View {
+        let pending = transferRequested || engine.outgoingTransferPending
+        VStack(spacing: 8) {
+            Text(transferHint
+                 ?? (pending ? "Waiting for your other device…" : "Playing on this iPhone"))
+                .font(Theme.caption(12))
+                .foregroundColor(Theme.boneDim)
+            Button {
+                transferAway()
+            } label: {
+                Text(pending ? "Switching…" : "Switch playback to other device")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PillButtonStyle())
+            .disabled(pending)
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 10)
+    }
+
+    /// Ask the other device to take over. It can only answer while its app is
+    /// open (a backgrounded follower has no listener), so a request nobody
+    /// claims within 12 s is retracted and the pill says why.
+    private func transferAway() {
+        transferHint = nil
+        transferRequested = true
+        Task { @MainActor in
+            defer { transferRequested = false }
+            await engine.transferAway()
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard engine.coordinator.role.isOwner, engine.outgoingTransferPending else { return }
+            await engine.cancelTransfer()
+            transferHint = "No other device answered — is the app open there?"
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            if transferHint != nil { transferHint = nil }
+        }
+    }
+
     @ViewBuilder
     private var thumbnailView: some View {
         PulsingThumbnailView(
@@ -1137,7 +1215,8 @@ struct NowPlayingView: View {
             // tracking, no double translation, no detaching during the slide.
             EdgeVisualizerView(
                 audioPlayer: audioPlayer,
-                visualizerState: audioPlayer.visualizerState
+                visualizerState: audioPlayer.visualizerState,
+                artworkPath: cachedArtworkPath
             )
             .frame(width: 440, height: 440)
             .allowsHitTesting(false)
@@ -1157,7 +1236,12 @@ struct NowPlayingView: View {
     }
 
     // Persistent "next song" strip — shows ONLY the immediate next track
-    // (queued song first, else next playlist track).
+    // (queued song first, else next playlist track). Tapping it opens the Up
+    // Next sheet (the queue); it does NOT skip ahead — skipping is what ⏭ is
+    // for, and a tap here used to eat the next song when the user only wanted
+    // to look at the queue. With nothing queued the strip keeps the same
+    // layout minus the artwork and reads "No songs left"; it still opens the
+    // sheet (which is where "Swipe right on songs to queue them" lives).
     //
     // UNCONDITIONAL on purpose. A `if let next { … }` here gives the strip its
     // own view identity, so on the panel's animated mount SwiftUI INSERTS it
@@ -1167,39 +1251,41 @@ struct NowPlayingView: View {
     // identical to its siblings: it slides up/down with the panel, never fades
     // on its own.
     //
-    // FIXED FOOTPRINT, too. The strip previously collapsed to zero height when
-    // the queue was empty, so the two Spacers above re-balanced and the
-    // artwork, title, and every control dropped down the screen the moment the
-    // last queued song started (and jumped back up when one was added). The
-    // slot is now always `upNextStripHeight` tall; an empty queue just leaves
-    // it invisible and inert. Nothing else moves.
+    // FIXED FOOTPRINT, too. The slot is always `upNextStripHeight` tall so the
+    // artwork, title, and controls above it never shift when the queue empties
+    // or refills.
     @ViewBuilder
     private var upNextStrip: some View {
         let next = audioPlayer.upNextTracks.first
         Button {
-            if let next { skipToNext(next) }
+            showUpNext = true
         } label: {
             HStack(spacing: 10) {
-                AsyncThumbnailView(
-                    thumbnailPath: next.flatMap { downloadManager.artworkPath(for: $0) },
-                    size: 34,
-                    cornerRadius: 7
-                )
-                // Same fix as UpNextMiniBar: identity keyed to the track so
-                // image and title can never belong to different songs.
-                .id(next?.id)
+                if let next {
+                    AsyncThumbnailView(
+                        thumbnailPath: downloadManager.artworkPath(for: next),
+                        size: 34,
+                        cornerRadius: 7
+                    )
+                    // Same fix as UpNextMiniBar: identity keyed to the track so
+                    // image and title can never belong to different songs.
+                    .id(next.id)
+                } else {
+                    // No image, same footprint — the text column stays put.
+                    Color.clear.frame(width: 34, height: 34)
+                }
                 VStack(alignment: .leading, spacing: 1) {
                     Text("UP NEXT")
                         .font(Theme.eyebrowFont)
                         .tracking(1.4)
                         .foregroundColor(Theme.redLight.opacity(0.9))
-                    Text(next?.name ?? "")
+                    Text(next?.name ?? "No songs left")
                         .font(Theme.body(13, weight: .semibold))
-                        .foregroundColor(Theme.bone)
+                        .foregroundColor(next == nil ? Theme.boneDim : Theme.bone)
                         .lineLimit(1)
                 }
                 Spacer()
-                Image(systemName: "forward.end.fill")
+                Image(systemName: "list.bullet")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(Theme.boneFaint)
             }
@@ -1215,30 +1301,15 @@ struct NowPlayingView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(next == nil)
-        .allowsHitTesting(next != nil)
-        .accessibilityHidden(next == nil)
         // Constant slot: the strip's natural height (34 pt art + 7 pt vertical
-        // padding each side) regardless of whether there is a next track, so
-        // the layout above it never shifts. Empty queue ⇒ invisible, not gone.
+        // padding each side) whether or not there is a next track.
         .frame(height: Self.upNextStripHeight)
-        .opacity(next == nil ? 0 : 1)
         .padding(.top, 14)
         .padding(.horizontal, 24)
     }
 
     /// Natural height of the Up Next strip — reserved even when empty.
     private static let upNextStripHeight: CGFloat = 48
-
-    /// Jump straight to the upcoming track. A queued song is pulled from the
-    /// queue and played; a playlist track just plays.
-    private func skipToNext(_ track: Track) {
-        if audioPlayer.queue.contains(where: { $0.id == track.id }) {
-            audioPlayer.playFromQueue(track)
-        } else {
-            audioPlayer.play(track)
-        }
-    }
     
     @ViewBuilder
     private var titleView: some View {
@@ -1314,7 +1385,9 @@ struct NowPlayingView: View {
         VStack(spacing: 4) {
             HStack {
                 Spacer()
-                Text("-" + formatTime((duration - position) / max(rate, 0.01)))
+                // Unknown length (owner hasn't published a duration yet) reads
+                // as a placeholder instead of a negative countdown.
+                Text(duration > 0 ? "-" + formatTime(max(duration - position, 0) / max(rate, 0.01)) : "-:--")
                     .font(Theme.caption(12).monospacedDigit())
                     .foregroundColor(Theme.bone.opacity(0.7))
             }
@@ -1598,17 +1671,18 @@ struct UpNextRow: View {
     let track: Track
     @ObservedObject var downloadManager: DownloadManager
 
-    private var download: Download? {
-        downloadManager.getDownload(byID: track.id)
-    }
-
     var body: some View {
         HStack(spacing: 12) {
+            // Same resolver as every other surface (incl. the URL fallback for
+            // imported files that have no Download record). Rows are index-
+            // keyed by the sheet, so re-key the image on the track: when the
+            // queue advances, row 0 becomes a different song.
             AsyncThumbnailView(
-                thumbnailPath: download?.artworkPath,
+                thumbnailPath: downloadManager.artworkPath(for: track),
                 size: 44,
                 cornerRadius: 8
             )
+            .id(track.id)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.name)
@@ -2191,6 +2265,11 @@ struct PulsingThumbnailView: View {
 struct EdgeVisualizerView: View {
     @ObservedObject var audioPlayer: AudioPlayerManager
     @ObservedObject var visualizerState: VisualizerState
+    /// The artwork file Now Playing resolved for the current track (the same
+    /// one the hero art decodes). Bar colors sample this; without it the
+    /// legacy audio-URL lookup misses renamed/synced tracks and the bars fall
+    /// back to white while the art next to them is in color.
+    var artworkPath: String? = nil
     var thumbnailCenter: CGPoint? = nil  // If provided, draw around this point instead of view center
     
     // Geometry - matches thumbnail with subtle pulse
@@ -2266,6 +2345,9 @@ struct EdgeVisualizerView: View {
         .onChange(of: audioPlayer.currentTrack) { newTrack in
             precomputeBarColors(for: newTrack)
         }
+        .onChange(of: artworkPath) { _ in
+            precomputeBarColors(for: audioPlayer.currentTrack)
+        }
         .onAppear {
             precomputeBarColors(for: audioPlayer.currentTrack)
         }
@@ -2279,10 +2361,12 @@ struct EdgeVisualizerView: View {
             return
         }
         
-        // Resolves both thumbnail schemes (legacy audio-filename key and the
-        // current videoID key) instead of hand-building the legacy path.
-        guard let thumbnailPath = EmbeddedPython.shared.getThumbnailPath(for: track.url),
-              let image = UIImage(contentsOfFile: thumbnailPath.path) else {
+        // Prefer the file Now Playing already resolved for this track; the
+        // audio-URL lookup is only the fallback (it covers both thumbnail
+        // schemes but misses records whose file was renamed).
+        let resolved = artworkPath ?? EmbeddedPython.shared.getThumbnailPath(for: track.url)?.path
+        guard let thumbnailPath = resolved,
+              let image = UIImage(contentsOfFile: thumbnailPath) else {
             barHSB = Array(repeating: (h: 0, s: 0, b: 1.0), count: 100)
             return
         }

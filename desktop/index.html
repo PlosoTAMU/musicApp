@@ -156,8 +156,8 @@
     #remote-banner .dot { background: var(--red-light); flex: none; }
     #remote-banner #remote-banner-text { overflow: hidden;
       text-overflow: ellipsis; white-space: nowrap; }
-    #remote-banner #btn-playhere { margin-left: auto; flex: none;
-      color: var(--red-light); }
+    #remote-banner #btn-playhere, #remote-banner #btn-transfer {
+      margin-left: auto; flex: none; color: var(--red-light); }
     /* Title sits under the (bigger) artwork, centered like iOS, a step
        smaller than before so the art stays the hero. */
     #track-name {
@@ -661,6 +661,7 @@
           <span class="dot"></span>
           <span id="remote-banner-text">Controlling your other device</span>
           <button id="btn-playhere" class="link">Play Here</button>
+          <button id="btn-transfer" class="link" hidden>Play on other device</button>
         </div>
         <div id="art-wrap">
           <canvas id="edge-viz"></canvas>

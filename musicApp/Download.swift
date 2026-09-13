@@ -8,8 +8,13 @@ enum DownloadSource: String, Codable {
 
 struct Download: Identifiable, Codable {
     let id: UUID
-    let name: String
-    let url: URL
+    // `var`, not `let`: rename/relocate/redownload used to rebuild the whole
+    // record through init(...) and silently dropped every field that init
+    // doesn't take (folderOverride, the Spotify/YouTube provenance, and
+    // thumbnailFetchFailedAtMs — so a permanently missing thumbnail was
+    // re-fetched on every launch). Mutate in place instead.
+    var name: String
+    var url: URL
     var thumbnailPath: String?
     var videoID: String?
     var source: DownloadSource

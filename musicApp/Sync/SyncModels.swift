@@ -122,6 +122,10 @@ struct TrackMeta {
     let cropEndMs: Int?
     let deleted: Bool
     let metaBy: String?
+    /// `metaAt` as epoch ms (0 when absent or still a pending server
+    /// timestamp). Only used to pick the canonical doc when two live docs
+    /// carry the same yt — see LibraryReplicator.canonicalDocId(forYT:).
+    let metaAtMs: Int
 
     init?(dict: [String: Any]) {
         guard let name = dict["name"] as? String,
@@ -134,6 +138,29 @@ struct TrackMeta {
         self.cropEndMs = wireInt(dict["cropEndMs"])
         self.deleted = dict["deleted"] as? Bool ?? false
         self.metaBy = dict["metaBy"] as? String
+        self.metaAtMs = (dict["metaAt"] as? Timestamp).map { Int($0.dateValue().timeIntervalSince1970 * 1000) } ?? 0
+    }
+}
+
+// MARK: - Cross-device name key
+
+/// The ONE way both apps compare track names when no YouTube id can settle
+/// it. Letters and digits only, lowercased — every other character dropped.
+/// Anything narrower broke in practice: desktop writes Windows-illegal chars
+/// as "_", iOS's neutralizeName turns "_" into a space and deletes * ~ ` #,
+/// and yt-dlp titles carry all of those; two lenses that agreed on "?" still
+/// disagreed on "*" and "_", and a mismatch here is a re-download (the
+/// down-sync's last rung is this comparison). Verbatim twin of protocol.ts
+/// `nameKey` — pinned by desktop/tests/audit6-sync.test.ts.
+enum SyncNames {
+    static func key(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count)
+        for scalar in s.lowercased().unicodeScalars
+        where CharacterSet.alphanumerics.contains(scalar) {
+            out.unicodeScalars.append(scalar)
+        }
+        return out
     }
 }
 
@@ -165,18 +192,12 @@ final class LibraryTrackResolver: TrackResolving {
 
     func invalidate() { built = false }
 
-    /// Windows-illegal characters are replaced with "_" when desktop writes a
-    /// file, and it compares case-insensitively. Matching through the same lens
-    /// is the last rung of the chain, so a track whose title contains
-    /// ? : / \ * " < > | still resolves here instead of showing up as a ghost
-    /// (sync-audit-4 M7). Verbatim twin of desktop/src/player.ts's `norm`.
-    static func normalizeName(_ s: String) -> String {
-        let illegal = Set("<>:\"/\\|?*")
-        var out = ""
-        out.reserveCapacity(s.count)
-        for ch in s { out.append(illegal.contains(ch) ? "_" : ch) }
-        return out.trimmingCharacters(in: .whitespaces).lowercased()
-    }
+    /// Last rung of the chain: the shared cross-device name key (letters and
+    /// digits only), so a title that reached the other device through
+    /// Windows-illegal-char sanitizing or iOS's neutralizeName still resolves
+    /// instead of showing up as a ghost (sync-audit-4 M7, widened in
+    /// sync-audit-6). Twin of desktop/src/player.ts's `norm`.
+    static func normalizeName(_ s: String) -> String { SyncNames.key(s) }
 
     private func rebuildIfNeeded() {
         guard !built else { return }
@@ -196,9 +217,10 @@ final class LibraryTrackResolver: TrackResolving {
             byNameFolder["\(t.name)|\(t.folderName)"] = t
             byName[t.name] = t
             // First writer wins, so an exact-name hit is never shadowed by a
-            // normalized collision later in the library.
+            // normalized collision later in the library. An empty key (a name
+            // with no letters or digits) would match every such track — skip.
             let norm = Self.normalizeName(t.name)
-            if byNormName[norm] == nil { byNormName[norm] = t }
+            if !norm.isEmpty, byNormName[norm] == nil { byNormName[norm] = t }
         }
         built = true
     }
@@ -215,7 +237,8 @@ final class LibraryTrackResolver: TrackResolving {
         if let yt = ref.ytID, let t = byYt[yt] { return t }
         if let t = byNameFolder["\(ref.name)|\(ref.folder)"] { return t }
         if let t = byName[ref.name] { return t }
-        return byNormName[Self.normalizeName(ref.name)]
+        let norm = Self.normalizeName(ref.name)
+        return norm.isEmpty ? nil : byNormName[norm]
     }
 }
 
@@ -324,6 +347,12 @@ struct SessionState {
     struct Handoff {
         let by: String    // device that lost its route
         let atMs: Int     // ServerClock ms when it happened
+        /// Explicit "play on the other device" request from the owner (the
+        /// Now Playing / desktop banner button), as opposed to the Bluetooth
+        /// beacon: a follower that can play the track claims the seat on its
+        /// next snapshot, no route change needed. Optional on the wire —
+        /// absent ⇒ Bluetooth semantics (sync-audit-6).
+        let transfer: Bool
     }
 
     var epoch: Int
@@ -348,6 +377,20 @@ struct SessionState {
         return nowMs - h.atMs < Self.handoffWindowMs
     }
 
+    /// Another device asked for playback to move off it. A follower that can
+    /// resolve the track takes over immediately (PlaybackSyncEngine.
+    /// maybeAcceptTransfer). Twin of protocol.ts `transferPending`.
+    func transferPending(nowMs: Int) -> Bool {
+        handoffActive(nowMs: nowMs) && (handoff?.transfer ?? false)
+    }
+
+    /// THIS device posted a transfer that nobody has claimed yet (the takeover
+    /// that claims it deletes `handoff`). Twin of protocol.ts `outgoingTransfer`.
+    func outgoingTransfer(nowMs: Int) -> Bool {
+        guard let h = handoff, h.transfer, h.by == SyncDevice.id else { return false }
+        return nowMs - h.atMs < Self.handoffWindowMs
+    }
+
     init?(snap: DocumentSnapshot) {
         guard let d = snap.data(),
               let epoch = wireInt(d["epoch"]),
@@ -362,7 +405,7 @@ struct SessionState {
         self.updatedBy = d["updatedBy"] as? String ?? ""
         if let h = d["handoff"] as? [String: Any],
            let by = h["by"] as? String, let at = wireInt(h["atMs"]) {
-            self.handoff = Handoff(by: by, atMs: at)
+            self.handoff = Handoff(by: by, atMs: at, transfer: h["transfer"] as? Bool ?? false)
         }
     }
 

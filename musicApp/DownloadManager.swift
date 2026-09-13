@@ -937,25 +937,25 @@ class DownloadManager: ObservableObject {
             if FileManager.default.fileExists(atPath: oldThumbnailPath.path) {
                 do {
                     try FileManager.default.moveItem(at: oldThumbnailPath, to: newThumbnailPath)
-                    newThumbnailFilename = newThumbnailPath.lastPathComponent
+                    // Only adopt the moved LEGACY file when the record still
+                    // pointed at the legacy key. A record already migrated to
+                    // "<videoID>.jpg" keeps it — re-pointing it at the
+                    // (reusable) audio-filename key undid the migration.
+                    if currentDownload.thumbnailPath == oldThumbnailPath.lastPathComponent
+                        || currentDownload.thumbnailPath == nil {
+                        newThumbnailFilename = newThumbnailPath.lastPathComponent
+                    }
                     print("✅ [DownloadManager] Thumbnail renamed")
                 } catch {
                     print("⚠️ [DownloadManager] Failed to rename thumbnail: \(error.localizedDescription)")
                 }
             }
             
-            // Update the download with new name, URL, and thumbnail path
-            downloads[index] = Download(
-                id: currentDownload.id,
-                name: trimmedName,
-                url: finalURL,
-                thumbnailPath: newThumbnailFilename,
-                videoID: currentDownload.videoID,
-                source: currentDownload.source,
-                originalURL: currentDownload.originalURL,
-                cropStartTime: currentDownload.cropStartTime,
-                cropEndTime: currentDownload.cropEndTime
-            )
+            // Update name, URL, and thumbnail path IN PLACE — every other
+            // field (folderOverride, provenance, crop, fetch backoff) survives.
+            downloads[index].name = trimmedName
+            downloads[index].url = finalURL
+            downloads[index].thumbnailPath = newThumbnailFilename.map { ($0 as NSString).lastPathComponent }
             
             saveDownloads()
             notifyChange()
@@ -970,7 +970,9 @@ class DownloadManager: ObservableObject {
                     id: currentTrack.id,
                     name: trimmedName,
                     url: finalURL,
-                    folderName: currentTrack.folderName
+                    folderName: currentTrack.folderName,
+                    cropStartTime: currentTrack.cropStartTime,
+                    cropEndTime: currentTrack.cropEndTime
                 )
                 
                 audioPlayer.currentTrack = updatedTrack
@@ -1377,6 +1379,16 @@ class DownloadManager: ObservableObject {
         downloads.first { $0.id == id && !$0.pendingDeletion }
     }
 
+    /// The local record for a YouTube id, whatever its `source`. This is the
+    /// identity check library sync uses: a track the user pasted as a Spotify
+    /// link is stored with source `.spotify` but its videoID IS the YouTube
+    /// id the cloud doc carries, and `findDuplicateByVideoID(source: .youtube)`
+    /// refused to match it — so down-sync re-downloaded songs already here
+    /// whenever the doc's name differed from the local one (sync-audit-6).
+    func download(forVideoID videoID: String) -> Download? {
+        downloads.first { $0.videoID == videoID && !$0.pendingDeletion }
+    }
+
     /// Artwork for a Track — `Download.artworkPath` when the track maps to a
     /// record, else the audio-URL lookup (imported files, records mid-delete).
     /// The single entry point for every player surface, so the mini player,
@@ -1480,18 +1492,11 @@ class DownloadManager: ObservableObject {
                 let filename = loadedDownloads[i].url.lastPathComponent
                 let correctPath = currentMusicDir.appendingPathComponent(filename)
                 
-                loadedDownloads[i] = Download(
-                    id: loadedDownloads[i].id,
-                    name: loadedDownloads[i].name,
-                    url: correctPath,
-                    thumbnailPath: loadedDownloads[i].thumbnailPath,
-                    videoID: loadedDownloads[i].videoID,
-                    source: loadedDownloads[i].source,
-                    originalURL: loadedDownloads[i].originalURL,
-                    cropStartTime: loadedDownloads[i].cropStartTime,
-                    cropEndTime: loadedDownloads[i].cropEndTime
-                )
-                
+                // Re-root the file under the CURRENT container (iOS moves it
+                // on reinstall/update). In place — rebuilding the record
+                // through init() dropped folderOverride, provenance, and
+                // thumbnailFetchFailedAtMs on every launch.
+                loadedDownloads[i].url = correctPath
                 loadedDownloads[i].pendingDeletion = false
                 
                 #if DEBUG
@@ -1627,16 +1632,12 @@ class DownloadManager: ObservableObject {
                             }
                         }
                         
-                        // Update the download entry with new file URL (keeps same ID!)
-                        self.downloads[index] = Download(
-                            id: oldDownloadID,  // ✅ KEEP SAME ID
-                            name: downloadedTitle,
-                            url: finalURL,  // New file location
-                            thumbnailPath: thumbnailPath?.path,
-                            videoID: videoID,
-                            source: download.source,
-                            originalURL: originalURL
-                        )
+                        // Update the download entry with the new file IN
+                        // PLACE (same id; crop, folder, provenance survive).
+                        self.downloads[index].name = downloadedTitle
+                        self.downloads[index].url = finalURL  // New file location
+                        self.downloads[index].thumbnailPath = thumbnailPath?.lastPathComponent
+                        self.downloads[index].thumbnailFetchFailedAtMs = nil
                         
                         self.saveDownloads()
                         self.notifyChange()

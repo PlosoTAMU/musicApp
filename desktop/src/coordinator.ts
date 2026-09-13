@@ -236,8 +236,13 @@ export class SessionCoordinator {
 
   /** `onlyIfIdle`: refuse (SEAT_TAKEN) when any other device holds the seat.
    *  Used by the reclaim-after-clear path — a device that legitimately took
-   *  over while we were away must not be deposed by our return. */
-  async takeOver(onlyIfIdle = false): Promise<SessionState> {
+   *  over while we were away must not be deposed by our return.
+   *
+   *  `requireHandoffFrom`: claim a transfer request. The transaction insists
+   *  the doc still carries that device's `transfer` beacon — the takeover
+   *  deletes it, so when two followers both answer, the second one's txn
+   *  finds no beacon and refuses (SEAT_TAKEN) instead of deposing the first. */
+  async takeOver(onlyIfIdle = false, requireHandoffFrom?: string): Promise<SessionState> {
     if (this.demo) { this.role = "owner"; return this.remote!; }
     const ref = this.ref;
     if (!ref) throw new Error("not connected");
@@ -247,6 +252,9 @@ export class SessionCoordinator {
       const cur = snap.data() as SessionState | undefined;
       if (!cur) throw new Error("corrupt session");
       if (onlyIfIdle && cur.ownerDeviceID && !sameId(cur.ownerDeviceID, DEVICE_ID))
+        throw SEAT_TAKEN;
+      if (requireHandoffFrom !== undefined
+          && !(cur.handoff?.transfer === true && sameId(cur.handoff.by, requireHandoffFrom)))
         throw SEAT_TAKEN;
       txn.update(ref, {
         epoch: cur.epoch + 1, ownerDeviceID: DEVICE_ID,
@@ -392,6 +400,36 @@ export class SessionCoordinator {
     const ref = this.ref;
     if (this.demo || !ref) return;
     await updateDoc(ref, { handoff: deleteField() }).catch(() => {});
+  }
+
+  /** "Play on other device": the owner asks any follower that can play the
+   *  current track to take the seat now. Same beacon slot as the Bluetooth
+   *  handoff (plain write, self-expiring) with `transfer: true`, so followers
+   *  act without waiting for a route change. The claiming takeover deletes
+   *  it; an unanswered one is retracted by the UI timeout (cancelTransfer) or
+   *  expires with the window. Twin of SessionCoordinator.postTransfer. */
+  async postTransfer() {
+    const ref = this.ref;
+    if (this.demo || this.role !== "owner" || !ref) return;
+    await updateDoc(ref, {
+      handoff: { by: DEVICE_ID, atMs: serverClock.nowMs, transfer: true },
+      updatedBy: DEVICE_ID,
+    }).catch(() => {});
+  }
+
+  /** Retract OUR unanswered transfer. Fenced on the beacon being ours: a
+   *  follower's claim (which deletes it) or a newer beacon is left alone. */
+  async cancelTransfer() {
+    const ref = this.ref;
+    if (this.demo || !ref) return;
+    try {
+      await runTransaction(this.db, async txn => {
+        const snap = await txn.get(ref);
+        const cur = snap.data() as SessionState | undefined;
+        if (!cur?.handoff?.transfer || !sameId(cur.handoff.by, DEVICE_ID)) return;
+        txn.update(ref, { handoff: deleteField() });
+      });
+    } catch { /* best-effort */ }
   }
 
   // ── Lease ──────────────────────────────────────────────────────────────
