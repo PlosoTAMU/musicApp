@@ -1424,7 +1424,7 @@ struct NowPlayingView: View {
         let safePosition = safeDuration > 0 ? min(max(position, 0), safeDuration) : 0
         let safeSeekPosition = min(max(localSeekPosition, 0), sliderUpperBound)
 
-        VStack(spacing: 4) {
+        return VStack(spacing: 4) {
             HStack {
                 Spacer()
                 // Unknown length (owner hasn't published a duration yet) reads
