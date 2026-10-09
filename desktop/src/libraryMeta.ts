@@ -1,6 +1,7 @@
 // Pure helpers over the users/{uid}/library doc set — Node-testable, no
 // Firestore. Twin of the canonical-doc logic in LibraryReplicator.swift
-// (canonicalDocId(forYT:)); pinned by tests/audit6-sync.test.ts.
+// (canonicalDocId(forYT:) / tombstoneDocId(forYT:)); pinned by
+// tests/audit6-sync.test.ts.
 import { TrackMeta } from "./protocol";
 
 /** `metaAt` as epoch ms — 0 when absent (legacy doc) or still a pending
@@ -37,5 +38,23 @@ export function duplicateDocIds(
   const out: string[] = [];
   for (const [id, m] of entries)
     if (m.yt && !m.deleted && canonical.get(m.yt) !== id) out.push(id);
+  return out;
+}
+
+/** yt → best tombstone doc to revive. This is deliberately separate from
+ *  canonicalByYt because canonical excludes tombstones for every deletion /
+ *  download decision. Upload-side dedupe still needs to find a deleted doc by
+ *  yt so a manual re-download revives it in place instead of minting a new live
+ *  doc beside the tombstone (the iOS bug fixed in LibraryReplicator.swift). */
+export function tombstoneByYt(entries: Iterable<[string, TrackMeta]>): Map<string, string> {
+  const best = new Map<string, { id: string; at: number }>();
+  for (const [id, m] of entries) {
+    if (!m.yt || !m.deleted) continue;
+    const at = metaAtMs(m);
+    const b = best.get(m.yt);
+    if (!b || at > b.at || (at === b.at && id < b.id)) best.set(m.yt, { id, at });
+  }
+  const out = new Map<string, string>();
+  for (const [yt, b] of best) out.set(yt, b.id);
   return out;
 }

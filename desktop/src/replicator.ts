@@ -76,7 +76,10 @@ export class Replicator {
     }
     this.unsub = onSnapshot(collection(this.db, "users", uid, "library"), snap => {
       for (const ch of snap.docChanges()) {
-        const m = ch.doc.data() as TrackMeta;
+        // estimate: a pending metaAt (our own write) reads as "now", not
+        // null/0 — else the just-edited doc loses canonicalByYt to an older
+        // duplicate for one snapshot (iOS twin: data(with: .estimate)).
+        const m = ch.doc.data({ serverTimestamps: "estimate" }) as TrackMeta;
         if (ch.type === "removed") { this.meta.delete(ch.doc.id); continue; }
         const prev = this.meta.get(ch.doc.id);
         this.meta.set(ch.doc.id, m);

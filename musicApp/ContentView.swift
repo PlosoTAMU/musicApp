@@ -263,13 +263,27 @@ struct ContentView: View {
 
     // FPS tracking with CADisplayLink
     private func startFPSTracking() {
-        let displayLink = CADisplayLink(target: FPSTracker.shared, selector: #selector(FPSTracker.tick))
-        displayLink.add(to: .main, forMode: .common)
+        FPSTracker.shared.start()
     }
 
     class FPSTracker {
         static let shared = FPSTracker()
+        private var displayLink: CADisplayLink?
         private var lastTimestamp: CFTimeInterval = 0
+
+        func start() {
+            guard displayLink == nil else { return }
+            lastTimestamp = 0
+            let link = CADisplayLink(target: self, selector: #selector(tick))
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+        }
+
+        func stop() {
+            displayLink?.invalidate()
+            displayLink = nil
+            lastTimestamp = 0
+        }
         
         @objc func tick(displayLink: CADisplayLink) {
             if lastTimestamp > 0 {
@@ -497,8 +511,8 @@ struct MiniPlayerBar: View {
         return isRemote ? syncManager.engine.mirrorTrack : audioPlayer.currentTrack
     }
     private var displayName: String {
-        if isIdleResumable { return remotePB?.track?.name ?? "Unknown" }
-        return isRemote ? (remotePB?.track?.name ?? "Unknown")
+        if isIdleResumable { return syncManager.engine.mirrorDisplayName ?? "Unknown" }
+        return isRemote ? (syncManager.engine.mirrorDisplayName ?? "Unknown")
                          : (audioPlayer.currentTrack?.name ?? "Unknown")
     }
     private var displayFolder: String {
@@ -801,7 +815,7 @@ struct NowPlayingView: View {
         isRemoteControlled ? engine.mirrorTrack : audioPlayer.currentTrack
     }
     private var displayName: String {
-        isRemoteControlled ? (engine.mirror?.track?.name ?? "Unknown")
+        isRemoteControlled ? (engine.mirrorDisplayName ?? "Unknown")
                            : (audioPlayer.currentTrack?.name ?? "Unknown")
     }
     private var displayIsPlaying: Bool {
@@ -893,14 +907,26 @@ struct NowPlayingView: View {
             refreshTitleMetrics()
             lockOrientation(.portrait)
             if !isRemoteControlled { audioPlayer.startVisualization() }
-            // Slide up into place (panel starts off-screen below).
-            withAnimation(.easeInOut(duration: 0.3)) { panelOffset = 0 }
+            // Always start below the screen. The binding can still be 0 if the
+            // previous presentation was unmounted without animatedDismiss
+            // (for example, playback ended), which made the next presentation
+            // fade in instead of sliding up.
+            var resetTransaction = Transaction()
+            resetTransaction.disablesAnimations = true
+            withTransaction(resetTransaction) {
+                panelOffset = UIScreen.main.bounds.height + 30
+            }
+            DispatchQueue.main.async {
+                withAnimation(.easeInOut(duration: 0.3)) { panelOffset = 0 }
+            }
         }
         .onDisappear {
             unlockOrientation()
             audioPlayer.stopVisualization()
         }
         .onChange(of: displayTrack?.id) { _ in
+            isSeeking = false
+            localSeekPosition = 0
             updateBackgroundImage()
             refreshThumbnailImage()
             refreshTitleMetrics()
@@ -1005,8 +1031,12 @@ struct NowPlayingView: View {
             isPresented: $showRenameAlert,
             confirmLabel: "Rename"
         ) {
+            // Match by id: a track that arrived via the synced queue carries
+            // a URL that needn't equal the stored one byte-for-byte, so the
+            // URL lookup found nothing and the rename silently did nothing.
             if let track = displayTrack,
-            let download = downloadManager.downloads.first(where: { $0.url == track.url }) {
+            let download = downloadManager.getDownload(byID: track.id)
+                ?? downloadManager.downloads.first(where: { $0.url == track.url }) {
                 downloadManager.renameDownload(download, newName: newTrackName)
             }
         }
@@ -1306,6 +1336,13 @@ struct NowPlayingView: View {
         .frame(height: Self.upNextStripHeight)
         .padding(.top, 14)
         .padding(.horizontal, 24)
+        .transition(.identity)
+        .transaction { transaction in
+            // The whole panel is already moving via panelOffset. Do not let
+            // this subtree inherit that insertion transaction as an opacity
+            // fade; the strip should ride the slide-up with its siblings.
+            transaction.animation = nil
+        }
     }
 
     /// Natural height of the Up Next strip — reserved even when empty.
@@ -1382,42 +1419,50 @@ struct NowPlayingView: View {
     }
 
     private func progressBarBody(position: Double, duration: Double, rate: Double) -> some View {
+        let safeDuration = max(duration, 0)
+        let sliderUpperBound = max(safeDuration, 1)
+        let safePosition = safeDuration > 0 ? min(max(position, 0), safeDuration) : 0
+        let safeSeekPosition = min(max(localSeekPosition, 0), sliderUpperBound)
+
         VStack(spacing: 4) {
             HStack {
                 Spacer()
                 // Unknown length (owner hasn't published a duration yet) reads
                 // as a placeholder instead of a negative countdown.
-                Text(duration > 0 ? "-" + formatTime(max(duration - position, 0) / max(rate, 0.01)) : "-:--")
+                Text(safeDuration > 0 ? "-" + formatTime(max(safeDuration - safePosition, 0) / max(rate, 0.01)) : "-:--")
                     .font(Theme.caption(12).monospacedDigit())
                     .foregroundColor(Theme.bone.opacity(0.7))
             }
 
             ThemedSlider(
                 value: Binding(
-                    get: { isSeeking ? localSeekPosition : position },
+                    get: { isSeeking ? safeSeekPosition : safePosition },
                     set: { newValue in
-                        localSeekPosition = newValue
-                        if !isSeeking { commitSeek(to: newValue) }
+                        let clampedValue = min(max(newValue, 0), sliderUpperBound)
+                        localSeekPosition = clampedValue
+                        if !isSeeking { commitSeek(to: clampedValue) }
                     }
                 ),
-                range: 0...max(duration, 1),
+                range: 0...sliderUpperBound,
                 tint: Theme.redLight
             ) { editing in
                 isSeeking = editing
                 if editing {
-                    localSeekPosition = position
+                    localSeekPosition = safePosition
                 } else {
-                    commitSeek(to: localSeekPosition)
+                    let targetPosition = min(max(localSeekPosition, 0), sliderUpperBound)
+                    localSeekPosition = targetPosition
+                    commitSeek(to: targetPosition)
                 }
             }
-            .disabled(duration == 0)
+            .disabled(safeDuration == 0)
 
             HStack {
-                Text(formatTime(position))
+                Text(formatTime(safePosition))
                     .font(Theme.caption(12).monospacedDigit())
                     .foregroundColor(Theme.bone.opacity(0.7))
                 Spacer()
-                Text(formatTime(duration))
+                Text(formatTime(safeDuration))
                     .font(Theme.caption(12).monospacedDigit())
                     .foregroundColor(Theme.bone.opacity(0.7))
             }
@@ -1427,10 +1472,11 @@ struct NowPlayingView: View {
     }
 
     private func commitSeek(to seconds: Double) {
+        let targetSeconds = max(seconds, 0)
         if isRemoteControlled {
-            engine.requestSeek(ms: Int(seconds * 1000))
+            engine.requestSeek(ms: Int(targetSeconds * 1000))
         } else {
-            audioPlayer.seek(to: seconds)
+            audioPlayer.seek(to: targetSeconds)
         }
     }
     

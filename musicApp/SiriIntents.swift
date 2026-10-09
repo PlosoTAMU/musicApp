@@ -80,7 +80,28 @@ final class SiriPlaybackBridge {
             cropEndTime: match.cropEndTime
         )
         audioPlayer.play(track)
+        guardAgainstSiriPause(trackID: track.id, audioPlayer: audioPlayer)
         return true
+    }
+
+    /// Siri still owns the audio session for a moment after the intent runs
+    /// (its UI/speech is tearing down), which fires an AVAudioSession
+    /// interruption that pauses the track we just started. iOS often omits
+    /// `.shouldResume` on that interruption's end, so the song sat loaded but
+    /// paused. Re-check a few times shortly after a Siri play and resume if
+    /// it's still our track and not playing. Skipped when the play was routed
+    /// to another device (currentTrack never becomes this track here).
+    @MainActor
+    private func guardAgainstSiriPause(trackID: UUID, audioPlayer: AudioPlayerManager) {
+        for delay in [1.5, 3.0, 5.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak audioPlayer] in
+                guard let ap = audioPlayer,
+                      ap.currentTrack?.id == trackID,
+                      !ap.isPlaying else { return }
+                print("🗣️ [Siri] Track paused after Siri play — resuming")
+                ap.resume()
+            }
+        }
     }
 }
 
@@ -213,16 +234,13 @@ struct PlaySongIntent: AppIntent {
         Summary("Play \(\.$song)")
     }
 
+    // No spoken dialog: Siri talking over the track interrupts the audio
+    // session and left the song paused. The music starting is the feedback.
+    // A cold launch queues the request; attach() plays it once wired up.
     @MainActor
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        let started = SiriPlaybackBridge.shared.requestPlay(trackID: song.id)
-        if started {
-            return .result(dialog: "Playing \(song.name)")
-        } else {
-            // App was cold-launched; the request is queued and will play as
-            // soon as the library finishes loading.
-            return .result(dialog: "Opening to play \(song.name)")
-        }
+    func perform() async throws -> some IntentResult {
+        SiriPlaybackBridge.shared.requestPlay(trackID: song.id)
+        return .result()
     }
 }
 

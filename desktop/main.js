@@ -46,6 +46,9 @@ app.whenReady().then(() => {
     win.webContents.send("release-seat");
   });
 
+  // Pulse trainer store root (taps, features, model) — see src/pulseAI.ts.
+  ipcMain.handle("user-data-dir", () => app.getPath("userData"));
+
   ipcMain.handle("pick-folder", async () => {
     const r = await dialog.showOpenDialog(win, { properties: ["openDirectory"] });
     return r.canceled ? undefined : r.filePaths[0];
@@ -138,6 +141,47 @@ app.whenReady().then(() => {
           document.getElementById("repl-status").textContent = 'Uploading \\u201CStarboy\\u201D\\u2026';
         })()`);
         await new Promise(r => setTimeout(r, 400));
+      }
+      if (process.env.PULSOR_SHOT === "drone") {
+        const res = await win.webContents.executeJavaScript(
+          `window.__pulsorDroneProbe(${JSON.stringify(process.env.PULSOR_PROBE_DIR || "")}, ${Number(process.env.PULSOR_PROBE_N) || 10}).catch(e => 'ERROR ' + (e && e.stack || e))`);
+        require("fs").writeFileSync((process.env.PULSOR_SHOT_OUT || "shot.png") + ".txt", String(res));
+      }
+      if (process.env.PULSOR_SHOT === "rename") {
+        const res = await win.webContents.executeJavaScript(
+          "window.__pulsorRenameSmoke().catch(e => 'ERROR ' + (e && e.stack || e))");
+        console.log("[rename-smoke]", res);
+        require("fs").writeFileSync((process.env.PULSOR_SHOT_OUT || "shot.png") + ".txt", String(res));
+      }
+      if (process.env.PULSOR_SHOT === "trainer") {
+        await win.webContents.executeJavaScript(`(() => {
+          document.getElementById("setup").hidden = true;
+          document.getElementById("main").hidden = false;
+        })()`);
+        const res = await win.webContents.executeJavaScript(
+          "window.__pulsorPulseSmoke().catch(e => 'ERROR ' + (e && e.stack || e))");
+        console.log("[pulse-smoke]", res);
+        require("fs").writeFileSync((process.env.PULSOR_SHOT_OUT || "shot.png") + ".txt", String(res));
+        // Drive a tapping session: lead-in, then Space taps (one with Shift),
+        // and report what the trainer recorded. Shot lands mid-clip.
+        const tapRes = await win.webContents.executeJavaScript(`(async () => {
+          const sleep = ms => new Promise(r => setTimeout(r, ms));
+          document.querySelector(".tr-start").click();
+          await sleep(5500);
+          for (let i = 0; i < 6; i++) {
+            const o = { code: "Space", key: " ", shiftKey: i === 2, bubbles: true };
+            document.dispatchEvent(new KeyboardEvent("keydown", o));
+            document.dispatchEvent(new KeyboardEvent("keyup", o));
+            await sleep(350);
+          }
+          await sleep(120);
+          return [document.querySelector(".tr-phase").textContent,
+                  document.querySelector(".tr-count").textContent,
+                  document.querySelectorAll(".tr-ticks i").length,
+                  document.querySelectorAll(".tr-ticks i.big").length].join(" | ");
+        })()`);
+        console.log("[pulse-tap]", tapRes);
+        require("fs").appendFileSync((process.env.PULSOR_SHOT_OUT || "shot.png") + ".txt", "\n" + String(tapRes));
       }
       const img = await win.webContents.capturePage();
       require("fs").writeFileSync(process.env.PULSOR_SHOT_OUT || "shot.png", img.toPNG());

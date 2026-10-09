@@ -960,34 +960,10 @@ class DownloadManager: ObservableObject {
             saveDownloads()
             notifyChange()
             
-            // If this track is currently playing, update the AudioPlayerManager
-            // Match by ID since URLs are value types and might be stale copies
-            if let audioPlayer = self.audioPlayer,
-               let currentTrack = audioPlayer.currentTrack,
-               currentTrack.id == currentDownload.id {
-                
-                let updatedTrack = Track(
-                    id: currentTrack.id,
-                    name: trimmedName,
-                    url: finalURL,
-                    folderName: currentTrack.folderName,
-                    cropStartTime: currentTrack.cropStartTime,
-                    cropEndTime: currentTrack.cropEndTime
-                )
-                
-                audioPlayer.currentTrack = updatedTrack
-                audioPlayer.updateCurrentTrackURL(finalURL)
-                
-                if let playlistIndex = audioPlayer.currentPlaylist.firstIndex(where: { $0.id == currentTrack.id }) {
-                    audioPlayer.currentPlaylist[playlistIndex] = updatedTrack
-                }
-                
-                if let queueIndex = audioPlayer.queue.firstIndex(where: { $0.id == currentTrack.id }) {
-                    audioPlayer.queue[queueIndex] = updatedTrack
-                }
-                
-                print("✅ [DownloadManager] Updated currently playing track metadata and URL")
-            }
+            // Swap the new name/URL into every copy the player holds (current,
+            // queue, playlist, history) so Now Playing, the mini player and
+            // the lock screen update immediately — not only when it's current.
+            audioPlayer?.applyRename(id: currentDownload.id, name: trimmedName, url: finalURL)
 
             if !fromSync { trackMetaChanged.send(downloads[index]) }
 

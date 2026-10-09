@@ -38,9 +38,10 @@ struct QueueView: View {
     /// Effective "now playing" track: the owner's track while remote,
     /// this phone's local track otherwise.
     private var effCurrentTrack: Track? { isRemote ? mirrorTrack : currentTrack }
-    /// Non-nil in remote mode even when the track is a ghost — the name still
-    /// comes from the owner's mirror, only the resolved file may be missing.
-    private var effCurrentName: String? { isRemote ? mirror?.track?.name : currentTrack?.name }
+    /// Non-nil in remote mode even when the track is a ghost — the local
+    /// library name when it resolves (renames show at once), else the owner's
+    /// published name; only the resolved file may be missing.
+    private var effCurrentName: String? { isRemote ? (mirrorTrack?.name ?? mirror?.track?.name) : currentTrack?.name }
     private var effIsPlaying: Bool { isRemote ? (mirror?.isPlaying ?? false) : isPlaying }
     /// History is owner-local; a follower's own previousQueue is meaningless.
     private var effPrevious: [Track] { isRemote ? [] : previousQueue }

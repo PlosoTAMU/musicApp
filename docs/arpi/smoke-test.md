@@ -31,7 +31,7 @@ Two devices (real secret; phone owns playback):
 ## Phase 2 — Library management parity
 
 Single device (offline preview + a music folder with a few YouTube-sourced tracks):
-- [ ] **Right-click** a library row → context menu (Play / Add to queue / Rename… / Song info / Redownload / Delete). The **⋯** button on hover opens the same menu.
+- [ ] Every library row shows inline action pills — **▶ Play · ＋ Queue · ♪ Playlist · ✂ Crop · ✎ Rename · ⓘ · ✕ Delete** — subdued until hover, captions collapsing to icons when the window is narrow. **Right-click** a row opens the same actions (plus Redownload) as a context menu. With a playlist open, the ♪ pill reads "Add to <name>" and adds in one click.
 - [ ] **Rename…** → a text modal opens pre-filled; enter a new name → the file on disk is renamed (still tagged `[ytid]`) and the row updates. (With a real secret, the new name reaches the phone.)
 - [ ] **Song info** → popover shows title, source, folder, video id, filename, full path (and crop if set). Text is selectable.
 - [ ] **Redownload** (only on yt tracks) → re-fetches via yt-dlp; status shows progress; row refreshes.
@@ -65,7 +65,7 @@ Playlists (open detail):
 - [ ] **Delete** (🗑 or menu) → a **confirm** dialog appears first; Cancel keeps it, Delete tombstones it and returns to the card list.
 
 Add-to-playlist (works from anywhere, not just the open list):
-- [ ] Library row **⋯ → Add to playlist…** → picker lists every playlist + **New playlist…**; choosing one adds the track (toast); "New playlist…" prompts for a name and creates it already holding the track.
+- [ ] Library row **♪ Playlist** → picker lists every playlist + **New playlist…**; choosing one adds the track (toast); "New playlist…" prompts for a name and creates it already holding the track.
 - [ ] Now-playing rail **＋ (add-to-playlist)** → same picker for the current track, with nothing/any playlist open.
 - [ ] After a **download completes**, the add-to-playlist picker auto-opens for the fresh track (when ≥1 playlist exists).
 
@@ -440,3 +440,43 @@ real pair (desktop + phone) on the same home secret.
 - [ ] Handover both directions still continues at the right position.
 - [ ] Deposed device still pauses immediately (no double audio).
 - [ ] Follower transport (⏯ ⏭ ⏮ seek, loop) still works both directions with the optimistic UI response.
+
+---
+
+# Audit 6 — up-next tap · library re-download · playback transfer · remote progress · thumbnails
+
+Two devices, real secret. Rebuild BOTH apps first (the transfer beacon needs both ends).
+
+## Task 1 — Up Next strip
+- [ ] Now Playing with 2+ songs queued: tap the "UP NEXT · <song>" strip → the Up Next sheet opens; the song does NOT skip.
+- [ ] The `☰` list button is gone from the top bar (chevron, loop, fx, lyrics, +, scissors remain).
+- [ ] Empty queue: the strip stays at the same size, no artwork, reads "No songs left" (dim); tapping it still opens the (empty) sheet. Nothing above it moves when the queue empties/refills.
+
+## Task 2 — library sync
+- [ ] Launch desktop 3 times in a row with the phone connected. The phone must NOT show download banners for songs it already has, and the Firebase console must show ONE doc per song (no new docs per launch).
+- [ ] Phone: a song downloaded from a Spotify link (Song Info → source Spotify). Rename it on desktop → the phone renames it; it does NOT re-download.
+- [ ] Desktop: pick a DIFFERENT music folder (btn-library), then pick the original again. The phone must not delete or re-download anything.
+- [ ] Desktop: rename a file on disk to a title containing `_` and `*`; the phone shows the new name, no duplicate, no re-download.
+- [ ] Delete a song on the phone → gone on desktop within seconds; delete on desktop → gone on the phone. Redownload it on either device → back on both, ONE doc.
+- [ ] Phone relaunch: Song Info still shows the desktop's folder; a song whose thumbnail can't be fetched isn't retried on every launch (watch the console).
+
+## Task 3 — transfer both ways
+- [ ] Phone plays. Now Playing shows "Playing on this iPhone · Switch playback to other device". Tap: within ~1–2 s the desktop continues at the same position (playing), the phone pauses and its pill flips to "Playing on another device · Switch playback to this iPhone". Tap that: back to the phone at the right spot.
+- [ ] Desktop plays. Rail banner reads "Playing on this computer · Play on other device". Click: the phone (app OPEN) continues; the desktop banner flips to "Controlling your other device"; "Play Here" brings it back.
+- [ ] Transfer while PAUSED: the other device takes over paused at the same position.
+- [ ] Other app closed/backgrounded: after ~12 s the button re-enables and the hint reads "No other device answered — is the app open there?". No ownership change.
+- [ ] Track the other device lacks: it stays put; same timeout message.
+
+## Task 4 — remote progress after ⏮
+- [ ] Desktop owns playback, phone Now Playing open. Press ⏮ on the phone 5–10 times across songs: the slider must never jump to the end / read "-0:00" or a negative time; countdown shows "-:--" at most briefly.
+
+## Task 5 — thumbnails
+- [ ] Mini player: skip through 10 songs with the app on the list screen. The mini bar art must never show the PREVIOUS song's art under the new title (a brief placeholder is fine).
+- [ ] Up Next sheet: as songs advance, row art matches row title, including for songs queued twice.
+- [ ] Now Playing: bar colors around the art follow the art after renaming the current song.
+- [ ] Renamed song (with `<videoID>.jpg` art): art still shows everywhere after the rename and after relaunch.
+
+## Regression sweep
+- [ ] Bluetooth handoff still works (headphones hop → other device continues).
+- [ ] Play Here on a dead-owner / paused session still works both ways.
+- [ ] Follower transport (⏯ ⏭ ⏮ seek, loop) still works both directions.

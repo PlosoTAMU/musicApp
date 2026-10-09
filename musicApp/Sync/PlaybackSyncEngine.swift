@@ -39,6 +39,20 @@ final class PlaybackSyncEngine: ObservableObject {
     /// playing remotely = ghost (not replicated to this device yet).
     @Published private(set) var mirrorTrack: Track?
 
+    /// Name to show for the remote track: the local library's copy when it
+    /// resolves (a rename lands here the moment the library updates), else
+    /// the owner's last published name.
+    var mirrorDisplayName: String? { mirrorTrack?.name ?? mirror?.track?.name }
+
+    /// Library changed (download, rename, delete): re-resolve the remote track
+    /// so remote-mode UI reflects the new local name/file without waiting for
+    /// the owner's next publish. Caller invalidates the resolver first.
+    func refreshMirrorResolution() {
+        guard let ref = mirror?.track else { return }
+        let t = resolver.resolve(ref)
+        if t != mirrorTrack { mirrorTrack = t }
+    }
+
     /// Another device currently owns the shared session — views become a live
     /// remote (mirror display + command-bus controls) while this is true.
     /// A NON-empty ownerDeviceID that equals SELF is a zombie from a prior
@@ -357,6 +371,20 @@ final class PlaybackSyncEngine: ObservableObject {
             .removeDuplicates(by: { $0?.id == $1?.id })
             .sink { [weak self] newTrack in
                 self?.handleLocalTrackChange(newTrack)
+            }
+            .store(in: &bag)
+
+        // Rename of the playing track: same id, new name. Not a track change,
+        // but followers display the published name — republish so every
+        // device's Now Playing / mini player picks it up right away.
+        player.$currentTrack
+            .dropFirst()
+            .removeDuplicates(by: { $0?.id == $1?.id && $0?.name == $1?.name })
+            .scan((Track?.none, Track?.none)) { ($0.1, $1) }
+            .filter { prev, cur in prev != nil && prev?.id == cur?.id }
+            .sink { [weak self] _ in
+                guard let self, self.coordinator.role.isOwner else { return }
+                self.publishTrigger.send()
             }
             .store(in: &bag)
 

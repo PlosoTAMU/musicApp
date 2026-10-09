@@ -16,7 +16,7 @@ import {
 import { serverClock } from "./serverClock";
 import { LocalTrack, norm, resolve, toRef } from "./player";
 import { LyricsStore, LyricLine, parseLRC, activeIndex } from "./lyrics";
-import { BeatFeed, BeatOutput } from "./beat";
+import { BeatFeed } from "./beat";
 import { drawEdgeVisualizer, sampleArtColors } from "./visualizer";
 import { AudioGraph } from "./audioGraph";
 import { downloadTrack, resolvePlaylist, downloadPlaylistItem } from "./download";
@@ -26,6 +26,9 @@ import { extractYtId, parsePlaylistURL, PlaylistLink } from "./urls";
 import { shuffle, fmtDuration, moveIndex } from "./listOps";
 import { TrackFxStore } from "./trackFx";
 import { showCropSheet } from "./cropSheet";
+import { PulseAI } from "./pulseAI";
+import { showPulseTrainer } from "./pulseTrainer";
+import { envelopeAt } from "./pulseCurve";
 
 const coord = new SessionCoordinator(db);
 const engine = new SyncEngine(db, coord);
@@ -36,6 +39,7 @@ const graph = new AudioGraph();
 const trackFx = new TrackFxStore(localStorage);
 const playlistSync = new PlaylistSync(db);
 const settingsSync = new SettingsSync(db);
+const pulseAI = new PulseAI();
 
 // Wire crop lookups so the player trims audio to the stored crop window and so
 // changes pushed from another device take effect on the live track immediately.
@@ -67,9 +71,16 @@ let busy = false;
 let dragMs: number | null = null;
 let musicDir: string | null = localStorage.getItem(DIR_KEY);
 let watchTimer: ReturnType<typeof setTimeout> | null = null;
+let musicWatcher: fs.FSWatcher | null = null;
 function watchMusicDir(dir: string) {
+  // Replacing the folder used to stack recursive watchers; each old watcher
+  // kept waking the renderer and triggering duplicate rescans. Keep exactly
+  // one live watcher for the active music directory.
+  if (watchTimer) { clearTimeout(watchTimer); watchTimer = null; }
+  musicWatcher?.close();
+  musicWatcher = null;
   try {
-    fs.watch(dir, { recursive: true }, () => {
+    musicWatcher = fs.watch(dir, { recursive: true }, () => {
       if (watchTimer) clearTimeout(watchTimer);
       watchTimer = setTimeout(() => {
         engine.loadLibrary(dir);
@@ -253,6 +264,8 @@ function wire() {
     replicator.forgetShadow();
     playlistSync.stop();
     settingsSync.stop();
+    musicWatcher?.close(); musicWatcher = null;
+    if (watchTimer) { clearTimeout(watchTimer); watchTimer = null; }
     coord.detach();
     void signOutHome();
     renderNow();
@@ -320,6 +333,19 @@ function wire() {
     if (!cur) { showHint("Nothing here to crop"); return; }
     editCrop(cur);
   };
+  // Pulse trainer — tap how the art should pulse; a small net learns it.
+  $("rail-trainer").onclick = () => showPulseTrainer({
+    ai: pulseAI,
+    library: () => engine.library,
+    volume: fx.volume,
+    pauseMain: () => {
+      const was = coord.role === "owner" && engine.player.playing;
+      if (was) engine.pause();
+      return was;
+    },
+    resumeMain: () => engine.play(),
+    onPrefsChange: () => { aiEventsFor = null; },
+  });
   // Add-to-playlist from the now-playing rail — opens the picker for any device's
   // current track (no need to open a playlist first, like iOS).
   $("rail-addpl").onclick = () => {
@@ -425,7 +451,7 @@ function wire() {
   // carries "whichever effective settings are currently audible".
   engine.player.onTrack = t => {
     const s = trackFx.get(t.id);
-    fx.speed = s.speed; fx.pitch = s.pitch; fx.reverb = s.reverb; fx.bass = s.bass;
+    fx.speed = s.speed; fx.pitch = s.pitch; fx.reverb = s.reverb; fx.bass = s.bass; fx.bypass = s.bypass;
     initFxSliders(); // slider DOM + applyFx()
     pushSettingsDebounced();
   };
@@ -574,9 +600,12 @@ const FX_KEY = "fx.v1";
 const fx = ((): { volume: number; speed: number; pitch: number; bass: number;
                   reverb: number; bypass: boolean } => {
   // Fresh installs ship with effects BYPASSED, matching iOS effectsBypass=true
-  // [#19]. A stored fx (existing installs) keeps whatever the user last set.
+  // [#19]. Bypass itself is per-track, so old global bypass from fx.v1 is ignored.
   const base = { volume: 1, speed: 1, pitch: 0, bass: 0, reverb: 0, bypass: true };
-  try { return { ...base, ...JSON.parse(localStorage.getItem(FX_KEY) ?? "{}") }; }
+  try {
+    const { bypass: _oldGlobalBypass, ...stored } = JSON.parse(localStorage.getItem(FX_KEY) ?? "{}");
+    return { ...base, ...stored, bypass: true };
+  }
   catch { return base; }
 })();
 
@@ -608,8 +637,9 @@ function applyFx(publishRate = false) {
   // values count too, but only while the audio is HERE (see onRemote).
   const cur = engine.player.current;
   if (cur && (!applyingRemoteFx || coord.role === "owner"))
-    trackFx.set(cur.id, { speed: fx.speed, pitch: fx.pitch, reverb: fx.reverb, bass: fx.bass });
-  localStorage.setItem(FX_KEY, JSON.stringify(fx));
+    trackFx.set(cur.id, { speed: fx.speed, pitch: fx.pitch, reverb: fx.reverb, bass: fx.bass, bypass: fx.bypass });
+  const { bypass: _perTrackBypass, ...globalFx } = fx;
+  localStorage.setItem(FX_KEY, JSON.stringify(globalFx));
   $("fx-volume-val").textContent = `${Math.round(fx.volume * 100)}%`;
   $("fx-speed-val").textContent = `${fx.speed.toFixed(2)}×`;
   $("fx-pitch-val").textContent = `${fx.pitch > 0 ? "+" : ""}${fx.pitch}st`;
@@ -834,26 +864,32 @@ let artColorsForYt: string | null = null;
 // ART_BOX + 2 × ART_MAX_BAR plus a little pulse headroom.
 const ART_BOX = 300, ART_CORNER = 28, ART_MAX_BAR = 64;
 
-function vizLoop(now: number) {
-  requestAnimationFrame(vizLoop);
-  const ownerPlaying = coord.role === "owner" && engine.player.playing;
+let vizRaf: number | null = null;
+const shouldRunViz = () => !document.hidden && coord.role === "owner" && engine.player.playing;
+function scheduleVizLoop() {
+  if (vizRaf === null && shouldRunViz()) vizRaf = requestAnimationFrame(vizLoop);
+}
+function resetVizVisuals() {
+  if (vizIdle) return;
+  vizIdle = true;
+  const cv = $("edge-viz") as HTMLCanvasElement;
+  edgeVizCtx?.clearRect(0, 0, cv.clientWidth, cv.clientHeight);
   const btn = $("btn-toggle");
   const bpmChip = $("bpm");
   const art = $("art");
+  btn.style.transform = "";
+  btn.style.boxShadow = "";
+  art.style.transform = "";
+  art.style.boxShadow = "";
+  bpmChip.classList.add("off");
+}
 
-  if (!ownerPlaying) {
-    if (!vizIdle) {
-      vizIdle = true;
-      const cv = $("edge-viz") as HTMLCanvasElement;
-      edgeVizCtx?.clearRect(0, 0, cv.clientWidth, cv.clientHeight);
-      btn.style.transform = "";
-      btn.style.boxShadow = "";
-      art.style.transform = "";
-      art.style.boxShadow = "";
-      bpmChip.classList.add("off");
-    }
-    return;
-  }
+function vizLoop(now: number) {
+  vizRaf = null;
+  if (!shouldRunViz()) { resetVizVisuals(); return; }
+  const btn = $("btn-toggle");
+  const bpmChip = $("bpm");
+  const art = $("art");
   vizIdle = false;
 
   // First playing frame after a click — the gesture Web Audio needs.
@@ -866,6 +902,7 @@ function vizLoop(now: number) {
         applyFx(); // graph setters were no-ops before the graph existed
       });
     }
+    scheduleVizLoop();
     return;
   }
   graph.resume();
@@ -877,20 +914,25 @@ function vizLoop(now: number) {
   }
 
   const out = beatFeed.tick(now);
+  // Learned pulse (pulse trainer) replaces the engine's pulse when a model
+  // is enabled and this track's events are ready; otherwise the old pulse.
+  const ai = aiPulse();
+  const pulse = ai ?? out.pulse;
+  const artGain = ai !== null ? pulseAI.gain : 0.06;
   updateArtColors();
-  drawEdgeViz(out);
+  drawEdgeViz(1 + pulse * artGain);
 
   // The play button IS the head-nod: scale rides the phase-locked nod curve,
   // glow flashes on real hits. Inline styles override the CSS at 60 fps.
   btn.style.transform = `scale(${(1 + out.nod * 0.07).toFixed(4)})`;
   btn.style.boxShadow =
-    `0 6px ${Math.round(24 + out.pulse * 30)}px rgba(241,43,38,${(0.45 + out.pulse * 0.4).toFixed(3)})`;
+    `0 6px ${Math.round(24 + pulse * 30)}px rgba(241,43,38,${(0.45 + pulse * 0.4).toFixed(3)})`;
 
   // The thumbnail throbs on every beat — twin of the iOS PulsingThumbnailView,
   // with a shadow bloom that swells on the hit.
-  art.style.transform = `scale(${(1 + out.pulse * 0.06).toFixed(4)})`;
+  art.style.transform = `scale(${(1 + pulse * artGain).toFixed(4)})`;
   art.style.boxShadow =
-    `0 ${Math.round(8 + out.pulse * 6)}px ${Math.round(22 + out.pulse * 26)}px rgba(0,0,0,${(0.45 + out.pulse * 0.35).toFixed(3)})`;
+    `0 ${Math.round(8 + pulse * 6)}px ${Math.round(22 + pulse * 26)}px rgba(0,0,0,${(0.45 + pulse * 0.35).toFixed(3)})`;
 
   if (out.confidence > 0.5) {
     bpmChip.classList.remove("off");
@@ -898,6 +940,29 @@ function vizLoop(now: number) {
   } else {
     bpmChip.classList.add("off");
   }
+  scheduleVizLoop();
+}
+
+// Track whose AI pulse events were last requested — one request per track
+// (and per model / prefs change), never per frame.
+let aiEventsFor: string | null = null;
+pulseAI.onModelChange = () => { aiEventsFor = null; };
+void pulseAI.init().catch(e => console.warn("[pulse] store unavailable", e));
+
+/** 0-1 learned pulse at the playhead, or null to fall back to BeatEngine. */
+function aiPulse(): number | null {
+  if (!pulseAI.enabled || !pulseAI.model) return null;
+  const cur = engine.player.current;
+  if (!cur) return null;
+  const ev = pulseAI.cachedEvents(cur.id);
+  if (!ev) {
+    if (aiEventsFor !== cur.id) { aiEventsFor = cur.id; void pulseAI.eventsFor(cur); }
+    return null;
+  }
+  // Events are in file time; element.currentTime is file time too (crop only
+  // shifts the public position), so no crop math is needed here.
+  const t = engine.player.element.currentTime - pulseAI.offsetMs / 1000;
+  return envelopeAt(ev, t, pulseAI.tauMs / 1000);
 }
 
 /** Re-samples art colors once per track change (not per-frame) — mirrors
@@ -914,7 +979,7 @@ function updateArtColors() {
   artColors = sampleArtColors(img);
 }
 
-function drawEdgeViz(out: BeatOutput) {
+function drawEdgeViz(pulseScale: number) {
   const cv = $("edge-viz") as HTMLCanvasElement;
   const dpr = window.devicePixelRatio || 1;
   const w = cv.clientWidth, h = cv.clientHeight;
@@ -930,7 +995,7 @@ function drawEdgeViz(out: BeatOutput) {
   if (!c) return;
 
   c.clearRect(0, 0, w, h);
-  const pulseScale = 1 + out.pulse * 0.06; // matches the #art scale above
+  // pulseScale matches the #art scale in vizLoop.
   drawEdgeVisualizer(c, ART_BOX * pulseScale, ART_CORNER * pulseScale, ART_MAX_BAR, beatFeed.edgeBins, artColors);
 }
 
@@ -1075,10 +1140,16 @@ function renderPosition() {
 
 // Fast position tick — rAF while playing (owner or mirror) so the slider
 // moves smoothly; the full renderNow stays on its 500 ms interval.
+let positionRaf: number | null = null;
+const shouldRunPositionLoop = () => !document.hidden && coord.role !== "none" && isPlaying();
+function schedulePositionLoop() {
+  if (positionRaf === null && shouldRunPositionLoop()) positionRaf = requestAnimationFrame(positionLoop);
+}
 function positionLoop() {
-  requestAnimationFrame(positionLoop);
-  if (coord.role === "none") return;
-  if (isPlaying()) renderPosition();
+  positionRaf = null;
+  if (!shouldRunPositionLoop()) return;
+  renderPosition();
+  schedulePositionLoop();
 }
 
 function renderNow() {
@@ -1158,7 +1229,10 @@ function renderNow() {
   // owner the element already switched songs, while pb.track only catches up
   // once the publish transaction lands (sometimes never — see the outbox).
   const cur = currentTrackRef();
-  const titleText = cur?.name ?? (idle ? "Pick a song →" : "Nothing playing");
+  // Following another device: prefer this library's name for the track — a
+  // rename (here or synced in) shows at once, before the owner republishes.
+  const shownName = cur && (localAudio() ? cur.name : (resolve(cur, engine.library)?.name ?? cur.name));
+  const titleText = shownName ?? (idle ? "Pick a song →" : "Nothing playing");
   const titleEl = $("track-title"), titleInner = $("track-title-text");
   if (titleInner.textContent !== titleText) {
     titleInner.textContent = titleText;
@@ -1197,6 +1271,8 @@ function renderNow() {
   }
 
   renderPosition();
+  schedulePositionLoop();
+  scheduleVizLoop();
 
   // Rail action toggles — filled treatment matches the iOS top bar (fx button
   // is lit while effects are ACTIVE; bypassed adds a slash + says so) [U9].
@@ -1505,7 +1581,7 @@ function renameTrack(t: LocalTrack, raw: string) {
   if (fs.existsSync(target)) { showHint("A file with that name already exists"); return; }
   try { fs.renameSync(t.path, target); }
   catch { showHint("Rename failed (file may be in use)"); return; }
-  engine.loadLibrary(musicDir); renderLibrary(); replicator.syncUp();
+  engine.loadLibrary(musicDir, new Map([[t.path, target]])); renderLibrary(); replicator.syncUp();
 }
 
 function deleteTrack(t: LocalTrack) {
@@ -2080,11 +2156,150 @@ if (process.env.PULSOR_SHOT) {
     renderLibrary();
     $("library-list").querySelector("li")?.classList.add("playing");
   };
+  // Drone probe: real library, real graph, output muted AFTER the analyser.
+  // Forces song endings and reports audio-clock stalls (render thread not
+  // keeping up → driver loops its buffer = endless tone) and any signal in
+  // the graph after the element has ended.
+  (window as unknown as { __pulsorDroneProbe?: (dir: string, n: number) => Promise<string> }).__pulsorDroneProbe = async (dir, n) => {
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+    coord.attachDemo();
+    musicDir = dir;
+    engine.loadLibrary(dir);
+    const lib = engine.library, el = engine.player.element;
+    const g = graph as unknown as { ctx: AudioContext; dry: GainNode; wet: GainNode };
+    const log: string[] = [];
+    let worstStall = 0, stalls = 0, tailHits = 0, errors = 0;
+    let ac: AnalyserNode | undefined, buf = new Float32Array(2048);
+    let lastWall = performance.now(), lastCtx = 0;
+    const mon = setInterval(() => {
+      if (!g.ctx) return;
+      const now = performance.now(), wall = (now - lastWall) / 1000, dc = g.ctx.currentTime - lastCtx;
+      if (lastCtx && g.ctx.state === "running" && wall > 0.04 && dc < wall * 0.5) {
+        stalls++; worstStall = Math.max(worstStall, wall - dc);
+        log.push(`stall ${(wall - dc).toFixed(3)}s ctx=${g.ctx.currentTime.toFixed(2)} el=${el.paused ? "paused" : "playing"}${el.ended ? "/ended" : ""}`);
+      }
+      lastWall = now; lastCtx = g.ctx.currentTime;
+      if (ac && (el.paused || el.ended)) {
+        ac.getFloatTimeDomainData(buf);
+        let e = 0; for (const v of buf) e += v * v;
+        const rms = Math.sqrt(e / buf.length);
+        if (rms > 0.01) { tailHits++; if (tailHits < 6) log.push(`signal after end rms=${rms.toFixed(3)}`); }
+      }
+    }, 50);
+    el.addEventListener("error", () => { errors++; log.push(`element error ${el.error?.code} ${el.error?.message}`); });
+    for (let k = 0; k < n; k++) {
+      const t = lib[Math.floor(Math.random() * lib.length)];
+      engine.player.play(t);
+      if (!graph.attached) {
+        await graph.attach(el);
+        g.dry.gain.value = 0; g.wet.gain.value = 0; // silent probe
+        ac = graph.analyser!;
+        ac.fftSize = 2048;
+      }
+      graph.resume();
+      await new Promise<void>(r => { if (el.readyState >= 1) r(); else el.addEventListener("loadedmetadata", () => r(), { once: true }); });
+      await sleep(800);
+      if (isFinite(el.duration) && el.duration > 5) el.currentTime = el.duration - 2;
+      const t0 = performance.now();
+      while (!el.ended && performance.now() - t0 < 8000) await sleep(100);
+      log.push(`#${k} ${t.name.slice(0, 40)} ended=${el.ended} dur=${el.duration.toFixed(1)}`);
+      await sleep(2500);
+    }
+    clearInterval(mon);
+    return JSON.stringify({ stalls, worstStall: +worstStall.toFixed(3), tailHits, errors, sr: g.ctx?.sampleRate,
+      baseLatency: g.ctx?.baseLatency, outputLatency: g.ctx?.outputLatency, log }, null, 1);
+  };
+  // Rename smoke: play a file offline (demo), rename it through the real
+  // renameTrack path, report what Now Playing / the player / library show.
+  (window as unknown as { __pulsorRenameSmoke?: () => Promise<string> }).__pulsorRenameSmoke = async () => {
+    const os = require("os") as typeof import("os");
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+    const dir = path.join(os.tmpdir(), "pulsor-rename-smoke");
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    const sr = 22050, n = sr * 30, buf = Buffer.alloc(44 + n * 2);
+    buf.write("RIFF", 0); buf.writeUInt32LE(36 + n * 2, 4); buf.write("WAVEfmt ", 8); buf.writeUInt32LE(16, 16);
+    buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22); buf.writeUInt32LE(sr, 24); buf.writeUInt32LE(sr * 2, 28);
+    buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34); buf.write("data", 36); buf.writeUInt32LE(n * 2, 40);
+    for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round(2000 * Math.sin(i / 9)), 44 + i * 2);
+    fs.writeFileSync(path.join(dir, "Old Song.wav"), buf);
+    coord.attachDemo();
+    musicDir = dir;
+    engine.loadLibrary(dir);
+    engine.player.play(engine.library[0]);
+    await sleep(1500);
+    const before = $("track-title-text").textContent;
+    renameTrack(engine.library[0], "Renamed Song");
+    renderNow();
+    await sleep(1200);
+    return JSON.stringify({
+      before, after: $("track-title-text").textContent,
+      playerName: engine.player.current?.name, src: decodeURIComponent(engine.player.element.src).split("/").pop(),
+      playing: engine.player.playing, pos: +engine.player.element.currentTime.toFixed(2),
+      library: engine.library.map(t => t.name), files: fs.readdirSync(dir),
+    });
+  };
+  // Pulse-trainer smoke: synthetic WAVs (kick on 1+3, snare on 2+4) through
+  // the REAL decode → worker features → worker train → inference path, then
+  // the trainer opens over the stage. Scratch --user-data-dir only.
+  (window as unknown as { __pulsorPulseSmoke?: () => Promise<string> }).__pulsorPulseSmoke = async () => {
+    const os = require("os") as typeof import("os");
+    const sr = 22050, secs = 40;
+    const wav = (bpm: number, seed: number) => {
+      let r = seed;
+      const rnd = () => ((r = (r * 1103515245 + 12345) % 2147483648) / 2147483648) * 2 - 1;
+      const pcm = new Float32Array(sr * secs), kicks: number[] = [];
+      const beat = 60 / bpm;
+      for (let k = 0; 0.4 + k * beat < secs; k++) {
+        const t0 = 0.4 + k * beat, s0 = Math.floor(t0 * sr), kick = k % 2 === 0;
+        if (kick) kicks.push(t0);
+        for (let i = 0; i < sr * 0.25 && s0 + i < pcm.length; i++) {
+          const dt = i / sr;
+          pcm[s0 + i] += kick ? 0.8 * Math.exp(-dt * 14) * Math.sin(2 * Math.PI * (50 + 90 * Math.exp(-dt * 30)) * dt)
+                              : 0.3 * Math.exp(-dt * 22) * rnd();
+        }
+      }
+      const buf = Buffer.alloc(44 + pcm.length * 2);
+      buf.write("RIFF", 0); buf.writeUInt32LE(36 + pcm.length * 2, 4); buf.write("WAVEfmt ", 8);
+      buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22);
+      buf.writeUInt32LE(sr, 24); buf.writeUInt32LE(sr * 2, 28); buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34);
+      buf.write("data", 36); buf.writeUInt32LE(pcm.length * 2, 40);
+      pcm.forEach((v, i) => buf.writeInt16LE(Math.max(-32767, Math.min(32767, Math.round(v * 32767))), 44 + i * 2));
+      return { buf, kicks };
+    };
+    await pulseAI.init();
+    const tracks = [96, 112, 120, 128, 136, 144].map((bpm, i) => {
+      const { buf, kicks } = wav(bpm, 7 + i);
+      const p = path.join(os.tmpdir(), `pulsor-smoke-${bpm}.wav`);
+      fs.writeFileSync(p, buf);
+      const t = { id: `SMOKE-${bpm}`, name: `Smoke ${bpm} BPM`, folder: "Smoke", path: p };
+      if (!pulseAI.sessions.has(t.id)) {
+        pulseAI.saveClip(t, { start: 5, end: 35, at: Date.now(),
+          taps: kicks.filter(k => k >= 5 && k < 35).map((k, j) => ({ t: k + 0.02, strong: j % 2 === 0 })) });
+      }
+      return t;
+    });
+    engine.library = tracks;
+    const m = await pulseAI.train(s => tracks.find(t => t.id === s.id)?.path ?? null, () => {}, () => {});
+    const ev = await pulseAI.eventsFor(tracks[0]);
+    ($("rail-trainer") as HTMLButtonElement).click();
+    return JSON.stringify({ valF1: m.valF1, baseF1: m.baseF1, songs: m.songs, epochs: m.epochs, events: ev?.length ?? -1 });
+  };
 }
 if (musicDir) engine.loadLibrary(musicDir);
 renderAll();
-requestAnimationFrame(vizLoop);
-requestAnimationFrame(positionLoop);
+scheduleVizLoop();
+schedulePositionLoop();
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (vizRaf !== null) { cancelAnimationFrame(vizRaf); vizRaf = null; }
+    if (positionRaf !== null) { cancelAnimationFrame(positionRaf); positionRaf = null; }
+  } else {
+    renderNow();
+    scheduleVizLoop();
+    schedulePositionLoop();
+  }
+});
 initFxSliders();
 void outputSet().then(s => { knownOutputs = s; });
 navigator.mediaDevices.addEventListener("devicechange", () => void handleDeviceChange());

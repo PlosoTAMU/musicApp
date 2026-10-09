@@ -273,6 +273,7 @@ final class SyncSessionManager: ObservableObject {
                              && $0.map(\.name) == $1.map(\.name) }
             .sink { [weak self] _ in
                 self?.resolver.invalidate()
+                self?.engine.refreshMirrorResolution()
                 self?.playlistSync?.refreshResolution()
             }
             .store(in: &forwarding)

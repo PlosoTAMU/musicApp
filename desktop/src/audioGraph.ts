@@ -60,7 +60,11 @@ export class AudioGraph {
   }
 
   private async build(el: HTMLAudioElement) {
-    const ctx = (this.ctx = new AudioContext());
+    // "playback", not the default "interactive": interactive asks the OS for a
+    // ~10 ms output buffer, which Bluetooth on Windows can't sustain — a load
+    // spike (launch, next-track load) underruns it and the BT stack loops its
+    // last buffer as an endless drone. A music player wants the big buffer.
+    const ctx = (this.ctx = new AudioContext({ latencyHint: "playback" }));
 
     // Worklet first — the graph wires once, so the source isn't created
     // until we know whether a pitch node exists to splice in. Loaded from a

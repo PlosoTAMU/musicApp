@@ -153,3 +153,50 @@ None. `frozenPlayback` writes only fields that already exist
 (`playback.playing/pos/anchor/rev`, `ownerDeviceID`, `leaseMs`);
 `SEAT_CLEARED`/`SEAT_TAKEN` are client-local errors; `takeOver(onlyIfIdle:)`
 changes a transaction precondition, not the document.
+
+---
+
+## Post-audit: S14 — desktop wrote fractional ms, iOS dropped the whole doc
+
+2026-09-05, from the live report "opened desktop, then iOS, connected to the
+same secret, started a song on the phone — desktop didn't update".
+
+`serverClock.nowMs` (TS) was `Date.now() + offsetMs` unrounded. The offset is
+a median of `Timestamp.toMillis()` values, which keep the server's
+microseconds, so nearly every `leaseMs` / `playback.anchor` / `handoff.atMs`
+the desktop wrote was a non-integer — and the JS SDK stores those as a
+Firestore DOUBLE. `SessionState(snap:)` read them with `as? Int`; Swift's
+NSNumber bridging returns nil for a double with a fractional part, so the
+guard failed and the snapshot was dropped silently. Consequences on the phone
+after ANY desktop write to the session: `remote` stayed nil (blind to the
+session), and its own `takeOver` parsed the doc inside the txn → `.corrupt`
+→ "local playback takeover failed" → audio played locally, nothing was
+published, the desktop kept showing the old state. Present since the
+ServerClock landed (2026-07-04); PlaylistSync had already worked around it
+with `NSNumber.intValue`, the session/command parsers had not.
+
+Fix, both ends: `nowMs` rounds at the single choke point every writer uses
+(pinned by `tests/serverClock-integer.test.ts`); Swift parses every wire
+integer through `wireInt(_:)` (NSNumber → rounded Int, bools excluded) so a
+doc already written with doubles — including the one in Firestore right now —
+reads fine without waiting for a desktop rewrite. No field renamed.
+
+## Post-audit: S15 — "reverb, pitch and bass don't sync"
+
+Three causes, all fixed:
+
+1. **Pitch was never on the wire.** iOS published speed/bass/reverb/bypass
+   only; desktop had `fx.pitch` marked local-only. New optional field
+   `pitchSt` (±12, absent ⇒ 0) on both ends; desktop `parseSettingsDoc` is
+   pure and pinned by `tests/settingsDoc.test.ts`.
+2. **A remote's change never stuck on the owner.** F7/S6 suppressed the
+   per-track save for EVERY remote apply. Right for a follower (the values
+   describe someone else's playback), wrong for the owner: its next track
+   change restored the old memory and — because a restore also publishes —
+   pushed it back, silently undoing the other device's drag. Now the owner
+   persists remote values exactly like a local drag (`ownsAudio` closure on
+   iOS, `coord.role === "owner"` in desktop `applyFx`); followers still don't.
+3. Desktop `onRemote` now applies the parsed, clamped doc directly.
+
+Semantics unchanged otherwise: the doc is "what is audible on the owner";
+per-track memory stays device-local.

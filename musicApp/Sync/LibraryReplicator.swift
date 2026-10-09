@@ -191,6 +191,25 @@ final class LibraryReplicator {
         else { metaByYt.removeValue(forKey: yt) }
     }
 
+    /// Tombstone doc to revive when this device manually re-downloads a yt
+    /// after it was deleted everywhere. `metaByYt` intentionally indexes only
+    /// LIVE docs, so upload-side dedupe must have this second lookup or a
+    /// re-download whose title changed mints a brand-new live doc beside the
+    /// old tombstone. Desktop already scans all docs by yt in replicator.ts;
+    /// this is the iOS twin.
+    private func tombstoneDocId(forYT yt: String) -> String? {
+        var best: (id: String, at: Int)?
+        for id in docsByYt[yt] ?? [] {
+            guard let m = meta[id], m.deleted else { continue }
+            if let b = best {
+                let wins = m.metaAtMs > b.at || (m.metaAtMs == b.at && id < b.id)
+                if !wins { continue }
+            }
+            best = (id, m.metaAtMs)
+        }
+        return best?.id
+    }
+
     @MainActor
     private func handleSnapshot(_ snap: QuerySnapshot) {
         var touchedYts = Set<String>()
@@ -208,7 +227,12 @@ final class LibraryReplicator {
                 }
                 continue
             }
-            guard let m = TrackMeta(dict: change.document.data()) else { continue }
+            // `.estimate`: our own just-written metaAt (a pending
+            // serverTimestamp) reads as "now", not 0. Read as 0, a fresh
+            // rename lost canonical to an older duplicate doc for one
+            // snapshot, and that doc's stale name was applied back — the
+            // rename appeared to undo itself.
+            guard let m = TrackMeta(dict: change.document.data(with: .estimate)) else { continue }
             // Keep secondary indexes in step with the primary map: a rename
             // or yt-change (rare) leaves a stale pointer otherwise.
             if let prev = meta[id] {
@@ -344,7 +368,10 @@ final class LibraryReplicator {
         // dictionary scan per upload; now O(1) via the two secondary indexes.
         let name = Self.normalize(d.name)
         let matchDocId: String? = {
-            if let yt = d.videoID, let idByYt = metaByYt[yt] { return idByYt }
+            if let yt = d.videoID {
+                if let liveId = metaByYt[yt] { return liveId }
+                if let tombstoneId = tombstoneDocId(forYT: yt) { return tombstoneId }
+            }
             return metaByNormName[name]
         }()
         if let docId = matchDocId, let m = meta[docId] {

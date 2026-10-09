@@ -77,6 +77,16 @@ export function resolve(ref: TrackRef, lib: LocalTrack[]): LocalTrack | undefine
 
 export { norm };
 
+/** A held track's entry in a fresh scan: same id (unchanged path), else the
+ *  path it was just renamed to here, else its yt tag (renamed/moved on disk
+ *  or by sync). Undefined = gone. Pure — Node-tested. */
+export function relocate(t: LocalTrack, lib: LocalTrack[], moved?: Map<string, string>): LocalTrack | undefined {
+  const p = moved?.get(t.path);
+  return lib.find(x => x.id === t.id)
+    ?? (p ? lib.find(x => x.path === p) : undefined)
+    ?? (t.yt ? lib.find(x => x.yt === t.yt) : undefined);
+}
+
 export const toRef = (t: LocalTrack): TrackRef =>
   t.yt ? { id: t.id, name: t.name, folder: t.folder, yt: t.yt }
        : { id: t.id, name: t.name, folder: t.folder };
@@ -157,6 +167,21 @@ export class LocalPlayer {
     this.el.src = pathToFileURL(t.path).href;  // implicit load()
     this.el.currentTime = (atMs + this.cropStartMs) / 1000;  // crop-relative → absolute
     if (!startPaused) void this.el.play().catch(e => console.log("[player] play failed:", e));
+    this.onChange?.();
+  }
+
+  /** Same song, fresh library entry (rescan / rename / move). A new path
+   *  means the file was renamed under the element: swap src and carry the
+   *  position + play state over — the old file:// URL can't serve seeks past
+   *  what's buffered (verified on Windows Electron 41: playback stalls). */
+  rebind(t: LocalTrack) {
+    const was = this.current;
+    this.current = t;
+    if (!was || was.path === t.path) return;
+    const at = this.el.currentTime, playing = !this.el.paused;
+    this.el.src = pathToFileURL(t.path).href;
+    this.el.currentTime = at;
+    if (playing) void this.el.play().catch(e => console.log("[player] rebind play failed:", e));
     this.onChange?.();
   }
 

@@ -69,9 +69,10 @@ class AudioPlayerManager: NSObject, ObservableObject {
             applyBassBoost()
             applyPitch()
             applyPlaybackSpeed()
+            saveCurrentTrackSettings()
         }
     }
-
+    
     /// Timestamp of when the current track was last paused (for auto-restart logic)
     private var lastPausedAt: Date? = nil
 
@@ -114,6 +115,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     // Lock-screen artwork is unchanged for the life of a track — cache the
     // decoded result instead of re-decoding on every updateNowPlayingInfo() call.
     private var cachedNowPlayingArtwork: (trackID: UUID, artwork: MPMediaItemArtwork)?
+    // Periodic Now Playing refresh bucket. updateTime() ticks at 0.5 s; a raw
+    // `Int(currentTime) % 5 == 0` writes twice during each matching second.
+    private var lastNowPlayingInfoBucket = -1
     
     var savedPlaybackSpeed: Double = 1.0
     private var currentPlaybackSessionID = UUID()
@@ -247,6 +251,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
         var reverbAmount: Double
         var pitchShift: Double?
         var bassBoost: Double?
+        // Optional so existing track_settings.json files decode; missing means DJ off.
+        var effectsBypass: Bool?
     }
     
     // ✅ NEW: Load saved settings
@@ -278,7 +284,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
             playbackSpeed: playbackSpeed,
             reverbAmount: reverbAmount,
             pitchShift: pitchShift,
-            bassBoost: bassBoost
+            bassBoost: bassBoost,
+            effectsBypass: effectsBypass
         )
         
         // Debounce disk write — coalesce rapid slider changes into a single write.
@@ -312,20 +319,23 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func applyTrackSettings(for track: Track) {
         if let settings = trackSettings[track.id] {
             // Restore saved settings
-            print("📼 [AudioPlayer] Restoring settings: \(settings.playbackSpeed)x speed, \(settings.reverbAmount)% reverb, \(settings.pitchShift ?? 0) pitch, \(settings.bassBoost ?? 0)dB bass")
+            print("📼 [AudioPlayer] Restoring settings: \(settings.playbackSpeed)x speed, \(settings.reverbAmount)% reverb, \(settings.pitchShift ?? 0) pitch, \(settings.bassBoost ?? 0)dB bass, DJ \((settings.effectsBypass ?? true) ? "off" : "on")")
+            effectsBypass = settings.effectsBypass ?? true
             playbackSpeed = settings.playbackSpeed
             reverbAmount = settings.reverbAmount
             pitchShift = settings.pitchShift ?? 0
             bassBoost = settings.bassBoost ?? 0
         } else {
             // Use defaults for new track
-            print("📼 [AudioPlayer] Using default settings: 1.0x speed, 0% reverb, 0 pitch, 0dB bass")
+            print("📼 [AudioPlayer] Using default settings: 1.0x speed, 0% reverb, 0 pitch, 0dB bass, DJ off")
+            effectsBypass = true
             playbackSpeed = 1.0
             reverbAmount = 0.0
             pitchShift = 0
             bassBoost = 0
         }
     }
+
 
     
     private func setupAudioEngine() {
@@ -698,6 +708,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
         let sessionID = currentPlaybackSessionID
         hasTriggeredNext = false  // ✅ RESET: New track, allow next() to be triggered again
         lastPausedAt = nil  // ✅ Reset pause timestamp on new play
+        lastNowPlayingInfoBucket = -1
     
         // ✅ FIX: Reset visualization IMMEDIATELY and SYNCHRONOUSLY
         // This ensures UI shows zero before any async work happens
@@ -807,10 +818,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 
                 // Schedule silence padding after the file (0.5s)
                 let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
-                let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
-                                                     frameCapacity: paddingFrames)!
-                silenceBuffer.frameLength = paddingFrames
-                // Buffer is already zeroed (silence)
+                let silenceBuffer = Self.makeSilence(format: file.processingFormat, frames: paddingFrames)!
                 
                 player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
                     guard let self = self else { return }
@@ -987,9 +995,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
                                       at: nil)
                 
                 // Schedule silence padding after
-                let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
-                                                     frameCapacity: paddingFrames)!
-                silenceBuffer.frameLength = paddingFrames
+                let silenceBuffer = Self.makeSilence(format: file.processingFormat, frames: paddingFrames)!
                 
                 player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
                     guard let self = self else { return }
@@ -1036,9 +1042,44 @@ class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
     
+    /// Zero-filled padding buffer. AVAudioPCMBuffer does NOT promise zeroed
+    /// storage — a "silence" buffer used straight from init can carry leftover
+    /// heap bytes, i.e. garbage samples, into the EQ/reverb chain.
+    static func makeSilence(format: AVAudioFormat, frames: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+        guard let b = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
+        b.frameLength = frames
+        for buf in UnsafeMutableAudioBufferListPointer(b.mutableAudioBufferList) {
+            if let p = buf.mData { memset(p, 0, Int(buf.mDataByteSize)) }
+        }
+        return b
+    }
+
     // Update the current track URL (used when file is renamed while playing)
     func updateCurrentTrackURL(_ newURL: URL) {
         currentTrackURL = newURL
+    }
+
+    /// A library rename (local or sync-applied): same id, new name + file URL.
+    /// Rewrites every copy of the track the player holds so the Now Playing
+    /// view, mini player, queue and lock screen all show the new name at once.
+    /// Identity (id) is unchanged, so playback and sync are untouched.
+    func applyRename(id: UUID, name: String, url: URL) {
+        func renamed(_ t: Track) -> Track {
+            Track(id: t.id, name: name, url: url, folderName: t.folderName,
+                  cropStartTime: t.cropStartTime, cropEndTime: t.cropEndTime)
+        }
+        if let cur = currentTrack, cur.id == id {
+            currentTrack = renamed(cur)
+            currentTrackURL = url
+            updateNowPlayingInfo()
+        }
+        for i in queue.indices where queue[i].id == id { queue[i] = renamed(queue[i]) }
+        for i in currentPlaylist.indices where currentPlaylist[i].id == id {
+            currentPlaylist[i] = renamed(currentPlaylist[i])
+        }
+        for i in previousQueue.indices where previousQueue[i].id == id {
+            previousQueue[i] = renamed(previousQueue[i])
+        }
     }
     
     func stop() {
@@ -1058,6 +1099,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
                 self.duration = 0
                 self.needsReschedule = false
                 self.savedCurrentTime = 0
+                self.lastNowPlayingInfoBucket = -1
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             }
         }
@@ -1126,9 +1168,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
                                           at: nil)
                     
                     // Schedule silence padding after
-                    let silenceBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
-                                                         frameCapacity: paddingFrames)!
-                    silenceBuffer.frameLength = paddingFrames
+                    let silenceBuffer = Self.makeSilence(format: file.processingFormat, frames: paddingFrames)!
                     
                     player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
                         guard let self = self else { return }
@@ -1335,8 +1375,7 @@ class AudioPlayerManager: NSObject, ObservableObject {
                                at: nil)
         
         let paddingFrames = AVAudioFrameCount(0.5 * sampleRate)
-        if let silenceBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: paddingFrames) {
-            silenceBuffer.frameLength = paddingFrames
+        if let silenceBuffer = Self.makeSilence(format: format, frames: paddingFrames) {
             player.scheduleBuffer(silenceBuffer, at: nil) { [weak self] in
                 guard let self = self else { return }
                 DispatchQueue.main.async {
@@ -1787,7 +1826,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
         
         currentTime = min(newTime, duration)
         
-        if Int(currentTime) % 5 == 0 {
+        let nowPlayingBucket = Int(currentTime) / 5
+        if nowPlayingBucket != lastNowPlayingInfoBucket {
+            lastNowPlayingInfoBucket = nowPlayingBucket
             updateNowPlayingInfo()
         }
     }

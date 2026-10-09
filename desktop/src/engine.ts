@@ -4,7 +4,7 @@ import { Firestore } from "firebase/firestore";
 import { SessionCoordinator } from "./coordinator";
 import { QueueSync, rebase } from "./queueSync";
 import { CommandBus, Command } from "./commandBus";
-import { LocalPlayer, LocalTrack, scanLibrary, resolve, toRef } from "./player";
+import { LocalPlayer, LocalTrack, scanLibrary, resolve, toRef, relocate } from "./player";
 import {
   PlaybackState, SessionState, TrackRef, DEVICE_ID, positionAt,
   sameId, sessionIdle, liveRemoteOwner, SEAT_TAKEN,
@@ -113,8 +113,26 @@ export class SyncEngine {
     }, 1_000);
   }
 
-  loadLibrary(root: string) {
+  /** Rescan the folder, then re-point everything holding a track at the
+   *  fresh entries so a rename shows up at once in Now Playing, Up Next and
+   *  history. `moved` maps old → new absolute path for a rename made here —
+   *  ids are path hashes, so an untagged file has nothing else to match on. */
+  loadLibrary(root: string, moved?: Map<string, string>) {
     this.library = scanLibrary(root);
+    const find = (t: LocalTrack) => relocate(t, this.library, moved);
+    const cur = this.player.current;
+    const next = cur && find(cur);
+    if (cur && next) {
+      this.player.rebind(next);
+      // Followers show the published name — republish a rename right away.
+      if (next.id !== cur.id || next.name !== cur.name) this.publish();
+    }
+    this.history = this.history.map(t => find(t) ?? t);
+    const q = this.coord.remote?.queue;
+    if (q) {
+      this.ghostQueue = q.filter(r => !resolve(r, this.library));
+      this.player.queue = q.map(r => resolve(r, this.library)).filter((t): t is LocalTrack => !!t);
+    }
     this.onChange?.();
     this.onLibraryChange?.();
   }
